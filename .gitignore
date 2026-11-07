@@ -9,3 +9,4 @@ dev/
 .DS_Store
 *.log
 *.tsbuildinfo
+.claude/

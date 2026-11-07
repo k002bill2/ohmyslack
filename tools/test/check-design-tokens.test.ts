@@ -137,6 +137,14 @@ describe('check-design-tokens', () => {
     });
   }
 
+  it('ignores untracked agent worktree copies under .claude/', async () => {
+    const root = makeRoot();
+    const copy = join(root, '.claude/worktrees/agent-x/apps/web/public/icons');
+    mkdirSync(copy, { recursive: true });
+    writeFileSync(join(copy, 'icon-192.png'), 'x');
+    expect((await exec(root)).code).toBe(0);
+  });
+
   it('(d) nonexistent root → 1', async () => {
     expect((await exec(join(tmpdir(), 'no-such-root-xyz-123'))).code).toBe(1);
   });
