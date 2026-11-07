@@ -8,8 +8,8 @@
   },
   "scripts": {
     "verify": "tsx tools/bin/verify.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint tools eslint.config.js vitest.config.ts vitest.int.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p e2e/tsconfig.json --noEmit",
+    "lint": "eslint tools e2e eslint.config.js vitest.config.ts vitest.int.config.ts",
     "test": "vitest run --config vitest.config.ts",
     "test:int": "tsx tools/bin/assert-test-db.ts && vitest run --config vitest.int.config.ts --passWithNoTests",
     "check:cleanroom": "tsx tools/bin/check-cleanroom.ts",

@@ -204,16 +204,29 @@ export function createHub(deps: HubDeps): Hub {
     }),
   ];
 
-  /** `(after, through]` 구간에서 이 대화의 변경만 change_id 순으로 재생한다. */
-  const replay = async (conn: Connection, conversationId: string, after: number, through: number): Promise<void> => {
+  /**
+   * 구독이 아직 이 replay의 것이고 멤버십이 유효한가. scan은 멤버십 조회와 본문 로딩이 별개 쿼리라 그 사이 나가기가
+   * commit될 수 있다: 이벤트가 구독을 지웠거나(교체 포함) DB 재확인이 실패하면 false(Codex r1 P1, NC-09).
+   */
+  const replayStillValid = async (conn: Connection, conversationId: string, sub: Subscription): Promise<boolean> => {
+    if (conn.closed || conn.subs.get(conversationId) !== sub) return false;
+    if (await canRead(conn, conversationId)) return conn.subs.get(conversationId) === sub;
+    endSubscription(conn, conversationId);
+    return false;
+  };
+
+  /** `(after, through]` 구간에서 이 대화의 변경만 change_id 순으로 재생한다. 취소되면 false(ACK 금지). */
+  const replay = async (conn: Connection, conversationId: string, sub: Subscription, after: number, through: number): Promise<boolean> => {
     let cursor = after;
     while (cursor < through) {
       const page = await syncStore.scan({ userId: conn.userId, after: cursor, through, limit: SYNC_LIMIT_MAX });
+      if (!(await replayStillValid(conn, conversationId, sub))) return false;
       const mine = page.changes.filter((c) => c.message.conversationId === conversationId);
       for (const change of [...mine].sort((x, y) => x.changeId - y.changeId)) send(conn, replayFrame(change.changeId, change.message));
       if (page.scannedThrough <= cursor) break;
       cursor = page.scannedThrough;
     }
+    return replayStillValid(conn, conversationId, sub);
   };
 
   return {
@@ -230,6 +243,10 @@ export function createHub(deps: HubDeps): Hub {
       };
       conns.add(conn);
       scheduleExpiry(conn, info.expiresAt);
+      // handshake peek와 attach 사이에 폐기·비활성화 이벤트가 지나갔을 수 있다: 붙은 직후 한 번 더 확인한다(S7 5초).
+      enqueue(conn, async () => {
+        await sessionAlive(conn);
+      });
       return conn;
     },
     subscribe(conn, conversationId, afterCursor) {
@@ -249,7 +266,7 @@ export function createHub(deps: HubDeps): Hub {
           send(conn, { type: 'sync.required' });
           return;
         }
-        await replay(conn, conversationId, afterCursor, through);
+        if (!(await replay(conn, conversationId, sub, afterCursor, through))) return;
         sub.through = through;
         send(conn, { type: 'conversation.subscribed', conversation_id: conversationId, through_cursor: through });
       });
