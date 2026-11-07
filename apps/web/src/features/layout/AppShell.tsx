@@ -8,7 +8,7 @@ import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
-import { InstallCard } from '../pwa';
+import { InstallCard, useInstallPrompt } from '../pwa';
 import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
@@ -101,7 +101,7 @@ function ConversationPane(props: {
   readonly selfName?: string;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
-  const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding);
+  const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.itemActions?.selfId);
   const { mentionNames, selfName } = props;
   const selfId = props.itemActions?.selfId;
   const mentionsSelf = (m: Message) => selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName);
@@ -201,6 +201,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const [drafts] = useState(() => injectedDrafts ?? createDraftStore());
   const snap = useSyncExternalStore(dataSource.subscribe, dataSource.getSnapshot, dataSource.getSnapshot);
   const viewport = useViewport();
+  // 설치 프롬프트는 셸이 계속 붙잡는다 — 카드가 목록 화면에서만 마운트돼도 이벤트를 놓치지 않게(Codex r1 P2).
+  const installPrompt = useInstallPrompt();
   const [state, dispatch] = useReducer(shellReducer, history, initialFrom);
   const [panel, setPanelState] = useState<PanelKind | null>(() => panelFrom(history));
   const [members, setMembers] = useState(() => membersFrom(history));
@@ -455,7 +457,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   // 시안 04: compact 공간 목록 위 설치 안내 카드(standalone·미지원이면 InstallCard가 렌더하지 않음).
   const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || (
     <>
-      <InstallCard />
+      <InstallCard mode={installPrompt.mode} onInstall={() => void installPrompt.install()} />
       {sidebar}
     </>
   );

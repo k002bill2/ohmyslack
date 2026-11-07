@@ -61,6 +61,10 @@ describe('firstUnreadSeq', () => {
     expect(firstUnreadSeq(roots, 0)).toBeNull();
     expect(firstUnreadSeq(roots, 4)).toBeNull();
   });
+  it('서버 집계처럼 내 메시지·삭제 원문은 세지 않는다(Codex r1 P2)', () => {
+    const list = [msg('a', 1, DAY2), msg('b', 2, DAY2), msg('mine', 3, DAY2, { authorId: 'me' }), msg('gone', 4, DAY2, { deleted: true })];
+    expect(firstUnreadSeq(list, 1, 'me')).toBe(2);
+  });
   it('전송 대기 항목은 세지 않는다', () => {
     const pending = { ...msg('p', 0, DAY2), seq: undefined, pending: { clientMessageId: 'x' } } as unknown as Message;
     expect(firstUnreadSeq([...roots, pending], 1)).toBe(3);
@@ -100,6 +104,13 @@ describe('MessageList 구분선 배선', () => {
     const { ds, set, get } = source({ spaces: [space({ unreadCount: 1 })], messages: [], connection: 'connected' });
     await enter(ds);
     set({ ...get(), messages: [msg('a', 1, DAY2), msg('b', 2, DAY2)] });
+    expect(document.querySelector('.new-messages-divider + [data-message-id="b"]')).not.toBeNull();
+  });
+
+  it('catch-up 중 진입이면 동기화 뒤 미읽음 수로 계산(Codex r1 P2)', async () => {
+    const { ds, set, get } = source({ spaces: [space({ unreadCount: 0 })], messages: [msg('a', 1, DAY2)], connection: 'catching-up' });
+    await enter(ds);
+    set({ ...get(), spaces: [space({ unreadCount: 1 })], messages: [msg('a', 1, DAY2), msg('b', 2, DAY2)], connection: 'connected' });
     expect(document.querySelector('.new-messages-divider + [data-message-id="b"]')).not.toBeNull();
   });
 
@@ -203,5 +214,18 @@ describe('compact 설치 안내 카드(시안 04)', () => {
       window.dispatchEvent(event);
     });
     expect(screen.getByRole('button', { name: '앱으로 설치' }).closest('.install-card')).not.toBeNull();
+  });
+
+  it('대화에 들어갔다 돌아와도 받은 설치 프롬프트를 유지한다(Codex r1 P2)', async () => {
+    showList('Mozilla/5.0 (Linux; Android 15)', false);
+    const event = Object.assign(new Event('beforeinstallprompt'), { prompt: () => Promise.resolve() });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'general' }));
+    expect(document.querySelector('.install-card')).toBeNull();
+    await user.click(screen.getByRole('button', { name: '뒤로' }));
+    expect(screen.getByRole('button', { name: '앱으로 설치' })).toBeTruthy();
   });
 });
