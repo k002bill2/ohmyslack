@@ -7,6 +7,9 @@ import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
+import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
+import type { MentionCandidate } from '../conversation';
+import type { ActionResult } from '../../data';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
@@ -54,11 +57,14 @@ function ConversationPane(props: {
   readonly drafts: DraftStore;
   readonly onBack: () => void;
   readonly onReply: (id: string) => void;
-  readonly onSend: (body: string) => void;
+  readonly onSend: (body: string, mentionUserIds?: readonly string[]) => void;
   readonly onRetry: (clientMessageId: string) => void;
   readonly onDiscard: (clientMessageId: string) => void;
+  /** W-10j: 채널 나가기·다시 참여·멘션 후보(없으면 렌더하지 않음). */
+  readonly membership?: MembershipProps;
 }) {
-  const { space, roots, breakpoint } = props;
+  const { space, roots, breakpoint, membership } = props;
+  const left = space.left === true;
   return (
     <main className="conversation-pane" inert={props.inert}>
       <header className="conversation-header">
@@ -68,8 +74,12 @@ function ConversationPane(props: {
           </button>
         )}
         <h1 className="conversation-title">{spaceTitle(space)}</h1>
+        {membership && space.kind === 'channel' && !left && membership.onLeave && <LeaveChannelControl onLeave={membership.onLeave} />}
+        {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
       </header>
-      {roots.length === 0 ? (
+      {membership && left ? (
+        <LeftChannelNotice onRejoin={membership.onRejoin} />
+      ) : roots.length === 0 ? (
         <p className="message-empty">첫 메시지를 남겨 보세요</p>
       ) : (
         <ul className="message-list">
@@ -78,17 +88,26 @@ function ConversationPane(props: {
           ))}
         </ul>
       )}
-      <div data-composer="main">
-        <Composer
-          key={space.id}
-          label={messageComposerLabel(spaceTitle(space))}
-          placeholder={COMPOSER_COPY.messagePlaceholder}
-          onSend={props.onSend}
-          draft={{ store: props.drafts, key: space.id }}
-        />
-      </div>
+      {!left && (
+        <div data-composer="main">
+          <Composer
+            key={space.id}
+            label={messageComposerLabel(spaceTitle(space))}
+            placeholder={COMPOSER_COPY.messagePlaceholder}
+            onSend={props.onSend}
+            draft={{ store: props.drafts, key: space.id }}
+            {...(membership?.mentions === undefined ? {} : { mentions: membership.mentions })}
+          />
+        </div>
+      )}
     </main>
   );
+}
+
+interface MembershipProps {
+  readonly onLeave?: () => Promise<ActionResult<null>>;
+  readonly onRejoin: () => void;
+  readonly mentions?: { readonly candidates: readonly MentionCandidate[]; readonly selfId?: string };
 }
 
 /** CMP-01 AppShell — 3/2/1단, §5-2 접힘 규칙, 포커스 관리(디자인 §5·§7-3, UI_STATES §2-2·§3·§4-2). */
@@ -210,6 +229,25 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     focusComposer.current = true;
     dispatch({ type: 'select-space', conversationId });
   };
+  /** W-10j 다시 참여: join 2xx → 그 대화로 이동 + 이력·구독 재개(`open`). 선택 중이면 effect가 다시 돌지 않아 직접 연다. */
+  const rejoin = (conversationId: string) => {
+    void dataSource.joinChannel?.(conversationId).then((res) => {
+      if (!res.ok) return;
+      goTo(res.value);
+      dataSource.open?.(res.value);
+    });
+  };
+  const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true);
+  const membership: MembershipProps | undefined =
+    space === undefined || !dataSource.joinChannel
+      ? undefined
+      : {
+          ...(dataSource.leaveChannel ? { onLeave: () => dataSource.leaveChannel?.(space.id) ?? Promise.resolve({ ok: false, status: 403 } as const) } : {}),
+          onRejoin: () => rejoin(space.id),
+          ...(mentionCandidates === undefined
+            ? {}
+            : { mentions: { candidates: mentionCandidates, ...(snap.account === undefined ? {} : { selfId: snap.account.id }) } }),
+        };
   const sidebar = (
     <Sidebar
       spaces={snap.spaces}
@@ -229,6 +267,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         ? { onManageMembers: () => setMembers(true) }
         : {})}
       {...(dataSource.logout ? { onLogout: () => void dataSource.logout?.() } : {})}
+      {...(dataSource.joinChannel ? { onRejoin: rejoin } : {})}
     />
   );
   const spacePanel = panel !== null && (
@@ -263,9 +302,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       drafts={drafts}
       onBack={() => dispatch({ type: 'back' })}
       onReply={(id) => dispatch({ type: 'open-thread', rootId: id })}
-      onSend={(body) => dataSource.send({ conversationId: space.id }, body)}
+      onSend={(body, mentionUserIds) => dataSource.send({ conversationId: space.id }, body, mentionUserIds)}
       onRetry={retry}
       onDiscard={discard}
+      {...(membership === undefined ? {} : { membership })}
     />
   );
   const thread = space && root && (

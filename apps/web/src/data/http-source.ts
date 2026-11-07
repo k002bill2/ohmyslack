@@ -5,6 +5,7 @@
  * checkpoint를 움직이지 않는다. 401 → 화면 본문·checkpoint 삭제 후 세션 종료(S11).
  */
 import type {
+  ConversationMembersResponse,
   ConversationRef,
   ConversationsResponse,
   DiscoverResponse,
@@ -116,6 +117,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const createdFor = new Map<string, string>();
   const acks = new Map<string, { resolve: () => void; reject: (e: Error) => void }>();
   let nextRoot: string | undefined;
+  let nextMentions: readonly string[] | undefined;
+  /** 전송 대기 항목의 멘션 ID(다시 시도도 같은 ID로 보낸다). */
+  const mentionsFor = new Map<string, readonly string[]>();
+  /** 이번 세션에 나간 채널(서버 목록은 `left_at IS NULL`만 준다 — REPORT 계약 부족). 다시 참여하면 지운다. */
+  let leftChannels: ReadonlyMap<string, Space> = new Map();
+  /** 목록 + 나간 채널(목록에 다시 나타나면 목록이 이긴다). */
+  const withLeft = (list: readonly Space[]): readonly Space[] => {
+    const ids = new Set(list.map((sp) => sp.id));
+    return [...list, ...[...leftChannels.values()].filter((sp) => !ids.has(sp.id))];
+  };
   let detach = () => undefined as void;
 
   const author = (id: string) => names.get(id) ?? id;
@@ -164,6 +175,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     fold = emptyFold;
     spaces = [];
     summaries = [];
+    leftChannels = new Map();
     reads = new Map();
     pending = [];
     checkpoint = null;
@@ -185,11 +197,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     me: '',
     post: async (req): Promise<PostResult> => {
       const rootId = rootFor.get(req.clientMessageId);
+      const mentionIds = mentionsFor.get(req.clientMessageId);
       try {
         const res = await api.post<MessageWriteResponse>(`/api/conversations/${encodeURIComponent(req.conversationId)}/messages`, {
           client_message_id: req.clientMessageId,
           body: req.body,
           ...(rootId === undefined ? {} : { thread_root_id: rootId }),
+          ...(mentionIds === undefined ? {} : { mention_user_ids: mentionIds }),
         });
         if (!ended) fold = foldMessage(fold, res.change_id, res.message, author);
         return { ok: true, messageId: res.message.id };
@@ -201,6 +215,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     newClientMessageId: () => {
       const id = deps.newClientMessageId?.() ?? crypto.randomUUID();
       if (nextRoot !== undefined) rootFor.set(id, nextRoot);
+      if (nextMentions !== undefined && nextMentions.length > 0) mentionsFor.set(id, nextMentions);
       createdFor.set(id, new Date().toISOString());
       return id;
     },
@@ -329,7 +344,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 세션 종료 뒤 늦게 도착한 목록 응답은 버린다(Codex r1 P2).
     if (ended) return [];
     summaries = all;
-    spaces = all.map((c) => toSpace(c, names, reads));
+    spaces = withLeft(all.map((c) => toSpace(c, names, reads)));
     listState = 'ready';
     return all;
   };
@@ -346,7 +361,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     const key = readKey(conversationId, rootId);
     if (seq <= (reads.get(key) ?? 0)) return;
     reads = new Map(reads).set(key, seq);
-    spaces = summaries.map((c) => toSpace(c, names, reads));
+    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads)));
     emit();
     void loadList().then(
       () => {
@@ -524,7 +539,33 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         return all;
       }),
     joinChannel: (conversationId) =>
-      attempt(async () => refreshThen((await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`)).id)),
+      attempt(async () => {
+        const ref = await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`);
+        const next = new Map(leftChannels);
+        next.delete(conversationId);
+        leftChannels = next;
+        return refreshThen(ref.id);
+      }),
+    leaveChannel: (conversationId) =>
+      attempt(async () => {
+        await api.del<undefined>(`/api/conversations/${encodeURIComponent(conversationId)}/membership`);
+        const space = spaces.find((sp) => sp.id === conversationId);
+        if (space !== undefined) leftChannels = new Map(leftChannels).set(conversationId, { ...space, left: true, unreadCount: 0, mentionCount: 0, unreadThreadCount: 0 });
+        // 구독 해제: 현재 대화면 내린다 — 다시 참여 후 `open(id)`이 이력·구독을 다시 연다.
+        if (current === conversationId) {
+          realtime.send({ type: 'conversation.unsubscribe', conversation_id: conversationId });
+          acks.get(conversationId)?.reject(new Error('left'));
+          acks.delete(conversationId);
+          current = null;
+        }
+        await refreshThen(conversationId);
+        return null;
+      }),
+    listConversationMembers: (conversationId) =>
+      attempt(async () => {
+        const res = await api.get<ConversationMembersResponse>(`/api/conversations/${encodeURIComponent(conversationId)}/members`);
+        return res.members.map((m) => ({ id: m.id, displayName: m.display_name }));
+      }),
     listMembers: () =>
       attempt(async () => {
         const res = await api.get<MembersResponse>('/api/members');
@@ -553,16 +594,19 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    send(target, body) {
+    send(target, body, mentionUserIds) {
       nextRoot = target.rootId;
+      nextMentions = mentionUserIds;
       void sendController.submit(target.conversationId, body);
       nextRoot = undefined;
+      nextMentions = undefined;
     },
     open(conversationId) {
       if (ended || conversationId === current) return;
       if (current !== null) realtime.send({ type: 'conversation.unsubscribe', conversation_id: current });
-      current = conversationId;
-      if (conversationId === null) return;
+      // 나간 채널은 구독·이력을 열지 않는다(구독은 서버가 거절한다) — 다시 참여 뒤 `open(id)`이 연다.
+      current = conversationId !== null && leftChannels.has(conversationId) ? null : conversationId;
+      if (current === null || conversationId === null) return;
       void loadHistory(conversationId);
       if (!resuming && checkpoint !== null) {
         subscribe(conversationId, checkpoint).catch((e: unknown) => {

@@ -187,3 +187,12 @@ export const DM_STARTER_COPY = {
 
 /** 서버 403(D §4-2 멤버 관리 「권한이 없습니다」, UI_STATES §2-12 권한 없음). 채널 만들기 403에도 같은 문장을 쓴다. */
 export const FORBIDDEN_TEXT = '권한이 없습니다';
+
+/** 나간 채널(UI_STATES §2-3 SpaceListItem·§2-5 ConversationHeader·MessageList 「나간 채널」 행 문구 그대로, W-10j). */
+export const LEFT_CHANNEL_COPY = {
+  leave: DIALOG_TITLES.leaveChannel,
+  rejoinRow: '나간 채널 · 다시 참여',
+  rejoin: '다시 참여',
+  notice: '이 채널을 나갔습니다. 다시 참여하면 이력을 볼 수 있습니다',
+  join: '참여',
+} as const;

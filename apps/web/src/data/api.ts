@@ -68,6 +68,7 @@ export function createApi(deps: ApiDeps) {
   return {
     get: <T>(path: string) => request<T>('GET', path),
     post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
+    del: <T>(path: string) => request<T>('DELETE', path),
     setCsrf(token: string | null): void {
       csrf = token;
     },
