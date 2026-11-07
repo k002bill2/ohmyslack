@@ -114,6 +114,37 @@ describe('MessageList 구분선 배선', () => {
     expect(document.querySelector('.new-messages-divider + [data-message-id="b"]')).not.toBeNull();
   });
 
+  it('캐시에 최신 1개만 있고 미읽음 3 → 이력 조회가 끝난 뒤 첫 미읽음 앞에 1개(Codex r2 P2)', async () => {
+    const { ds, set, get } = source({
+      spaces: [space({ unreadCount: 3 })],
+      messages: [msg('c', 3, DAY2)],
+      connection: 'connected',
+      loadedHistory: null,
+    });
+    await enter(ds);
+    expect(document.querySelectorAll('.new-messages-divider')).toHaveLength(0);
+    set({ ...get(), messages: [msg('a', 1, DAY2), msg('b', 2, DAY2), msg('c', 3, DAY2)], loadedHistory: 'c1' });
+    expect(document.querySelectorAll('.new-messages-divider')).toHaveLength(1);
+    expect(document.querySelector('.new-messages-divider + [data-message-id="a"]')).not.toBeNull();
+    // 고정 뒤 읽음 저장·새 메시지로 위치가 바뀌지 않는다.
+    set({ ...get(), spaces: [space({ unreadCount: 0 })], messages: [...get().messages, msg('d', 4, DAY2)] });
+    expect(document.querySelectorAll('.new-messages-divider')).toHaveLength(1);
+    expect(document.querySelector('.new-messages-divider + [data-message-id="a"]')).not.toBeNull();
+  });
+
+  it('다른 대화의 이력 완료 신호로는 고정하지 않는다', async () => {
+    const { ds, set, get } = source({
+      spaces: [space({ unreadCount: 2 })],
+      messages: [msg('c', 3, DAY2)],
+      connection: 'connected',
+      loadedHistory: 'c9',
+    });
+    await enter(ds);
+    expect(document.querySelectorAll('.new-messages-divider')).toHaveLength(0);
+    set({ ...get(), messages: [msg('b', 2, DAY2), msg('c', 3, DAY2)], loadedHistory: 'c1' });
+    expect(document.querySelector('.new-messages-divider + [data-message-id="b"]')).not.toBeNull();
+  });
+
   it('catch-up 중에는 계산을 보류한다', async () => {
     const { ds, set, get } = source({ spaces: [space({ unreadCount: 1 })], messages: [msg('a', 1, DAY2)], connection: 'catching-up' });
     await enter(ds);
@@ -175,6 +206,40 @@ describe('멘션 배선(시안 01)', () => {
     expect(item('b').classList.contains('msg-mentioned')).toBe(false);
     expect(item('c').classList.contains('msg-mentioned')).toBe(false);
     expect(item('c').querySelectorAll('.msg-mention')).toHaveLength(0);
+  });
+});
+
+describe('스레드 멘션 배선(Codex r2 P2)', () => {
+  const members = [
+    { id: 'me', displayName: '나영' },
+    { id: 'u2', displayName: '김철수' },
+  ];
+  const account = { id: 'me', displayName: '나영', role: 'member' as const };
+  it('스레드 원문·답글의 `@이름`도 teal 토큰, `@내 이름`은 「나를 멘션」 강조', async () => {
+    const { ds } = source(
+      {
+        spaces: [space()],
+        messages: [
+          msg('a', 1, DAY2, { authorId: 'u2', body: '@김철수 원문', replyCount: 2 }),
+          msg('r1', 2, DAY2, { authorId: 'u2', rootId: 'a', body: '@나영 답글' }),
+          msg('r2', 3, DAY2, { authorId: 'me', rootId: 'a', body: '@나영 내 답글' }),
+        ],
+        connection: 'connected',
+        account,
+      },
+      { joinChannel: () => Promise.resolve({ ok: true, value: 'c1' }), listConversationMembers: () => Promise.resolve({ ok: true, value: members }) },
+    );
+    await enter(ds);
+    await screen.findByText('채널 · 멤버 2');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '답글 2' }));
+    const panel = document.querySelector('.thread-panel') as HTMLElement;
+    const item = (id: string) => panel.querySelector(`[data-message-id="${id}"]`) as HTMLElement;
+    expect([...item('a').querySelectorAll('.msg-mention')].map((el) => el.textContent)).toEqual(['@김철수']);
+    expect([...item('r1').querySelectorAll('.msg-mention')].map((el) => el.textContent)).toEqual(['@나영']);
+    expect(item('r1').classList.contains('msg-mentioned')).toBe(true);
+    expect(item('a').classList.contains('msg-mentioned')).toBe(false);
+    expect(item('r2').classList.contains('msg-mentioned')).toBe(false);
   });
 });
 

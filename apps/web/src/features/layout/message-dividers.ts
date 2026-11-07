@@ -27,19 +27,22 @@ interface Entry {
 
 /**
  * 진입 시점 값을 고정한다 — 맨 아래에서 읽음을 저장(markRead)해 `unreadCount`가 0이 돼도 구분선이 바로 사라지지 않게(§2-4).
- * 이력이 처음 도착한 렌더에서 한 번 계산하고, catch-up 중(`holding`)이면 계산을 미룬다. 공간이 바뀌면 다시 진입으로 본다.
+ * 미읽음 수는 진입 때 고정하고, 위치(앵커 원문)는 이력 조회가 끝난(`historyReady`) 뒤 원문이 있는 첫 렌더에서 한 번 계산한다 —
+ * 캐시에 최신 몇 개만 있을 때 고정하면 이력이 도착해도 구분선이 없다(Codex r2 P2). catch-up 중(`holding`)에도 미룬다.
+ * 공간이 바뀌면 다시 진입으로 본다.
  */
 export function useNewMessagesSeq(
   spaceId: string,
   unreadCount: number,
   roots: readonly Message[],
   holding: boolean,
+  historyReady: boolean,
   selfId?: string,
 ): number | null {
   const entry = useRef<Entry | null>(null);
   if (entry.current?.spaceId !== spaceId) entry.current = { spaceId, unread: holding ? null : unreadCount, frozen: false, seq: null };
   const current = entry.current;
-  if (!current.frozen && !holding && roots.some((m) => m.seq !== undefined)) {
+  if (!current.frozen && !holding && historyReady && roots.some((m) => m.seq !== undefined)) {
     current.seq = firstUnreadSeq(roots, current.unread ?? unreadCount, selfId);
     current.frozen = true;
   }

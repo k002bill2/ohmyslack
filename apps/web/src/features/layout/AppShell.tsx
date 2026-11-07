@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
+import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
@@ -62,17 +62,22 @@ function spaceTitle(space: Space): string {
 }
 
 /** 메시지 객체(불변)별 판정 캐시 — 렌더마다 모든 본문을 다시 파싱하지 않게(F-1). */
-const mentionCache = new WeakMap<Message, { readonly name: string; readonly hit: boolean }>();
+const mentionCache = new WeakMap<MessageItemData, { readonly name: string; readonly hit: boolean }>();
 
 /**
  * 「나를 멘션」 판정: 클라이언트 모델에 mention_user_ids가 없어(data 계층은 이 레인 밖) 본문의 `@내 이름` 토큰으로 본다(W-11d REPORT).
  */
-function mentionsName(m: Message, name: string): boolean {
+function mentionsName(m: MessageItemData, name: string): boolean {
   const cached = mentionCache.get(m);
   if (cached?.name === name) return cached.hit;
   const hit = bodyMentionsName(m.body, name);
   mentionCache.set(m, { name, hit });
   return hit;
+}
+
+/** 「나를 멘션」(MessageItem `mentionsSelf`): 삭제·내가 쓴 메시지는 아니다. 본문 목록과 스레드가 같은 규칙(Codex r2 P2). */
+function mentionsSelfOf(m: MessageItemData, selfName: string | undefined, selfId: string | undefined): boolean {
+  return selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName);
 }
 
 /** CMP-05 ConversationHeader(골격) + CMP-06 MessageList + CMP-11 Composer. */
@@ -96,15 +101,17 @@ function ConversationPane(props: {
   readonly onCloseThread?: () => void;
   /** catch-up 중 — 「여기부터 새 메시지」 위치 계산 보류(UI_STATES §2-4). */
   readonly holding: boolean;
+  /** 이 대화의 이력 조회가 끝났는가 — 끝난 뒤에 구분선 위치를 고정한다(Codex r2 P2). */
+  readonly historyReady: boolean;
   /** 본문 `@이름` 토큰 근거(대화 멤버 이름)와 내 표시 이름(「나를 멘션」 판정). */
   readonly mentionNames?: readonly string[];
   readonly selfName?: string;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
-  const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.itemActions?.selfId);
+  const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
   const { mentionNames, selfName } = props;
   const selfId = props.itemActions?.selfId;
-  const mentionsSelf = (m: Message) => selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName);
+  const mentionsSelf = (m: Message) => mentionsSelfOf(m, selfName, selfId);
   const memberCount = space.kind === 'channel' ? (membership?.mentions?.candidates.length ?? 0) : 0;
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
@@ -434,6 +441,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
       holding={snap.connection === 'catching-up'}
+      historyReady={snap.loadedHistory === undefined || snap.loadedHistory === space.id}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
@@ -452,6 +460,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       messageActions={messageActions}
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
       spaceTitle={spaceTitle(space)}
+      {...(mentionNames === undefined ? {} : { mentionNames })}
+      mentionsSelf={(m) => mentionsSelfOf(m, snap.account?.displayName, snap.account?.id)}
     />
   );
   // 시안 04: compact 공간 목록 위 설치 안내 카드(standalone·미지원이면 InstallCard가 렌더하지 않음).
