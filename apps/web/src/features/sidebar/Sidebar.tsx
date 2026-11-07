@@ -1,6 +1,9 @@
+import { useId } from 'react';
 import type { Account, ListState, Space } from '../../data';
-import { COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
+import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
+import { SIDEBAR_SHELL_COPY } from './copy.js';
+import { AppMark } from './icons.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 
 export interface SidebarProps {
@@ -8,6 +11,8 @@ export interface SidebarProps {
   readonly selectedId: string | null;
   /** §5-2 접힘(72px): 이름은 `aria-label`·툴팁으로만. */
   readonly collapsed: boolean;
+  /** compact(≤640) 전체 화면 공간 목록(시안 04): 헤더 제목 「공간」 + 카드형 섹션. 없으면 false. */
+  readonly compact?: boolean;
   readonly onSelect: (id: string) => void;
   /** 내 계정(하단 표시 이름 + 「로그아웃」). role = owner면 「채널 만들기」 진입점을 렌더한다. */
   readonly account?: Account;
@@ -42,6 +47,8 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
   readonly space: Space;
   readonly selected: boolean;
   readonly collapsed: boolean;
+  /** compact(≤640) 전체 화면 공간 목록(시안 04): 헤더 제목 「공간」 + 카드형 섹션. 없으면 false. */
+  readonly compact?: boolean;
   readonly onSelect: (id: string) => void;
   readonly onRejoin?: (id: string) => void;
 }) {
@@ -60,9 +67,12 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
         title={collapsed ? space.name : undefined}
         onClick={() => onSelect(space.id)}
       >
+        <span className="space-status" aria-hidden="true" />
         <span className={collapsed ? 'visually-hidden' : 'space-name'}>{space.name}</span>
         {space.unreadThreadCount > 0 && (
-          <span className="thread-dot" role="img" aria-label={threadDotLabel(space.unreadThreadCount)} />
+          <span className="thread-dot" role="img" aria-label={threadDotLabel(space.unreadThreadCount)}>
+            ↳
+          </span>
         )}
         <UnreadBadge count={space.mentionCount} />
       </button>
@@ -86,18 +96,51 @@ function SpaceListBody(props: SidebarProps) {
     return <p className="empty-state">{account?.role === 'owner' ? SIDEBAR_COPY.emptyOwner : SIDEBAR_COPY.emptyMember}</p>;
   }
   return (
-    <ul className="space-list">
-      {spaces.map((space) => (
-        <SpaceListItem
-          key={space.id}
-          space={space}
-          selected={space.id === props.selectedId}
-          collapsed={props.collapsed}
-          onSelect={props.onSelect}
-          {...(props.onRejoin ? { onRejoin: props.onRejoin } : {})}
-        />
-      ))}
-    </ul>
+    <div className="space-sections">
+      <SpaceSection {...props} title={SIDEBAR_SHELL_COPY.sectionChannels} spaces={spaces.filter((s) => s.kind === 'channel')} />
+      <SpaceSection {...props} title={SIDEBAR_SHELL_COPY.sectionDms} spaces={spaces.filter((s) => s.kind !== 'channel')} />
+    </div>
+  );
+}
+
+/** 섹션 「채널」·「대화」(시안 01·04·09). 같은 종류 안의 순서는 목록 순서 그대로. 빈 섹션은 렌더하지 않는다. */
+function SpaceSection(props: SidebarProps & { readonly title: string }) {
+  const titleId = useId();
+  if (props.spaces.length === 0) return null;
+  return (
+    <section className="space-section" aria-labelledby={titleId}>
+      <h2 id={titleId} className={props.collapsed ? 'visually-hidden' : 'space-section-title'}>
+        {props.title}
+      </h2>
+      <ul className="space-list">
+        {props.spaces.map((space) => (
+          <SpaceListItem
+            key={space.id}
+            space={space}
+            selected={space.id === props.selectedId}
+            collapsed={props.collapsed}
+            onSelect={props.onSelect}
+            {...(props.onRejoin ? { onRejoin: props.onRejoin } : {})}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** 하단 계정 카드(시안 01): 이니셜 원형 + 표시 이름 + 역할. */
+function AccountCard({ account }: { readonly account: Account }) {
+  return (
+    <div className="account-card">
+      {/* 이니셜은 CSS `attr()`로 그린다 — 장식이라 텍스트 노드로 두면 표시 이름 텍스트 질의가 중복된다. */}
+      <span className="account-avatar" aria-hidden="true" data-initial={Array.from(account.displayName)[0] ?? ''} />
+      <span className="account-meta">
+        <span className="account-name" title={account.displayName}>
+          {account.displayName}
+        </span>
+        <span className="account-role">{MEMBER_ADMIN_COPY.roles[account.role]}</span>
+      </span>
+    </div>
   );
 }
 
@@ -105,11 +148,22 @@ function SpaceListBody(props: SidebarProps) {
  * CMP-02 Sidebar · CMP-03 SpaceList — `nav aria-label="공간"`(디자인 §7-2).
  * 상단 「채널 찾기」·「DM 시작」(+ owner 「채널 만들기」), 하단 내 계정(표시 이름 + 「로그아웃」).
  * 하단 `.sidebar-account`에 owner 전용 「멤버 관리」 진입점(W-10h).
+ * W-11a(시안 01·04·09): 앱 심볼 헤더(compact는 「공간」 제목), 섹션 「채널」·「대화」, 계정 카드.
  */
 export function Sidebar(props: SidebarProps) {
   const { collapsed, account } = props;
   return (
-    <nav className="sidebar" aria-label="공간" data-collapsed={collapsed ? 'true' : 'false'}>
+    <nav className="sidebar" aria-label={SIDEBAR_SHELL_COPY.spaces} data-collapsed={collapsed ? 'true' : 'false'}>
+      <header className="sidebar-header">
+        <span className="app-mark">
+          <AppMark />
+        </span>
+        {props.compact === true ? (
+          <h1 className="sidebar-title">{SIDEBAR_SHELL_COPY.spaces}</h1>
+        ) : (
+          <span className={collapsed ? 'visually-hidden' : 'sidebar-app-name'}>{APP_NAME}</span>
+        )}
+      </header>
       <div className="sidebar-actions">
         {props.onBrowseChannels && (
           <button type="button" className="btn btn-secondary" onClick={props.onBrowseChannels}>
@@ -130,14 +184,12 @@ export function Sidebar(props: SidebarProps) {
       <SpaceListBody {...props} />
       {account !== undefined && (
         <div className="sidebar-account">
+          <AccountCard account={account} />
           {account.role === 'owner' && props.onManageMembers && (
             <button type="button" className="btn btn-secondary" onClick={props.onManageMembers}>
               {MEMBER_ADMIN_COPY.title}
             </button>
           )}
-          <span className="account-name" title={account.displayName}>
-            {account.displayName}
-          </span>
           {props.onLogout && (
             <button type="button" className="btn btn-secondary" onClick={props.onLogout}>
               {SIDEBAR_COPY.logout}

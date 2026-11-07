@@ -38,11 +38,13 @@ describe('사이드바 항목 스타일(CMP-03·CMP-04)', () => {
     expect(tokens.space['--space-3']).toBeDefined();
   });
 
-  it('hover는 --bg-hover, 선택은 hover 중에도 --bg-active와 액센트 선 유지', () => {
+  // W-11a 시안 01·02·09: 선택 = accent-bg(teal3) 면 + 굵게(왼쪽 액센트 선 대신). 기대값 변경 근거 = 시안 01.
+  it('hover는 --bg-hover, 선택은 hover 중에도 --accent-bg 면 + 굵은 기본 글자색 이름', () => {
     expect(decls('.space-item:hover')).toContain('background: var(--bg-hover)');
     const selectedHover = decls('.space-selected:hover');
-    expect(selectedHover).toContain('background: var(--bg-active)');
-    expect(selectedHover).toContain('border-left-color: var(--accent-solid)');
+    expect(selectedHover).toContain('background: var(--accent-bg)');
+    expect(decls('.space-selected .space-name')).toContain('font-weight: 700');
+    expect(decls('.space-selected .space-name')).toContain('color: var(--text)');
   });
 
   it('읽음 이름은 400, 읽지 않음은 700 — 둘 다 기본 글자색(muted는 나간 채널 전용)', () => {

@@ -3,6 +3,7 @@ import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistor
 import type { DataSource, Message, Space } from '../../data';
 import { Composer, MessageItem, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
+import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
 import { MemberAdmin } from '../members';
@@ -10,6 +11,7 @@ import { ThreadPanel } from '../thread';
 import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
+import { SHELL_COPY } from './copy.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
@@ -74,6 +76,8 @@ function ConversationPane(props: {
   readonly membership?: MembershipProps;
   /** FR-SYNC-03: 목록이 맨 아래(마지막 원문이 보임)일 때 그 seq를 알린다. */
   readonly onSeen?: (seq: number) => void;
+  /** wide에서 스레드가 열려 있으면 헤더 오른쪽 패널 토글(시안 01)로 닫는다. */
+  readonly onCloseThread?: () => void;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const left = space.left === true;
@@ -98,9 +102,24 @@ function ConversationPane(props: {
             뒤로
           </button>
         )}
-        <h1 className="conversation-title">{spaceTitle(space)}</h1>
+        <div className="conversation-heading">
+          <h1 className="conversation-title">{spaceTitle(space)}</h1>
+          <span className="conversation-meta">{SHELL_COPY.kind[space.kind]}</span>
+        </div>
         {membership && space.kind === 'channel' && !left && membership.onLeave && <LeaveChannelControl onLeave={membership.onLeave} />}
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
+        {props.onCloseThread && (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={SHELL_COPY.closeThreadPanel}
+            aria-pressed="true"
+            title={SHELL_COPY.closeThreadPanel}
+            onClick={props.onCloseThread}
+          >
+            <PanelRightIcon />
+          </button>
+        )}
       </header>
       {membership && left ? (
         <LeftChannelNotice onRejoin={membership.onRejoin} />
@@ -311,6 +330,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       spaces={snap.spaces}
       selectedId={state.conversationId}
       collapsed={collapsed}
+      compact={bp === 'compact'}
       onSelect={(id) => {
         setMembers(false);
         dispatch({ type: 'select-space', conversationId: id });
@@ -370,6 +390,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       }}
       {...(membership === undefined ? {} : { membership })}
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
+      {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
     />
   );
   const thread = threadOpen && space && root && (
