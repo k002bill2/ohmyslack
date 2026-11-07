@@ -56,4 +56,14 @@ describe('metrics allowlist (PRD §10)', () => {
     expect(toMetricRecord({ ...VALID.message_send_result, has_thread: 'yes' })).toBeUndefined();
     expect(metricRecordSchema.safeParse(VALID.sync_result).success).toBe(true);
   });
+
+  it('형식이 맞아도 사전 정의 enum 밖 값(소문자 이름·토큰 등)은 거부한다(PRD §10 "임의 문자열 대신 사전 정의 enum")', () => {
+    expect(toMetricRecord({ ...VALID.client_state, state: 'alice' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.auth_denied, reason: 'secret_token_abc' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.auth_denied, action: 'bob' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.message_send_result, outcome: 'hello', conv_kind: 'channel' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.message_send_result, conv_kind: 'general' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.sync_result, trigger: 'carol' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.read_sync_result, outcome: 'dave' })).toBeUndefined();
+  });
 });
