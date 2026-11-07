@@ -46,7 +46,7 @@ function mount(server: FakeServer, history: MemoryHistory) {
 /** 서버 상태(원문 1건 + 답글) — 각 경로가 같은 상태를 돌려준다. */
 function scenarioServer() {
   const server = new FakeServer();
-  let root: ReturnType<typeof message> & { body: string | null; edited_at: string | null; deleted_at: string | null } = message(1, {
+  let root: Omit<ReturnType<typeof message>, 'body' | 'edited_at' | 'deleted_at'> & { body: string | null; edited_at: string | null; deleted_at: string | null } = message(1, {
     id: MINE,
     author_id: ME,
     client_message_id: CMID,
