@@ -48,7 +48,8 @@ pnpm --filter @ohmyslack/server reset-password --email <이메일>
 - 입력 방식·정책은 1절과 같습니다.
 - 한 트랜잭션에서 해시를 바꾸고 그 계정의 **열린 세션 전부**에 `revoked_at=now()`를 기록합니다(이미 폐기된 세션의 시각은 그대로).
 - 없는 이메일은 종료 코드 1(`no_such_user`), 변경 없음.
-- 열린 WS 5초 내 close는 W-09(realtime) 범위입니다. 현재는 COMMIT 뒤 `onSessionsRevoked` 훅 자리만 있습니다. W-09 전에는 복구 후 서버를 재시작해 WS 연결을 끊습니다.
+- 열린 WS는 서버 재시작 없이 **5초 안에** close 1008로 닫힙니다. CLI는 별도 프로세스라 서버에 이벤트를 보내지 못하므로, 서버 realtime hub가 열린 연결이 있는 동안 4초마다 그 연결들의 세션을 한 쿼리로 다시 확인(비연장)해 폐기·만료·비활성 계정의 연결을 닫습니다(NC-21, `apps/server/test/ops/credential-reset.int.test.ts`). 수동 SQL로 세션을 폐기하거나 계정을 비활성화한 경우도 같습니다.
+- 확인: 복구 직후 해당 사용자의 브라우저가 5초 안에 로그인 화면으로 돌아가는지 봅니다. 서버 재시작은 필요하지 않습니다.
 
 ## 4. 합성 환경 리허설 (QA-BOOT-01)
 

@@ -53,6 +53,11 @@ export interface AuthService {
   /** 로그인 직전 요청에 실려 온 기존 세션을 폐기한다(세션 고정·회전, NC-07). */
   revokeByToken(token: string | undefined): Promise<void>;
   listSessions(auth: Authenticated): Promise<readonly SessionRecord[]>;
+  /**
+   * 주어진 세션 ID 중 peek 기준으로 지금 유효한 것만(단일 쿼리, 비연장). 프로세스 밖 폐기를 WS sweep이 잡는 데 쓴다
+   * (F-2, NC-21). 저장소가 일괄 조회를 지원할 때만 있다.
+   */
+  liveSessionIds?(sessionIds: readonly string[]): Promise<ReadonlySet<string>>;
 }
 
 export interface AuthServiceDeps {
@@ -148,7 +153,19 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     return { user, token, session };
   };
 
+  const filter = store.filterLiveSessionIds?.bind(store);
+  const liveSessionIds =
+    filter === undefined
+      ? undefined
+      : async (sessionIds: readonly string[]): Promise<ReadonlySet<string>> => {
+          const at = now();
+          const alive = await filter([...new Set(sessionIds)], at, new Date(at.getTime() - SESSION_ABSOLUTE_MS));
+          return new Set(alive);
+        };
+
   return {
+    ...(liveSessionIds === undefined ? {} : { liveSessionIds }),
+
     async login(email, secret, previousToken) {
       const user = await serial(() => verifyAttempt(email, secret));
       if (user === 'rate_limited') return { ok: false, reason: 'rate_limited' };
