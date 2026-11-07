@@ -337,3 +337,54 @@ describe('compact: 채널 찾기는 Dialog가 아닌 화면', () => {
     expect(screen.getByRole('navigation', { name: '공간' })).toBeTruthy();
   });
 });
+
+describe('Codex r1 반영', () => {
+  it('compact: 「채널 찾기」 → /discover push, 뒤로가기 → 화면 닫힘 / `/dm/new` 직접 진입 → DM 시작 화면', async () => {
+    installViewport(400);
+    const { server } = emptyServer('member');
+    server.on('GET /api/conversations/discover', () => ({ status: 200, body: { channels: [], next_cursor: null } }));
+    const { history } = mount(server);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: '채널 찾기' }));
+    expect(history.pathname()).toBe('/discover');
+    act(() => history.back());
+    expect(screen.queryByRole('heading', { name: '채널 찾기' })).toBeNull();
+    cleanup();
+    const second = mount(server, '/dm/new');
+    await settle();
+    expect(screen.getByRole('heading', { name: 'DM 시작' })).toBeTruthy();
+    expect(second.history.pathname()).toBe('/dm/new');
+  });
+
+  it('생성 POST 성공 뒤 목록 조회 실패여도 생성 성공으로 이동(재제출 409 방지)', async () => {
+    installViewport(1280);
+    const { server } = emptyServer('owner');
+    let posted = false;
+    server.on('POST /api/conversations', () => {
+      posted = true;
+      return { status: 201, body: { id: NEW_CH } };
+    });
+    server.on('GET /api/conversations', () => (posted ? { status: 503 } : { status: 200, body: { conversations: [], next_cursor: null } }));
+    server.on(`GET /api/conversations/${NEW_CH}/messages`, () => ({ status: 200, body: { messages: [], has_more: false } }));
+    const { history } = mount(server);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: '채널 만들기' }));
+    fireEvent.change(within(screen.getByRole('dialog')).getByRole('textbox'), { target: { value: 'x' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '채널 만들기' }));
+    await settle();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(history.pathname()).toBe(`/c/${NEW_CH}`);
+  });
+
+  it('Dialog 열림 동안 배경(사이드바)은 inert, 닫히면 해제', async () => {
+    installViewport(1280);
+    const { server } = emptyServer('owner');
+    mount(server);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: '채널 만들기' }));
+    const nav = document.querySelector('nav.sidebar') as HTMLElement;
+    expect(nav.inert).toBe(true);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(nav.inert).toBe(false);
+  });
+});

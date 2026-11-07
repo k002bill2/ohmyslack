@@ -36,7 +36,14 @@ export function Dialog({ title, onClose, children }: DialogProps) {
     body.style.overflow = 'hidden';
     const first = box.current?.querySelector<HTMLElement>('input, select, textarea') ?? box.current?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? box.current)?.focus();
+    // 배경 비활성: 오버레이의 형제(사이드바·본문·스레드)를 `inert`로 — 포인터·포커스·보조기기 모두 막는다(Codex r1 P1).
+    const backdrop = box.current?.parentElement;
+    const siblings = [...(backdrop?.parentElement?.children ?? [])].filter(
+      (el): el is HTMLElement => el instanceof HTMLElement && el !== backdrop && !el.inert,
+    );
+    siblings.forEach((el) => (el.inert = true));
     return () => {
+      siblings.forEach((el) => (el.inert = false));
       body.style.overflow = prevOverflow;
       if (trigger?.isConnected) trigger.focus();
     };

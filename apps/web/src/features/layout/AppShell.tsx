@@ -21,6 +21,14 @@ export interface AppShellProps {
   readonly history?: RouteHistory;
 }
 
+/** 주소 ↔ 패널: `/discover`(채널 찾기)·`/dm/new`(DM 시작). 채널 만들기는 경로가 없다(D §4-2). */
+const PANEL_ROUTES: Readonly<Partial<Record<PanelKind, '/discover' | '/dm/new'>>> = { browse: '/discover', dm: '/dm/new' };
+
+function panelFrom(history: RouteHistory | undefined): PanelKind | null {
+  const kind = history === undefined ? null : parseRoute(history.pathname()).kind;
+  return kind === 'discover' ? 'browse' : kind === 'dm-new' ? 'dm' : null;
+}
+
 /** 첫 상태: 주소가 `/c/:id`면 그 대화(새로고침 복원). */
 function initialFrom(history: RouteHistory | undefined) {
   const route = history === undefined ? null : parseRoute(history.pathname());
@@ -83,7 +91,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const snap = useSyncExternalStore(dataSource.subscribe, dataSource.getSnapshot, dataSource.getSnapshot);
   const viewport = useViewport();
   const [state, dispatch] = useReducer(shellReducer, history, initialFrom);
-  const [panel, setPanel] = useState<PanelKind | null>(null);
+  const [panel, setPanelState] = useState<PanelKind | null>(() => panelFrom(history));
   const routed = useRef(false);
   const [announcement, setAnnouncement] = useState('');
   const shell = useRef<HTMLDivElement>(null);
@@ -111,7 +119,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     const target = formatRoute(state.conversationId === null ? { kind: 'root' } : { kind: 'conversation', conversationId: state.conversationId });
     const first = !routed.current;
     routed.current = true;
-    if (history.pathname() === target) return;
+    // `/discover`·`/dm/new` 직접 진입은 패널 경로를 그대로 둔다.
+    if (history.pathname() === target || (first && panelFrom(history) !== null)) return;
     if (first) history.replace(target);
     else history.push(target);
   }, [history, state.conversationId]);
@@ -121,7 +130,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     () =>
       history?.listen(() => {
         const route = parseRoute(history.pathname());
-        setPanel(null);
+        setPanelState(panelFrom(history));
         dispatch({ type: 'route', conversationId: route.kind === 'conversation' ? route.conversationId : null });
       }),
     [history],
@@ -164,6 +173,16 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   // 전송 FSM 재사용(W-10a): 다시 시도는 같은 client_message_id로 1회 재전송, 삭제는 대기 항목 제거.
   const retry = (clientMessageId: string) => dataSource.retry?.(clientMessageId);
   const discard = (clientMessageId: string) => dataSource.discard?.(clientMessageId);
+  /** 패널 열기·닫기 + compact 주소(UI_STATES §3-2: compact는 `/discover`·`/dm/new` 화면). 닫으면 대화 주소로 replace. */
+  const setPanel = (next: PanelKind | null) => {
+    setPanelState(next);
+    if (history === undefined) return;
+    const path = next === null ? undefined : PANEL_ROUTES[next];
+    if (path !== undefined && bp === 'compact') history.push(path);
+    else if (next === null && panelFrom(history) !== null) {
+      history.replace(formatRoute(state.conversationId === null ? { kind: 'root' } : { kind: 'conversation', conversationId: state.conversationId }));
+    }
+  };
   /** 생성·참여·DM 성공: 목록은 DataSource가 이미 갱신했다 → 패널 닫기 → 그 대화로 이동(구독은 `open` 효과가 기존 규칙으로). */
   const goTo = (conversationId: string) => {
     setPanel(null);

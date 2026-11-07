@@ -498,7 +498,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   /** 생성·참여·DM 성공 뒤: 목록 갱신 → 화면 반영. 이동·구독은 호출자의 `open(id)`이 기존 규칙으로 한다. */
   const refreshThen = async (id: string): Promise<string> => {
-    await loadList();
+    // 생성·참여·DM은 이미 성공했다 — 목록 조회 실패를 동작 실패로 돌려주면 재제출이 409가 된다(Codex r1 P2).
+    // 목록은 다음 복귀 절차가 다시 읽는다. 401은 api가 세션을 이미 끝냈다.
+    try {
+      await loadList();
+    } catch (e) {
+      if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
+    }
     if (!ended) emit();
     return id;
   };
