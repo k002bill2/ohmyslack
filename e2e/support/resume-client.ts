@@ -1,6 +1,6 @@
 import type { ConversationSummary } from '../../apps/server/src/shared.js';
 import type { Session } from '../../apps/server/test/auth/members-int-harness.js';
-import { foldMessage, http, syncFrom, type E2eContext, type FoldState } from './harness.js';
+import { foldDeleted, foldMessage, http, syncFrom, type E2eContext, type FoldState } from './harness.js';
 import { WsClient } from './ws-client.js';
 
 /**
@@ -27,7 +27,8 @@ export class ResumeClient {
     this.ws = undefined;
   }
 
-  async resume(): Promise<boolean> {
+  /** `beforeSubscribe`는 catch-up 확정 뒤·구독 전 틈을 재현하는 테스트 훅이다. */
+  async resume(beforeSubscribe?: () => Promise<void>): Promise<boolean> {
     this.fresh = false;
     try {
       await http(this.ctx, 'GET', '/api/me', this.session);
@@ -36,8 +37,14 @@ export class ResumeClient {
       const catchup = await syncFrom(this.ctx, this.session, this.cursor);
       let state = this.state;
       for (const c of catchup.changes) state = foldMessage(state, c.change_id, c.message);
+      await beforeSubscribe?.();
       for (const id of this.conversationIds) this.ws.subscribe(id, catchup.through);
       await Promise.all(this.conversationIds.map((id) => this.ws?.subscribed(id)));
+      // catch-up 확정 뒤 구독 ACK 전에 온 replay는 같은 멱등 병합으로 반영한다(Codex r1 P2).
+      for (const f of this.ws.frames()) {
+        if (f.type === 'message.created' || f.type === 'message.updated') state = foldMessage(state, f.change_id, f.message);
+        else if (f.type === 'message.deleted') state = foldDeleted(state, f);
+      }
       const list = await http<{ conversations: ConversationSummary[] }>(this.ctx, 'GET', '/api/conversations', this.session);
       this.state = state;
       this.cursor = catchup.through;
