@@ -33,6 +33,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce 
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;
+    // 디자인 §7-4 순위 1: 조합 중에는 앱이 어떤 키도 처리하지 않는다.
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     const target = e.target as HTMLElement;
     const typed = target instanceof HTMLTextAreaElement && target.value !== '';
     e.preventDefault();
@@ -76,7 +78,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce 
           ))}
         </ul>
       )}
-      <Composer label="답글" onSend={onSend} />
+      <Composer key={root.id} label="답글" onSend={onSend} />
     </Tag>
   );
 }

@@ -68,3 +68,23 @@ describe('UnreadBadge (CMP-04)', () => {
     expect(screen.getByRole('img', { name: '멘션 120개' }).textContent).toBe('99+');
   });
 });
+
+describe('ThreadPanel Codex 지적 반영', () => {
+  it('IME 조합 중 Esc는 닫지 않고, 다른 스레드를 열면 작성기 초안을 넘기지 않는다', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const { ThreadPanel } = await import('../../src/features/thread');
+    let closed = 0;
+    const root = { id: 'm1', author: '홍길동', createdAt: T0, body: '원문' };
+    const { rerender } = render(
+      <ThreadPanel variant="medium" root={root} replies={[]} onClose={() => (closed += 1)} onSend={() => undefined} announce={() => undefined} />,
+    );
+    const box = screen.getByRole('textbox', { name: '답글' });
+    fireEvent.keyDown(box, { key: 'Escape', keyCode: 229 });
+    expect(closed).toBe(0);
+    fireEvent.change(box, { target: { value: 'A 초안' } });
+    rerender(
+      <ThreadPanel variant="medium" root={{ ...root, id: 'm2' }} replies={[]} onClose={() => (closed += 1)} onSend={() => undefined} announce={() => undefined} />,
+    );
+    expect((screen.getByRole('textbox', { name: '답글' }) as HTMLTextAreaElement).value).toBe('');
+  });
+});

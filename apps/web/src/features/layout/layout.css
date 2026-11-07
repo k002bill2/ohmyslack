@@ -102,3 +102,13 @@
 .thread-empty {
   color: var(--text-muted);
 }
+body {
+  margin: 0;
+}
+.thread-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent-solid);
+}
