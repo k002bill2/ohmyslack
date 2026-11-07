@@ -38,6 +38,7 @@
 .msg-editor textarea {
   width: 100%;
   font: inherit;
+  font-size: max(1rem, var(--text-md));
 }
 .thread-summary {
   display: inline-flex;
@@ -75,9 +76,25 @@
   background: var(--bg-hover);
 }
 .msg-author {
-  flex: 1 0 100%;
+  flex: 0 1 auto;
+  min-width: 0;
   font-weight: 700;
   color: var(--text);
+}
+/* UI_STATES §3 타임스탬프: medium·wide = 작성자 옆, compact = 메시지 아래(text-xs muted). */
+.msg-time {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.msg-time-inline {
+  margin-inline-start: var(--space-1);
+}
+.msg-time-below {
+  flex: 1 0 100%;
+}
+/* CMP-14 스레드 요약: 원문 아래 별도 줄(액션 줄과 분리). */
+.msg-item > .msg-thread {
+  flex: 1 0 100%;
 }
 .msg-item > .msg-body,
 .msg-item > .msg-deleted,
@@ -156,6 +173,8 @@
   align-items: flex-end;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
+  /* D §5: 하단 safe-area(홈 인디케이터) 위로. index.html viewport-fit=cover 짝. */
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-elevated);
 }
@@ -187,6 +206,7 @@
   }
   .composer {
     padding: var(--space-2) var(--space-3);
+    padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
   }
   .composer .composer-input {
     max-height: 140px;

@@ -16,16 +16,27 @@
 }
 .app-shell {
   display: grid;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /*
+   * W-10l 패널별 스크롤: 셸은 화면 높이로 고정하고 문서는 스크롤하지 않는다(D §5 100dvh, 미지원 시 100vh 폴백).
+   * 1행 = 연결 배너(숨김이면 높이 0), 2행 = 패널 — 배너가 나타나도 패널 행을 늘려 밀지 않는다.
+   */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--bg-app);
   color: var(--text);
   font-family: var(--font-sans);
 }
 .app-shell > * {
   min-width: 0;
+  min-height: 0;
+}
+.app-shell > :not(.connection-banner) {
+  grid-row: 2;
 }
 .connection-banner {
+  grid-row: 1;
   grid-column: 1 / -1;
   padding: var(--space-2) var(--space-4);
 }
@@ -78,6 +89,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow: hidden;
 }
 .message-list,
 .thread-root,
@@ -88,6 +100,7 @@
 }
 .thread-wide {
   width: var(--thread-w);
+  overflow-y: auto;
   background: var(--bg-sidebar);
 }
 .thread-medium {
@@ -117,6 +130,18 @@ body {
 .sidebar {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+/* 목록만 스크롤, 상단 작업·하단 계정은 고정(W-10l). */
+.sidebar > .space-list,
+.sidebar > .empty-state {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sidebar-actions,
+.sidebar-account {
+  flex: none;
 }
 .sidebar-actions,
 .sidebar-account {
@@ -249,7 +274,8 @@ body {
   background: var(--bg-elevated);
   color: var(--text);
   font: inherit;
-  font-size: var(--text-md);
+  /* iOS Safari는 16px 미만 입력 포커스 시 화면을 확대한다(W-10l) — 1rem 하한. 사용자 확대는 막지 않는다. */
+  font-size: max(1rem, var(--text-md));
 }
 .create-channel input[aria-invalid='true'] {
   border-color: var(--danger-solid);
@@ -329,6 +355,7 @@ body {
 }
 .space-screen {
   padding: var(--space-4);
+  overflow-y: auto;
 }
 .space-screen-header {
   display: flex;
@@ -347,6 +374,7 @@ body {
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
+  overflow-y: auto;
   padding: var(--space-4) var(--space-6);
 }
 .member-admin-screen > .btn {
@@ -378,7 +406,7 @@ body {
 }
 .dialog-form input[readonly] {
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: max(1rem, var(--text-sm));
 }
 @media (width <= 640px) {
   .dialog {
@@ -406,6 +434,8 @@ body {
 /* W-10k B: 중앙 빈 상태 형식(.empty-state와 같은 muted·간격). */
 .left-channel-notice {
   flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -465,6 +495,7 @@ body {
 
 /* W-10k B 대화 영역: 헤더 · 목록(남는 높이) · 작성기 하단 고정(AppShell 래퍼 [data-composer]). */
 .conversation-header {
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -497,26 +528,35 @@ body {
 }
 .conversation-pane > .message-list {
   flex: 1 1 auto;
+  /* CMP-06: 목록만 스크롤(헤더·작성기 고정). 하단 고정 로직은 pin-bottom.ts. */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding-block: var(--space-2);
 }
 .message-empty {
   flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   margin: 0;
   padding: var(--space-10) var(--space-4);
   text-align: center;
 }
 .conversation-pane > [data-composer='main'] {
+  flex: none;
   position: sticky;
   bottom: 0;
   z-index: 1;
   margin-top: auto;
   background: var(--bg-elevated);
 }
-/* 넓은 구간은 문서 스크롤 기준 sticky, 고정 오버레이(medium)만 자체 스크롤. */
+/* 스레드는 모든 구간에서 자체 스크롤(W-10l) — 작성기는 패널 안 sticky 하단. */
 .thread-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .thread-medium {
   overflow-y: auto;

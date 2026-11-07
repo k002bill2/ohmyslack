@@ -10,6 +10,7 @@ import { ThreadPanel } from '../thread';
 import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
+import { usePinBottom } from './pin-bottom.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
@@ -74,6 +75,8 @@ function ConversationPane(props: {
 }) {
   const { space, roots, breakpoint, membership } = props;
   const left = space.left === true;
+  const list = useRef<HTMLUListElement>(null);
+  const onListScroll = usePinBottom(list, space.id, `${roots.length}:${roots[roots.length - 1]?.id ?? ''}`);
   return (
     <main className="conversation-pane" inert={props.inert}>
       <header className="conversation-header">
@@ -91,7 +94,7 @@ function ConversationPane(props: {
       ) : roots.length === 0 ? (
         <p className="message-empty">첫 메시지를 남겨 보세요</p>
       ) : (
-        <ul className="message-list">
+        <ul ref={list} className="message-list" onScroll={onListScroll}>
           {roots.map((m) => (
             <MessageItem
               key={m.id}
@@ -101,6 +104,7 @@ function ConversationPane(props: {
               onDiscard={props.onDiscard}
               {...props.itemActions}
               threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
+              timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
             />
           ))}
         </ul>
@@ -162,7 +166,12 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     const prev = prevThread.current;
     prevThread.current = state.threadRootId;
     if (prev !== null && state.threadRootId === null) {
-      shell.current?.querySelector<HTMLElement>(`[data-reply-for="${CSS.escape(prev)}"]`)?.focus();
+      // 삭제된 원문은 「답글」이 없다(§2-5) → 연 버튼 CMP-14로(UI_STATES F1 「또는 연 버튼」).
+      const id = CSS.escape(prev);
+      const target =
+        shell.current?.querySelector<HTMLElement>(`[data-reply-for="${id}"]`) ??
+        shell.current?.querySelector<HTMLElement>(`[data-thread-summary-for="${id}"]`);
+      target?.focus();
     }
   }, [state.threadRootId]);
 

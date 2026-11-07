@@ -58,7 +58,8 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
 export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions }: ThreadPanelProps) {
-  const actions = { ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }), ...messageActions };
+  const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
+  const actions = { timePlacement, ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }), ...messageActions };
   const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
 

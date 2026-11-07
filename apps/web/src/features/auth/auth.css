@@ -48,7 +48,7 @@
   background: var(--bg-elevated);
   color: var(--text);
   font: inherit;
-  font-size: var(--text-md);
+  font-size: max(1rem, var(--text-md));
 }
 .auth-card input[aria-invalid='true'] {
   border-color: var(--danger-solid);
