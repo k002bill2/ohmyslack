@@ -187,3 +187,24 @@ export const DM_STARTER_COPY = {
 
 /** 서버 403(D §4-2 멤버 관리 「권한이 없습니다」, UI_STATES §2-12 권한 없음). 채널 만들기 403에도 같은 문장을 쓴다. */
 export const FORBIDDEN_TEXT = '권한이 없습니다';
+
+/**
+ * CMP-07 메시지 액션·상태(W-10i). 모두 정본 문구 그대로:
+ * edit·delete = D §3-4 아이콘 표 「수정 / 삭제」·§7-3 단축키 표 「수정(내 것) / 삭제(내 것)」,
+ * edited = D §4-3 용어표·§6-3 「(수정됨)」, deleted = D §4-3·UI_STATES §2-5 「삭제된 메시지입니다」.
+ */
+export const MESSAGE_ACTION_COPY = {
+  edit: '수정',
+  delete: DELETE_MESSAGE_COPY.confirm,
+  edited: '(수정됨)',
+  deleted: '삭제된 메시지입니다',
+} as const;
+
+/**
+ * CMP-14 ThreadSummary(UI_STATES §2-7, D §4-3 「답글 3」·「새 답글」). 「마지막 답글 n분 전」은 계약에 마지막 답글 시각이 없어
+ * 렌더하지 않는다(W-10i REPORT).
+ */
+export const THREAD_SUMMARY_COPY = {
+  replies: (count: number): string => `답글 ${count}`,
+  newReplies: '새 답글',
+} as const;

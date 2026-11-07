@@ -1,6 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT } from '../../ui/copy.js';
-import { Composer, MessageItem, type DraftStore, type MessageItemData } from '../conversation';
+import { Composer, MessageItem, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -17,6 +17,8 @@ export interface ThreadPanelProps {
   /** 실패 답글 「다시 시도」·「삭제」(client_message_id). */
   readonly onRetry?: (clientMessageId: string) => void;
   readonly onDiscard?: (clientMessageId: string) => void;
+  /** 본인 메시지 수정·삭제(W-10i). 원문·답글 모두 같은 규칙. */
+  readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete'>;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -55,8 +57,8 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard }: ThreadPanelProps) {
-  const actions = { ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }) };
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions }: ThreadPanelProps) {
+  const actions = { ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }), ...messageActions };
   const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
 

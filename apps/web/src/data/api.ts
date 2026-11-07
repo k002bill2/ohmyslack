@@ -68,6 +68,10 @@ export function createApi(deps: ApiDeps) {
   return {
     get: <T>(path: string) => request<T>('GET', path),
     post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
+    /** `PATCH`(메시지 수정, W-10i). */
+    patch: <T>(path: string, body: unknown) => request<T>('PATCH', path, body),
+    /** `DELETE`(메시지 삭제, W-10i). 본문 없이 보낸다. */
+    del: <T>(path: string) => request<T>('DELETE', path),
     setCsrf(token: string | null): void {
       csrf = token;
     },

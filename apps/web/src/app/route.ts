@@ -64,6 +64,8 @@ export function formatRoute(route: Route): string {
 export interface RouteHistory {
   /** 현재 경로(쿼리·해시 제외). */
   pathname(): string;
+  /** 현재 쿼리(`?thread=…` 포함, W-10i). 없으면 쿼리를 읽지 않는다. */
+  search?(): string;
   push(path: string): void;
   replace(path: string): void;
   /** 뒤로·앞으로(`popstate`) 때 호출. 해제 함수를 돌려준다. */
@@ -73,6 +75,7 @@ export interface RouteHistory {
 /** `window.history` 배선. */
 export const browserHistory: RouteHistory = Object.freeze({
   pathname: () => location.pathname,
+  search: () => location.search,
   push: (path: string) => history.pushState(null, '', path),
   replace: (path: string) => history.replaceState(null, '', path),
   listen(onPop: () => void) {
@@ -94,7 +97,12 @@ export function createMemoryHistory(initial = '/'): MemoryHistory {
   let index = 0;
   const listeners = new Set<() => void>();
   return {
-    pathname: () => stack[index] ?? '/',
+    pathname: () => (stack[index] ?? '/').split('?')[0] ?? '/',
+    search: () => {
+      const entry = stack[index] ?? '/';
+      const at = entry.indexOf('?');
+      return at < 0 ? '' : entry.slice(at);
+    },
     push(path) {
       stack = [...stack.slice(0, index + 1), path];
       index = stack.length - 1;
@@ -113,4 +121,15 @@ export function createMemoryHistory(initial = '/'): MemoryHistory {
       listeners.forEach((l) => l());
     },
   };
+}
+
+/** `?thread=:rootMessageId`(D §4-2 스레드 라우트, UI_STATES §3-3 T2) → root id. 없거나 비면 null(W-10i). */
+export function parseThreadParam(search: string): string | null {
+  const value = new URLSearchParams(search).get('thread');
+  return value === null || value === '' ? null : value;
+}
+
+/** 경로에 `?thread=` 쿼리를 붙인다(null이면 경로 그대로). */
+export function withThread(path: string, rootId: string | null): string {
+  return rootId === null ? path : `${path}?${new URLSearchParams({ thread: rootId }).toString()}`;
 }

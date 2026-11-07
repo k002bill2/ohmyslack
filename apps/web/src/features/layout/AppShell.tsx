@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
-import { formatRoute, parseRoute, type RouteHistory } from '../../app/route.js';
+import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, MessageItem, createDraftStore, type DraftStore } from '../conversation';
+import { Composer, MessageItem, createDraftStore, type DraftStore, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
@@ -38,8 +38,16 @@ function membersFrom(history: RouteHistory | undefined): boolean {
 /** 첫 상태: 주소가 `/c/:id`면 그 대화(새로고침 복원). */
 function initialFrom(history: RouteHistory | undefined) {
   const route = history === undefined ? null : parseRoute(history.pathname());
-  return route?.kind === 'conversation' ? { conversationId: route.conversationId, threadRootId: null } : initialShellState;
+  return route?.kind === 'conversation' ? { conversationId: route.conversationId, threadRootId: threadFrom(history) } : initialShellState;
 }
+
+/** 주소의 `?thread=:rootMessageId`(W-10i). 쿼리를 못 읽는 history면 null. */
+function threadFrom(history: RouteHistory | undefined): string | null {
+  return parseThreadParam(history?.search?.() ?? '');
+}
+
+/** 메시지 항목 공통 props(W-10i): 본인 액션·스레드 요약. */
+type ItemActions = Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'onOpenThread' | 'threadHolding'>;
 
 function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
@@ -57,6 +65,7 @@ function ConversationPane(props: {
   readonly onSend: (body: string) => void;
   readonly onRetry: (clientMessageId: string) => void;
   readonly onDiscard: (clientMessageId: string) => void;
+  readonly itemActions?: ItemActions;
 }) {
   const { space, roots, breakpoint } = props;
   return (
@@ -74,7 +83,15 @@ function ConversationPane(props: {
       ) : (
         <ul className="message-list">
           {roots.map((m) => (
-            <MessageItem key={m.id} message={m} onReply={props.onReply} onRetry={props.onRetry} onDiscard={props.onDiscard} />
+            <MessageItem
+              key={m.id}
+              message={m}
+              onReply={props.onReply}
+              onRetry={props.onRetry}
+              onDiscard={props.onDiscard}
+              {...props.itemActions}
+              threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
+            />
           ))}
         </ul>
       )}
@@ -151,9 +168,22 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         setPanelState(panelFrom(history));
         setMembers(route.kind === 'members');
         dispatch({ type: 'route', conversationId: route.kind === 'conversation' ? route.conversationId : null });
+        // `?thread=` 복원·뒤로가기로 닫힘(W-10i).
+        const thread = route.kind === 'conversation' ? threadFrom(history) : null;
+        dispatch(thread === null ? { type: 'close-thread' } : { type: 'open-thread', rootId: thread });
       }),
     [history],
   );
+
+  // 주소 ← 스레드(W-10i, D §4-2): 열기 → `?thread=` push, 닫기 → 쿼리 제거(replace). 주소와 같으면 그대로.
+  useEffect(() => {
+    if (history === undefined || members || state.conversationId === null) return;
+    if (threadFrom(history) === state.threadRootId) return;
+    const path = formatRoute({ kind: 'conversation', conversationId: state.conversationId });
+    if (history.pathname() !== path) return;
+    if (state.threadRootId === null) history.replace(path);
+    else history.push(withThread(path, state.threadRootId));
+  }, [history, members, state.conversationId, state.threadRootId]);
 
   // 현재 대화 구독·이력 로드(HTTP 구현). 메모리 구현은 open이 없다.
   useEffect(() => {
@@ -190,6 +220,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   };
 
   const closeThread = () => dispatch({ type: 'close-thread' });
+  const messageActions = {
+    ...(snap.account === undefined ? {} : { selfId: snap.account.id }),
+    ...(dataSource.editMessage === undefined ? {} : { onEdit: (id: string, body: string) => dataSource.editMessage!(id, body) }),
+    ...(dataSource.deleteMessage === undefined ? {} : { onDelete: (id: string) => dataSource.deleteMessage!(id) }),
+  };
   // 전송 FSM 재사용(W-10a): 다시 시도는 같은 client_message_id로 1회 재전송, 삭제는 대기 항목 제거.
   const retry = (clientMessageId: string) => dataSource.retry?.(clientMessageId);
   const discard = (clientMessageId: string) => dataSource.discard?.(clientMessageId);
@@ -266,6 +301,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSend={(body) => dataSource.send({ conversationId: space.id }, body)}
       onRetry={retry}
       onDiscard={discard}
+      itemActions={{
+        ...messageActions,
+        onOpenThread: (id) => dispatch({ type: 'open-thread', rootId: id }),
+        threadHolding: snap.connection === 'catching-up',
+      }}
     />
   );
   const thread = space && root && (
@@ -279,6 +319,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       drafts={drafts}
       onRetry={retry}
       onDiscard={discard}
+      messageActions={messageActions}
     />
   );
   const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || sidebar;

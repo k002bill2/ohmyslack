@@ -24,3 +24,5 @@ export {
   type SendController,
   type SendControllerDeps,
 } from './send-controller.js';
+export { canModify, failureView, type FailureView } from './MessageItemRules.js';
+export { ThreadSummary, type ThreadSummaryProps } from './MessageItemThreadSummary.js';
