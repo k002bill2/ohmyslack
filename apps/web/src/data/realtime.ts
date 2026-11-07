@@ -83,8 +83,9 @@ export function createRealtimeClient(deps: RealtimeDeps) {
   };
 
   return {
+    /** 멈춤 상태이거나 1008 정책 종료로 재연결이 멈춘 상태(소켓·타이머 없음)에서만 연결을 시작한다. */
     start(): void {
-      if (!stopped) return;
+      if (!stopped && (socket !== null || timer !== null)) return;
       stopped = false;
       connect();
     },
