@@ -1,6 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT } from '../../ui/copy.js';
-import { Composer, MessageItem, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, MessageItem, lastServerSeq, scrolledToBottom, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -19,6 +19,8 @@ export interface ThreadPanelProps {
   readonly onDiscard?: (clientMessageId: string) => void;
   /** 본인 메시지 수정·삭제(W-10i). 원문·답글 모두 같은 규칙. */
   readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete'>;
+  /** FR-SYNC-03: 패널이 맨 아래(마지막 답글이 보임)일 때 그 답글 seq를 알린다. 답글이 없으면 부르지 않는다(본문 열기 ≠ 답글 읽음). */
+  readonly onSeen?: (seq: number) => void;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -57,11 +59,17 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
   const actions = { timePlacement, ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }), ...messageActions };
   const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
+  const lastReply = lastServerSeq(replies);
+  const reportSeen = () => {
+    const el = container.current;
+    if (el !== null && lastReply !== undefined && scrolledToBottom(el)) onSeen?.(lastReply);
+  };
+  useEffect(reportSeen);
 
   useEffect(() => {
     container.current?.querySelector('textarea')?.focus();
@@ -103,6 +111,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
       aria-label="스레드"
       {...variantProps(variant)}
       onKeyDown={onKeyDown}
+      onScroll={reportSeen}
     >
       <div className="thread-header">
         <button type="button" className="btn btn-secondary" onClick={onClose}>

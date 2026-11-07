@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, MessageItem, createDraftStore, type DraftStore, type MessageItemProps } from '../conversation';
+import { Composer, MessageItem, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
@@ -10,7 +10,7 @@ import { ThreadPanel } from '../thread';
 import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
-import { usePinBottom } from './pin-bottom.js';
+import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
@@ -72,11 +72,24 @@ function ConversationPane(props: {
   readonly itemActions?: ItemActions;
   /** W-10j: 채널 나가기·다시 참여·멘션 후보(없으면 렌더하지 않음). */
   readonly membership?: MembershipProps;
+  /** FR-SYNC-03: 목록이 맨 아래(마지막 원문이 보임)일 때 그 seq를 알린다. */
+  readonly onSeen?: (seq: number) => void;
 }) {
-  const { space, roots, breakpoint, membership } = props;
+  const { space, roots, breakpoint, membership, onSeen } = props;
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
-  const onListScroll = usePinBottom(list, space.id);
+  const onPinScroll = usePinBottom(list, space.id);
+  const lastSeq = lastServerSeq(roots);
+  const reportSeen = () => {
+    const el = list.current;
+    if (el !== null && lastSeq !== undefined && isAtBottom(el)) onSeen?.(lastSeq);
+  };
+  // 렌더 후(새 메시지·전환·전경 복귀 재렌더)와 스크롤 때 맨 아래면 본 위치를 알린다. 판정(전경·현재 대화·단조)은 DataSource.
+  useEffect(reportSeen);
+  const onListScroll = () => {
+    onPinScroll();
+    reportSeen();
+  };
   return (
     <main className="conversation-pane" inert={props.inert}>
       <header className="conversation-header">
@@ -356,6 +369,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         threadHolding: snap.connection === 'catching-up',
       }}
       {...(membership === undefined ? {} : { membership })}
+      onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
     />
   );
   const thread = threadOpen && space && root && (
@@ -370,6 +384,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onRetry={retry}
       onDiscard={discard}
       messageActions={messageActions}
+      onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
     />
   );
   const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || sidebar;

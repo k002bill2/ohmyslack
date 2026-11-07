@@ -87,7 +87,7 @@ function fullFixture(qa: Record<string, string>): string {
     sources: {
       'apps/server/test/a.int.test.ts': `it('${N1}', () => {});`,
       'perf/b.perf.ts': `test("${N2}", () => {});`,
-      [AUX]: `it('aux', () => {});`,
+      [AUX]: `it('FR-TST-01 aux', () => {});`,
     },
     qa,
   });
@@ -218,6 +218,7 @@ describe('check-fr-coverage regressions (Codex round 2)', () => {
     const root = build({
       sources: {
         'apps/server/test/a.int.test.ts': `// see '${N1}'\nconst label = '${N1}';\nit('${N1}', () => {});`,
+        [AUX]: `it('FR-TST-01 aux', () => {});`,
       },
     });
     write(root, 'reports/r0.json', JSON.stringify(report(root, 'apps/server/test/a.int.test.ts', [N1])));
@@ -231,7 +232,7 @@ describe('check-fr-coverage regressions (Codex round 3)', () => {
   const FILE = 'apps/server/test/a.int.test.ts';
 
   async function progressWith(src: string): Promise<{ code: number; text: string }> {
-    const root = build({ sources: { [FILE]: src } });
+    const root = build({ sources: { [FILE]: src, [AUX]: `it('FR-TST-01 aux', () => {});` } });
     write(root, 'reports/r0.json', JSON.stringify(report(root, FILE, [N1])));
     return exec(root, '--mode=progress');
   }
@@ -275,7 +276,7 @@ describe('check-fr-coverage regressions (Codex round 3)', () => {
   function shFixture(qa: Record<string, string>, withDrill = true): string {
     const root = build({
       rows: shRows,
-      sources: { [FILE]: `it('${N1}', () => {});`, [AUX]: `it('aux', () => {});`, ...(withDrill ? { [DRILL]: '#!/bin/sh\n' } : {}) },
+      sources: { [FILE]: `it('${N1}', () => {});`, [AUX]: `it('FR-TST-01 aux', () => {});`, ...(withDrill ? { [DRILL]: '#!/bin/sh\n' } : {}) },
       qa,
     });
     write(root, 'reports/r0.json', JSON.stringify(report(root, FILE, [N1])));
@@ -331,7 +332,7 @@ describe('check-fr-coverage TR-SEC 6-3 (NC-01)', () => {
       sources: {
         'apps/server/test/a.int.test.ts': `it('${N1}', () => {});`,
         'perf/b.perf.ts': `test('${N2}', () => {});`,
-        [AUX]: `it('aux', () => {});`,
+        [AUX]: `it('FR-TST-01 aux', () => {});`,
         ...(withSelf ? { [SFILE]: `it('${S2}', () => {});` } : {}),
       },
       qa,
@@ -420,5 +421,68 @@ describe('check-fr-coverage TR-SEC 6-3 (NC-01)', () => {
     const res = await exec(build({ secRows: rows }), '--mode=progress');
     expect(res.text).toContain('중복');
     expect(res.code).toBe(1);
+  });
+});
+
+describe('designated auxiliary test files (both modes)', () => {
+  const MAIN = 'apps/server/test/a.int.test.ts';
+  const SERVER_AUX = 'apps/server/test/aux/aux.int.test.ts';
+  const GLOB = 'apps/web/test/**/*.test.tsx';
+  const rowWith = (aux: string): string =>
+    `| FR-TST-01 | \`${N1}\` | 통합 \`${MAIN}\` | PR | 컴포넌트 \`${aux}\`: x, \`pnpm check:x\` | — |`;
+
+  async function progressAux(sources: Readonly<Record<string, string>>, aux = AUX): Promise<{ code: number; text: string }> {
+    const rows = [rowWith(aux), defaultRows[1] ?? ''];
+    const root = build({ rows, sources: { [MAIN]: `it('${N1}', () => {});`, ...sources } });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, MAIN, [N1])));
+    return exec(root, '--mode=progress');
+  }
+
+  it('progress fails when a designated aux file is missing', async () => {
+    const r = await progressAux({});
+    expect(r.code).toBe(1);
+    expect(r.text).toContain(`FR-TST-01: 지정 보조 테스트 파일 없음 ${AUX}`);
+  });
+
+  it('progress fails when the aux file has no FR-prefixed it/test/describe title', async () => {
+    const src = `describe('suite', () => { it('aux', () => {}); it('FR-TST-011 other', () => {}); });\n// it('FR-TST-01 c')`;
+    const r = await progressAux({ [AUX]: src });
+    expect(r.code).toBe(1);
+    expect(r.text).toContain(`FR-TST-01: 지정 보조 테스트 제목 없음 ${AUX}`);
+  });
+
+  it('progress passes when an it or describe title starts with the FR ID', async () => {
+    for (const src of [`it('FR-TST-01 aux', () => {});`, `describe('FR-TST-01 suite', () => { it('x', () => {}); });`]) {
+      const r = await progressAux({ [AUX]: src });
+      expect(r.text).not.toContain('지정 보조 테스트');
+      expect(r.code).toBe(0);
+    }
+  });
+
+  it('ignores glob aux paths', async () => {
+    const r = await progressAux({}, GLOB);
+    expect(r.text).not.toContain('지정 보조 테스트');
+    expect(r.code).toBe(0);
+  });
+
+  it('checks titles only for apps/web aux files but existence for all', async () => {
+    const titled = await progressAux({ [SERVER_AUX]: `it('aux', () => {});` }, SERVER_AUX);
+    expect(titled.text).not.toContain('지정 보조 테스트');
+    expect(titled.code).toBe(0);
+    const absent = await progressAux({}, SERVER_AUX);
+    expect(absent.text).toContain(`FR-TST-01: 지정 보조 테스트 파일 없음 ${SERVER_AUX}`);
+  });
+
+  it('does not require aux files for an unimplemented row', async () => {
+    const r = await exec(build(), '--mode=progress');
+    expect(r.text).not.toContain('지정 보조 테스트');
+  });
+
+  it('gate also reports a missing designated aux file', async () => {
+    const root = build({ rows: [rowWith(AUX), defaultRows[1] ?? ''], sources: { [MAIN]: `it('${N1}', () => {});` } });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, MAIN, [N1])));
+    const r = await exec(root, '--mode=gate');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain(`FR-TST-01: 지정 보조 테스트 파일 없음 ${AUX}`);
   });
 });

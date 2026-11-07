@@ -116,6 +116,11 @@ export interface DataSource extends SpacesApi, MembershipApi {
   open?(conversationId: string | null): void;
   /** 스레드를 열거나(root id) 닫을 때(null) 호출 — 기존 답글 조회. 메모리 구현은 없음. */
   openThread?(rootId: string | null): void;
+  /**
+   * 화면이 실제로 보여 준 마지막 seq(본문: rootId null, 스레드: root id). 전경·현재 대화·단조 조건은 구현이 판정한다
+   * (FR-SYNC-03, PRD §7-7). 메모리 구현은 없음.
+   */
+  markRead?(conversationId: string, rootId: string | null, seq: number): void;
   /** 실패·확인 중 전송 항목 다시 시도/삭제(W-10a 전송 FSM). 메모리 구현은 없음. */
   retry?(clientMessageId: string): void;
   discard?(clientMessageId: string): void;
