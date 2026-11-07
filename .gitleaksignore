@@ -4,3 +4,5 @@ edcce8ab356c0a32441d75d3f89063dc6dbed0c2:apps/server/test/realtime/upgrade-rejec
 c8ca562e4ec4cf2db5bf564287ce72c67f22b89b:apps/web/test/auth/invite.test.tsx:generic-api-key:8
 # migrate-cli.unit.test.ts synthetic canary password "S3cr3t-pa55-xyz" used to assert it is never printed (not a real credential)
 1d64b3ea1fd30feb345ae15c535480b9657f64bf:apps/server/test/ops/migrate-cli.unit.test.ts:generic-api-key:8
+# member-admin.test.tsx synthetic invite token fixture "tok_SECRET_abc123" (asserts token is never persisted; not a real credential)
+84d4dedbc3b15fec1eb7b92ffba7d83bd02007e2:apps/web/test/members/member-admin.test.tsx:generic-api-key:24
