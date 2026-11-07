@@ -27,8 +27,17 @@ export interface NewMessage {
   readonly at: Date;
 }
 
+/**
+ * 답글 쓰기(생성·삭제)의 원문 현재 상태. 같은 트랜잭션에서 change 기록 뒤에 읽어 root_reply_count가 commit 결과와 같다(TRD §4).
+ * 원문 쓰기·수정·멱등 재시도에는 없다.
+ */
+export interface ReplyRoot {
+  readonly root?: MessageRecord;
+}
+
 export type SendResult =
-  | { readonly kind: 'created' | 'replayed'; readonly message: MessageRecord; readonly changeId: number }
+  | ({ readonly kind: 'created'; readonly message: MessageRecord; readonly changeId: number } & ReplyRoot)
+  | { readonly kind: 'replayed'; readonly message: MessageRecord; readonly changeId: number }
   | { readonly kind: 'conflict' }
   | { readonly kind: 'not_member' }
   | { readonly kind: 'bad_root' };
@@ -42,7 +51,7 @@ export interface MessageEdit {
 }
 
 export type WriteResult =
-  | { readonly kind: 'ok'; readonly message: MessageRecord; readonly changeId: number }
+  | ({ readonly kind: 'ok'; readonly message: MessageRecord; readonly changeId: number } & ReplyRoot)
   | { readonly kind: 'not_found' }
   | { readonly kind: 'forbidden' };
 

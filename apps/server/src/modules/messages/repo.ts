@@ -7,6 +7,7 @@ import type {
   NewMessage,
   Page,
   PageRequest,
+  ReplyRoot,
   SendResult,
   WriteResult,
 } from './store.js';
@@ -203,7 +204,17 @@ async function sendIn(client: pg.PoolClient, msg: NewMessage): Promise<TxOutcome
   const changeId = await recordChange(client, msg.conversationId, msg.id, 'create', msg.at);
   const message = await load(client, msg.id);
   if (message === undefined) throw new Error('생성한 메시지를 다시 읽지 못했습니다');
-  return { commit: true, value: { kind: 'created', message, changeId } };
+  return { commit: true, value: { kind: 'created', message, changeId, ...(await replyRoot(client, msg.threadRootId)) } };
+}
+
+/**
+ * 답글 쓰기면 원문 현재 상태(root_reply_count 포함)를 같은 트랜잭션에서 읽는다. 반드시 recordChange **뒤**에 호출한다:
+ * sync_clock 행 잠금이 동시 답글 쓰기를 직렬화하므로, 그 뒤의 읽기는 앞선 commit을 본다(오래된 수를 더 큰 change_id로 내지 않는다).
+ */
+async function replyRoot(client: pg.PoolClient, rootId: string | null): Promise<ReplyRoot> {
+  if (rootId === null) return {};
+  const root = await load(client, rootId);
+  return root === undefined ? {} : { root };
 }
 
 interface LockedMessage {
@@ -249,7 +260,7 @@ async function removeIn(client: pg.PoolClient, id: string, actorId: string, at: 
   const changeId = await recordChange(client, locked.conversationId, id, 'delete', at);
   const message = await load(client, id);
   if (message === undefined) throw new Error('삭제한 메시지를 다시 읽지 못했습니다');
-  return { commit: true, value: { kind: 'ok', message, changeId } };
+  return { commit: true, value: { kind: 'ok', message, changeId, ...(await replyRoot(client, locked.threadRootId)) } };
 }
 
 /** seq 범위 페이지. `scope`는 `m.`로 시작하는 WHERE 조각, `$1`은 scope 인자. 결과는 항상 seq 오름차순. */
