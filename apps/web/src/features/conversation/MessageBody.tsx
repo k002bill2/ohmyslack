@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useMemo } from 'react';
 import { parseBody, type Block, type Line } from './render.js';
 
 /** CMP-08 MessageBody — React text node로만 렌더한다(HTML 미실행). 스타일은 정적 CSS 클래스(CSP style-src 'self'). */
@@ -38,10 +38,12 @@ function BlockView({ block }: { readonly block: Block }) {
   );
 }
 
+/** 본문이 같으면 다시 파싱하지 않는다(F-1: store 이벤트마다 보이는 모든 메시지를 재파싱하지 않게). */
 export function MessageBody({ body }: { readonly body: string }) {
+  const blocks = useMemo(() => parseBody(body), [body]);
   return (
     <div className="msg-body">
-      {parseBody(body).map((block, i) => (
+      {blocks.map((block, i) => (
         <BlockView key={i} block={block} />
       ))}
     </div>

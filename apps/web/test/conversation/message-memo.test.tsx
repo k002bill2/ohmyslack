@@ -11,7 +11,10 @@ vi.mock('../../src/features/conversation/render.js', async (importOriginal) => {
 
 const parseSpy = vi.mocked(renderModule.parseBody);
 
-beforeEach(() => parseSpy.mockClear());
+// 블록으로 감싼다: mockClear가 돌려준 mock을 vitest가 teardown 함수로 호출하지 않게.
+beforeEach(() => {
+  parseSpy.mockClear();
+});
 afterEach(cleanup);
 
 const MESSAGE: MessageItemData = { id: 'm1', author: '홍길동', createdAt: '2026-11-07T06:12:00.000Z', body: '안녕 https://example.com' };

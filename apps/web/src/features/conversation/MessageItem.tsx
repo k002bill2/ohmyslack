@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { MessageBody } from './MessageBody.js';
 import { MessageStatus } from './MessageStatus.js';
 import type { PendingMessage } from './send-status.js';
@@ -27,7 +28,7 @@ export function messageLabel(author: string, createdAt: string): string {
 }
 
 /** CMP-07 MessageItem(골격) — 작성자·본문·전송 상태·「답글」. 아바타·스레드 요약·액션 툴바는 다음 레인. */
-export function MessageItem({ message, onReply, onRetry, onDiscard }: MessageItemProps) {
+function MessageItemView({ message, onReply, onRetry, onDiscard }: MessageItemProps) {
   const pending = message.pending;
   return (
     <li className="msg-item" aria-label={messageLabel(message.author, message.createdAt)}>
@@ -48,3 +49,6 @@ export function MessageItem({ message, onReply, onRetry, onDiscard }: MessageIte
     </li>
   );
 }
+
+/** props가 얕게 같으면 재렌더하지 않는다(F-1). 본문 재파싱은 MessageBody의 useMemo가 따로 막는다. */
+export const MessageItem = memo(MessageItemView);
