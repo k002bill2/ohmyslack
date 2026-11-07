@@ -106,12 +106,14 @@ describe('초대 발급·수락·폐기', () => {
     expect(await dbState(ctx.schema)).toEqual(before);
   });
 
-  it('이미 있는 이메일은 같은 오류로 거부되고 token을 소비하지 않는다(NC-20)', async () => {
+  it('이미 있는 이메일은 같은 오류로 거부되고 token을 소모한다(NC-20, W-15 F-3: 반복 이메일 조회 차단)', async () => {
     const invite = await issue();
     const dup = await accept(invite.token, 'MEMBER@example.test');
     expect(dup.statusCode).toBe(400);
     expect(dup.json().error.code).toBe('invite_invalid');
-    expect((await accept(invite.token, 'fresh@example.test')).statusCode).toBe(201);
+    const again = await accept(invite.token, 'fresh@example.test');
+    expect(again.statusCode).toBe(400);
+    expect(again.json().error.code).toBe('invite_invalid');
   });
 
   it('정책 미달 비밀번호·잘못된 본문은 계정을 만들지 않고 token을 소비하지 않는다', async () => {
