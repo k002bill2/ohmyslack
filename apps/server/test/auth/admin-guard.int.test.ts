@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createPgAuthStore } from '../../src/modules/auth/index.js';
+import { createPgConversationsStore } from '../../src/modules/conversations/index.js';
+import { createPgMembersStore } from '../../src/modules/members/index.js';
+import { testApp } from '../support/auth-app.js';
+import { convState } from '../conversations/conv-int-harness.js';
 import { call, dbState, setupMembersInt, signIn, teardownMembersInt, type MembersIntContext } from './members-int-harness.js';
 
 /** admin 메타 가드(DEV_DESIGN §2-4). 채널 생성 403은 W-07에서 FR-AUTH-05 지정 `it`으로 완성한다. */
@@ -43,5 +48,36 @@ describe('admin 가드', () => {
     expect(admin.sort()).toEqual(['POST /api/admin/members/:user_id/deactivate', 'POST /api/invites', 'POST /api/invites/:id/revoke']);
     const pub = ctx.app.accessRoutes.filter((r) => r.access === 'public').map((r) => r.url);
     expect(pub).toContain('/api/invites/accept');
+  });
+
+  it('FR-AUTH-05 일반 멤버의 초대·비활성화·채널 생성 요청은 403이고 DB 상태가 바뀌지 않는다', async () => {
+    // 채널 생성 라우트까지 등록한 앱(위 레지스트리 `it`의 admin 3개 기대값은 그대로 둔다).
+    const app = testApp({
+      authStore: createPgAuthStore(ctx.schema.pool),
+      membersStore: createPgMembersStore(ctx.schema.pool),
+      conversationsStore: createPgConversationsStore(ctx.schema.pool),
+    });
+    await app.ready();
+    try {
+      const owner = await signIn(app, 'owner@example.test');
+      const invite = (await call(app, 'POST', '/api/invites', owner)).json<{ id: string }>();
+      const member = await signIn(app, 'member@example.test');
+      const before = { ...((await dbState(ctx.schema)) as object), conv: await convState(ctx.schema) };
+      const attempts = [
+        call(app, 'POST', '/api/invites', member),
+        call(app, 'POST', `/api/invites/${invite.id}/revoke`, member),
+        call(app, 'POST', `/api/admin/members/${ctx.ownerId}/deactivate`, member),
+        call(app, 'POST', '/api/conversations', member, { kind: 'channel', name: 'general' }),
+      ];
+      for (const res of await Promise.all(attempts)) {
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error.code).toBe('forbidden');
+      }
+      expect({ ...((await dbState(ctx.schema)) as object), conv: await convState(ctx.schema) }).toEqual(before);
+      const admin = app.accessRoutes.filter((r) => r.access === 'admin').map((r) => `${r.method} ${r.url}`);
+      expect(admin).toContain('POST /api/conversations');
+    } finally {
+      await app.close();
+    }
   });
 });
