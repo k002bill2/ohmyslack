@@ -16,6 +16,9 @@ const QA_ID = /QA-[A-Z0-9]+(?:-[A-Z0-9]+)*/;
 const MODIFIERS = new Set(['skip', 'todo', 'only']);
 /** 6-2 지정 파일이 vitest가 수집하는 TS 소스인지. 아니면(예: `.sh`) 수동 증거로 판정한다. */
 const VITEST_SOURCE = /\.tsx?$/;
+const SUITE_CALLEES = new Set(['describe', 'it', 'test']);
+/** 보조 테스트 제목의 FR ID 접두를 확인하는 경로 범위. */
+const AUX_TITLE_SCOPE = 'apps/web/';
 
 export interface DesignRow {
   /** 행 ID: 6-2는 `FR-XXX-nn`, 6-3 자체 지정 행은 `TR-SEC-nn`. */
@@ -201,6 +204,42 @@ export function findDeclarations(text: string, file: string): Declaration[] {
   return found;
 }
 
+/** `describe`/`it`/`test`(수식자·each 포함) 첫 인자 문자열 제목을 모두 모은다. 지정 보조 테스트의 FR ID 접두 확인용. */
+function findSuiteTitles(text: string, file: string): string[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const titles: string[] = [];
+  const isSuiteCallee = (expr: ts.Expression): boolean => {
+    let node: ts.Expression = expr;
+    while (ts.isCallExpression(node) || ts.isPropertyAccessExpression(node)) node = node.expression;
+    return ts.isIdentifier(node) && SUITE_CALLEES.has(node.text);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const first = node.arguments[0];
+      if (first !== undefined && ts.isStringLiteralLike(first) && isSuiteCallee(node.expression)) titles.push(first.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return titles;
+}
+
+/**
+ * 진행·판정 모드 공통: 지정 테스트가 발견된 행의 "필수 보조 증거" 테스트 파일(glob 제외)이 있어야 하고,
+ * 웹 파일(`apps/web/`)은 DEV_DESIGN §6-2 "보조 테스트는 이름 앞에 같은 FR ID"대로 FR ID로 시작하는 제목이 있어야 한다.
+ * 서버 보조 파일은 현재 FR ID 접두 제목이 없어(소유 레인 수정 대상) 존재만 확인한다.
+ */
+function checkAuxDeclared(root: string, row: DesignRow): string[] {
+  return row.aux.filter((rel) => !rel.includes('*')).flatMap((rel) => {
+    const path = join(root, rel);
+    if (!existsSync(path)) return [`${row.fr}: 지정 보조 테스트 파일 없음 ${rel}`];
+    if (!rel.startsWith(AUX_TITLE_SCOPE)) return [];
+    const titles = findSuiteTitles(readFileSync(path, 'utf8'), path);
+    const ok = titles.some((t) => t === row.fr || t.startsWith(`${row.fr} `));
+    return ok ? [] : [`${row.fr}: 지정 보조 테스트 제목 없음 ${rel}`];
+  });
+}
+
 function scanSources(root: string, names: readonly string[]): Map<string, Occurrence[]> {
   const result = new Map<string, Occurrence[]>(names.map((n) => [n, []]));
   const files = SCAN_ROOTS.flatMap((r) => listSources(join(root, r)));
@@ -349,6 +388,7 @@ function check(root: string, flags: Readonly<Record<string, string>>, gate: bool
   for (const row of all) {
     const before = ev.errors.length;
     evaluateRow(row, occurrences.get(row.name) ?? [], assertions, gate, ev);
+    if (!ev.missing.includes(row)) ev.errors.push(...checkAuxDeclared(root, row));
     if (gate) ev.errors.push(...gateRowChecks(root, row, assertions, ev.missing.includes(row)));
     if (ev.errors.length > before) ev.failed.add(row.fr);
   }
