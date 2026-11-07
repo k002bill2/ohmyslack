@@ -101,14 +101,22 @@ CREATE TABLE messages (
   created_at timestamptz NOT NULL,
   edited_at timestamptz,
   deleted_at timestamptz,
+  -- 답글의 답글을 DB에서 거부하기 위한 보조 생성 컬럼(TRD 컬럼 외 구현 수단, 서비스가 쓰지 않는다).
+  -- is_top_level: 이 행이 원문인지. thread_root_top_level: 답글이면 true, 원문이면 NULL(FK 검사 제외).
+  is_top_level boolean GENERATED ALWAYS AS (thread_root_id IS NULL) STORED,
+  thread_root_top_level boolean GENERATED ALWAYS AS (CASE WHEN thread_root_id IS NOT NULL THEN true END) STORED,
   CONSTRAINT messages_pkey PRIMARY KEY (id),
   CONSTRAINT messages_conversation_id_id_key UNIQUE (conversation_id, id),
+  CONSTRAINT messages_conversation_id_id_top_level_key UNIQUE (conversation_id, id, is_top_level),
   CONSTRAINT messages_client_message_key UNIQUE (conversation_id, author_id, client_message_id),
   CONSTRAINT messages_conversation_fkey FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE RESTRICT,
   CONSTRAINT messages_author_fkey FOREIGN KEY (author_id) REFERENCES users (id) ON DELETE RESTRICT,
   -- 원문은 같은 대화에 있어야 한다(복합 자기참조 FK).
   CONSTRAINT messages_thread_root_fkey FOREIGN KEY (conversation_id, thread_root_id)
     REFERENCES messages (conversation_id, id) ON DELETE RESTRICT,
+  -- 원문 자체는 thread_root_id IS NULL이어야 한다(답글의 답글 거부, 답글이 달린 원문을 답글로 바꾸는 갱신도 거부).
+  CONSTRAINT messages_thread_root_top_level_fkey FOREIGN KEY (conversation_id, thread_root_id, thread_root_top_level)
+    REFERENCES messages (conversation_id, id, is_top_level) ON DELETE RESTRICT,
   -- 미삭제 본문 또는 삭제 tombstone만 허용.
   CONSTRAINT messages_tombstone_check CHECK (
     (deleted_at IS NULL AND body IS NOT NULL) OR (deleted_at IS NOT NULL AND body IS NULL)
