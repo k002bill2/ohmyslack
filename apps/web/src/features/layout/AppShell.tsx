@@ -62,22 +62,22 @@ function spaceTitle(space: Space): string {
 }
 
 /** 메시지 객체(불변)별 판정 캐시 — 렌더마다 모든 본문을 다시 파싱하지 않게(F-1). */
-const mentionCache = new WeakMap<MessageItemData, { readonly name: string; readonly hit: boolean }>();
+const mentionCache = new WeakMap<MessageItemData, { readonly name: string; readonly names: readonly string[] | undefined; readonly hit: boolean }>();
 
 /**
  * 「나를 멘션」 판정: 클라이언트 모델에 mention_user_ids가 없어(data 계층은 이 레인 밖) 본문의 `@내 이름` 토큰으로 본다(W-11d REPORT).
  */
-function mentionsName(m: MessageItemData, name: string): boolean {
+function mentionsName(m: MessageItemData, name: string, names: readonly string[] | undefined): boolean {
   const cached = mentionCache.get(m);
-  if (cached?.name === name) return cached.hit;
-  const hit = bodyMentionsName(m.body, name);
-  mentionCache.set(m, { name, hit });
+  if (cached?.name === name && cached.names === names) return cached.hit;
+  const hit = bodyMentionsName(m.body, name, names);
+  mentionCache.set(m, { name, names, hit });
   return hit;
 }
 
 /** 「나를 멘션」(MessageItem `mentionsSelf`): 삭제·내가 쓴 메시지는 아니다. 본문 목록과 스레드가 같은 규칙(Codex r2 P2). */
-function mentionsSelfOf(m: MessageItemData, selfName: string | undefined, selfId: string | undefined): boolean {
-  return selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName);
+function mentionsSelfOf(m: MessageItemData, selfName: string | undefined, selfId: string | undefined, names: readonly string[] | undefined): boolean {
+  return selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName, names);
 }
 
 /** CMP-05 ConversationHeader(골격) + CMP-06 MessageList + CMP-11 Composer. */
@@ -111,7 +111,7 @@ function ConversationPane(props: {
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
   const { mentionNames, selfName } = props;
   const selfId = props.itemActions?.selfId;
-  const mentionsSelf = (m: Message) => mentionsSelfOf(m, selfName, selfId);
+  const mentionsSelf = (m: Message) => mentionsSelfOf(m, selfName, selfId, mentionNames);
   const memberCount = space.kind === 'channel' ? (membership?.mentions?.candidates.length ?? 0) : 0;
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
@@ -461,7 +461,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
       spaceTitle={spaceTitle(space)}
       {...(mentionNames === undefined ? {} : { mentionNames })}
-      mentionsSelf={(m) => mentionsSelfOf(m, snap.account?.displayName, snap.account?.id)}
+      mentionsSelf={(m) => mentionsSelfOf(m, snap.account?.displayName, snap.account?.id, mentionNames)}
     />
   );
   // 시안 04: compact 공간 목록 위 설치 안내 카드(standalone·미지원이면 InstallCard가 렌더하지 않음).

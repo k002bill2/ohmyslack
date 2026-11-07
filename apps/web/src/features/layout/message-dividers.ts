@@ -23,6 +23,10 @@ interface Entry {
   readonly unread: number | null;
   frozen: boolean;
   seq: number | null;
+  /** 진입 때 이미 있던 원문 seq. */
+  readonly known: Set<number>;
+  /** 이력 조회 완료 전에 새로 도착한 원문(실시간) — 진입 시점 미읽음 역산에서 뺀다(Codex r3 P2). */
+  readonly late: Set<number>;
 }
 
 /**
@@ -40,10 +44,17 @@ export function useNewMessagesSeq(
   selfId?: string,
 ): number | null {
   const entry = useRef<Entry | null>(null);
-  if (entry.current?.spaceId !== spaceId) entry.current = { spaceId, unread: holding ? null : unreadCount, frozen: false, seq: null };
+  const seqs = (list: readonly Message[]) => list.flatMap((m) => (m.seq === undefined ? [] : [m.seq]));
+  if (entry.current?.spaceId !== spaceId) {
+    entry.current = { spaceId, unread: holding ? null : unreadCount, frozen: false, seq: null, known: new Set(seqs(roots)), late: new Set() };
+  }
   const current = entry.current;
+  if (!current.frozen && !historyReady && current.unread !== null) {
+    for (const s of seqs(roots)) if (!current.known.has(s)) current.late.add(s);
+  }
   if (!current.frozen && !holding && historyReady && roots.some((m) => m.seq !== undefined)) {
-    current.seq = firstUnreadSeq(roots, current.unread ?? unreadCount, selfId);
+    const base = current.late.size === 0 ? roots : roots.filter((m) => m.seq === undefined || !current.late.has(m.seq));
+    current.seq = firstUnreadSeq(base, current.unread ?? unreadCount, selfId);
     current.frozen = true;
   }
   return current.seq;

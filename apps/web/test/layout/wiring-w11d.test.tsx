@@ -132,6 +132,15 @@ describe('MessageList 구분선 배선', () => {
     expect(document.querySelector('.new-messages-divider + [data-message-id="a"]')).not.toBeNull();
   });
 
+  it('이력 조회 중 실시간으로 도착한 원문은 진입 시점 미읽음 역산에서 뺀다(Codex r3 P2)', async () => {
+    const { ds, set, get } = source({ spaces: [space({ unreadCount: 2 })], messages: [msg('b', 2, DAY2)], connection: 'connected', loadedHistory: null });
+    await enter(ds);
+    set({ ...get(), messages: [msg('b', 2, DAY2), msg('c', 3, DAY2)] });
+    set({ ...get(), messages: [msg('a', 1, DAY2), msg('b', 2, DAY2), msg('c', 3, DAY2)], loadedHistory: 'c1' });
+    expect(document.querySelectorAll('.new-messages-divider')).toHaveLength(1);
+    expect(document.querySelector('.new-messages-divider + [data-message-id="a"]')).not.toBeNull();
+  });
+
   it('다른 대화의 이력 완료 신호로는 고정하지 않는다', async () => {
     const { ds, set, get } = source({
       spaces: [space({ unreadCount: 2 })],
@@ -240,6 +249,14 @@ describe('스레드 멘션 배선(Codex r2 P2)', () => {
     expect(item('r1').classList.contains('msg-mentioned')).toBe(true);
     expect(item('a').classList.contains('msg-mentioned')).toBe(false);
     expect(item('r2').classList.contains('msg-mentioned')).toBe(false);
+  });
+});
+
+describe('bodyMentionsName 최장 일치(Codex r3 P2)', () => {
+  it('내 이름이 다른 멤버 이름의 접두사면 그 멤버 멘션을 나로 보지 않는다', async () => {
+    const { bodyMentionsName } = await import('../../src/features/conversation/render.js');
+    expect(bodyMentionsName('@Ann Smith 확인', 'Ann', ['Ann', 'Ann Smith'])).toBe(false);
+    expect(bodyMentionsName('@Ann 확인', 'Ann', ['Ann', 'Ann Smith'])).toBe(true);
   });
 });
 

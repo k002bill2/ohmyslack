@@ -207,9 +207,11 @@ function withMentions(block: Block, index: MentionIndex): Block {
 }
 
 /** 본문이 `@name`을 멘션하는지(parseBody와 같은 경계 규칙, 코드 블록·링크 안은 제외). "나를 멘션" 계산용. */
-export function bodyMentionsName(body: string, name: string): boolean {
+export function bodyMentionsName(body: string, name: string, allNames: readonly string[] = []): boolean {
   const target = `@${name}`;
-  return parseBody(body, [name]).some(
+  // 본문 렌더와 같은 후보 전체로 토큰화 — `@Ann Smith`를 `@Ann`으로 오판하지 않게(최장 일치, Codex r3 P2).
+  const names = allNames.includes(name) ? allNames : [...allNames, name];
+  return parseBody(body, names).some(
     (block) =>
       block.kind === 'paragraph' &&
       block.lines.some((line) => line.some((part) => part.kind === 'mention' && part.text === target)),
