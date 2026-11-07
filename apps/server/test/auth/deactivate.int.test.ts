@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addUser, call, dbState, setupMembersInt, signIn, teardownMembersInt, type MembersIntContext, type Session } from './members-int-harness.js';
 import { login } from '../support/auth-app.js';
+import { createPgMembersStore } from '../../src/modules/members/index.js';
 
 /**
  * 비활성화·owner 보호(TRD §3, §5-1 S10, NC-19, TR-SEC-04 HTTP 부분). FR-AUTH-03 지정 `it`은 WS 5초 close(W-09)가
@@ -47,18 +48,30 @@ describe('비활성화', () => {
     expect(await dbState(ctx.schema)).toEqual(before);
   });
 
-  it('두 owner가 서로를 동시에 비활성화하면 하나만 성공하고 마지막 owner는 409로 남는다', async () => {
+  it('두 owner가 서로를 동시에 비활성화하면 HTTP에서는 하나만 성공하고 활성 owner 1명이 남는다', async () => {
     const secondId = await addUser(ctx.schema, 'second@example.test', 'owner');
     const second = await signIn(ctx.app, 'second@example.test');
     const [a, b] = await Promise.all([
       call(ctx.app, 'POST', deactivateUrl(secondId), owner),
       call(ctx.app, 'POST', deactivateUrl(ctx.ownerId), second),
     ]);
-    expect([a.statusCode, b.statusCode].sort()).toEqual([204, 409]);
+    // 진 쪽은 가드 단계(세션이 이미 revoke돼 401) 또는 저장소 트랜잭션(S10 409)에서 거부된다 — 경쟁 순서에 달렸다.
+    const codes = [a.statusCode, b.statusCode].sort();
+    expect(codes[0]).toBe(204);
+    expect([401, 409]).toContain(codes[1]);
     const active = await ctx.schema.pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM users u JOIN workspace_members m ON m.user_id = u.id WHERE m.role = 'owner' AND u.status = 'active'",
     );
     expect(active.rows[0]?.n).toBe(1);
+  });
+
+  it('저장소 트랜잭션: 두 owner 상호 동시 비활성화는 정확히 하나만 커밋되고 나머지는 last_owner(S10)다', async () => {
+    const secondId = await addUser(ctx.schema, 'second@example.test', 'owner');
+    const store = createPgMembersStore(ctx.schema.pool);
+    const at = new Date(ctx.now);
+    const results = await Promise.all([store.deactivate(ctx.ownerId, secondId, at), store.deactivate(secondId, ctx.ownerId, at)]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, reason: 'last_owner' }]);
   });
 
   it('없는 사용자는 404, 잘못된 id는 400이다', async () => {
