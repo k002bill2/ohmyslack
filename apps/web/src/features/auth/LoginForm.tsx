@@ -1,7 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { LOGIN_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
-import { InstallHint, useInstallPrompt } from '../pwa';
 import { AuthBrand } from './AuthBrand.js';
 
 /** 로그인 결과. 네트워크 오류는 reject(throw)로 전달한다. */
@@ -34,8 +33,6 @@ export function LoginForm({ sessionEnded = false, onLogin, onSuccess }: LoginFor
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<LoginError | null>(null);
-  const { mode, install } = useInstallPrompt();
-  const showInstall = mode === 'prompt' || mode === 'ios';
 
   const attempt = async (): Promise<void> => {
     if (pending) return;
@@ -83,12 +80,6 @@ export function LoginForm({ sessionEnded = false, onLogin, onSuccess }: LoginFor
         {error === 'network' && <ErrorState message={LOGIN_COPY.network} onRetry={retry} retryDisabled={pending} />}
         {error === 'server' && <ErrorState message={LOGIN_COPY.server} onRetry={retry} retryDisabled={pending} />}
         <button type="submit" disabled={pending}>로그인</button>
-        {/* 시안 03 하단 구분선 + 설치 안내 — 현행 INSTALL_COPY만(CMP-20). 설치 불가·이미 설치면 영역 자체를 두지 않는다. */}
-        {showInstall && (
-          <div className="auth-footer">
-            <InstallHint mode={mode} onInstall={() => void install()} />
-          </div>
-        )}
       </form>
     </div>
   );

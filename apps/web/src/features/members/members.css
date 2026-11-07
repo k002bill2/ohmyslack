@@ -1,0 +1,75 @@
+/*
+ * CMP-25 MemberAdmin 시안 10(W-11c). 토큰 변수만. 공통 행·Dialog 규칙(layout.css)은 그대로 두고
+ * 불러오기 순서와 무관하도록 `.member-list`·`.invite-dialog` 아래로 한정해 덧입힌다.
+ */
+.member-list .member-row {
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+}
+.member-list .member-name {
+  font-weight: 600;
+}
+/* 이니셜 원 32px: slate 면 + 본문 글자(시안 10). */
+.member-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.member-avatar::before {
+  content: attr(data-initial);
+}
+.member-inactive .member-avatar {
+  color: var(--text-muted);
+}
+/* 상태 점(시안 10 「● 비활성」). 글자색을 그대로 따른다. */
+.member-list .member-status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-1);
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}
+.member-list .member-row .btn-secondary {
+  min-height: 36px;
+  padding: var(--space-1) var(--space-3);
+  border-color: var(--border-subtle);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+}
+/* 초대 링크 Dialog: 입력 + 복사 한 줄, 링크는 고정폭 글꼴, 경고는 warning 면(시안 10). */
+.invite-dialog .invite-link-row {
+  display: flex;
+  gap: var(--space-2);
+}
+.invite-dialog .invite-link-row .field {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg-elevated);
+}
+.invite-dialog .invite-link-row .btn {
+  flex: 0 0 auto;
+}
+.invite-dialog .field-hint {
+  margin: 0;
+}
+.invite-dialog .invite-warning {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
