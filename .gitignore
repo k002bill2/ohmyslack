@@ -1,7 +1,11 @@
+.env
+.env.*
+!.env.example
 node_modules/
 dist/
-reports/
 coverage/
+reports/
 dev/
-*.tsbuildinfo
 .DS_Store
+*.log
+*.tsbuildinfo

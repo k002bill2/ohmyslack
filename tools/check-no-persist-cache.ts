@@ -15,7 +15,8 @@ const EVIDENCE: Readonly<Record<string, string>> = {
   [CHECKPOINT_FILE]: 'apps/web/test/sync/checkpoint',
 };
 const SW_NAME = /^(sw|service-worker|workbox-.*)\.js$/;
-const API_PRECACHE = ['"/api', "'/api", 'url:"/api'] as const;
+/** precache manifest의 URL 항목만 본다(런타임 우회 코드의 "/api" 문자열은 정상). */
+const API_PRECACHE = /\burl["']?\s*:\s*["']\/api(?:[/"'?]|$)/;
 
 function toPosix(path: string): string {
   return path.split(sep).join('/');
@@ -137,7 +138,7 @@ function checkDist(root: string, ctx: RunContext): string[] {
   return swFiles
     .filter((abs) => {
       const content = readFileSync(abs, 'utf8');
-      return API_PRECACHE.some((needle) => content.includes(needle));
+      return API_PRECACHE.test(content);
     })
     .map((abs) => `${toPosix(relative(root, abs))} — SW precache에 /api 항목 존재 (${basename(abs)})`);
 }

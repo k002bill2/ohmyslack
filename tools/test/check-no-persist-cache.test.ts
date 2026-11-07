@@ -91,6 +91,15 @@ describe('check-no-persist-cache', () => {
     expect(text).toContain('apps/web/test/sync/checkpoint');
   });
 
+  it('allows a SW that bypasses /api at runtime (regression: Codex P2)', async () => {
+    const root = fixture({
+      'apps/web/src/App.tsx': 'export const A = 1;\n',
+      'apps/web/dist/sw.js':
+        'precacheAndRoute([{url:"/assets/a.js"}]);\nself.addEventListener("fetch",e=>{if(new URL(e.request.url).pathname.startsWith("/api/"))return;});\n',
+    });
+    expect(await run([], captureCtx(root, {}))).toBe(0);
+  });
+
   it('flags a dist SW precache entry for /api', async () => {
     const root = fixture({
       'apps/web/src/a.ts': 'export const a = 1;\n',

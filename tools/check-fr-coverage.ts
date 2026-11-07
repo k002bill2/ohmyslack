@@ -210,7 +210,7 @@ function checkQa(root: string, id: string): string[] {
   const path = join(root, 'qa', 'manual', `${id}.md`);
   if (!existsSync(path)) return [`수동 증거 없음: qa/manual/${id}.md`];
   const text = readFileSync(path, 'utf8');
-  const missing = QA_FIELDS.filter((f) => !new RegExp(`${f}[^:|\\n]*[:|]\\s*\\S`).test(text));
+  const missing = QA_FIELDS.filter((f) => !new RegExp(`${f}[^:|\\n]*[:|][ \\t]*[^\\s|]`).test(text));
   const errors = missing.map((f) => `${id}: 필수 필드 비어 있음 ${f}`);
   if (!/판정\s*[:|]\s*`?PASS\b/.test(text)) errors.push(`${id}: 판정이 PASS가 아님`);
   return errors;

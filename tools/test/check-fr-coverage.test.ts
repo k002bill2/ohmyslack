@@ -162,6 +162,10 @@ describe('check-fr-coverage', () => {
 
   it('gate fails when a QA file is missing or not PASS', async () => {
     expect((await exec(fullFixture({ 'QA-BOOT-01': QA_FIELDS }), '--mode=gate')).code).toBe(1);
+    const emptyLine = QA_FIELDS.replace('실행자: tester', '실행자:');
+    expect((await exec(fullFixture({ 'QA-FR-TST-01': emptyLine, 'QA-BOOT-01': QA_FIELDS }), '--mode=gate')).code).toBe(1);
+    const emptyCell = QA_FIELDS.replace('실행자: tester', '| 실행자 | |');
+    expect((await exec(fullFixture({ 'QA-FR-TST-01': emptyCell, 'QA-BOOT-01': QA_FIELDS }), '--mode=gate')).code).toBe(1);
     const fail = QA_FIELDS.replace('판정: PASS', '판정: FAIL');
     expect((await exec(fullFixture({ 'QA-FR-TST-01': fail, 'QA-BOOT-01': QA_FIELDS }), '--mode=gate')).code).toBe(1);
   });
