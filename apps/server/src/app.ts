@@ -3,7 +3,7 @@ import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerAccessRegistry, type RegisteredRoute } from './http/access.js';
 import { errorBody, toHttpError } from './http/errors.js';
-import { normalizeHost, registerRequestGuards, registerResponseHeaders } from './http/security.js';
+import { frameworkErrorHandler, normalizeHost, registerRequestGuards, registerResponseHeaders } from './http/security.js';
 import { createAuthEvents, type AuthEvents } from './modules/auth/events.js';
 import { createLoginLimiter, type LoginLimiter } from './modules/auth/login-limiter.js';
 import { registerAuthRoutes } from './modules/auth/routes.js';
@@ -122,7 +122,12 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   const readEvents = options.readEvents ?? createReadEvents();
   const allowedHosts = [new URL(allowedOrigin).host, ...(options.extraHosts ?? [])].map((h) => normalizeHost(h) ?? '');
 
-  const app = Fastify({ logger: false, genReqId: () => randomUUID(), bodyLimit: 64 * 1024 });
+  const app = Fastify({
+    logger: false,
+    genReqId: () => randomUUID(),
+    bodyLimit: 64 * 1024,
+    frameworkErrors: frameworkErrorHandler(allowedHosts),
+  });
   const routes = registerAccessRegistry(app);
   app.decorate('accessRoutes', routes);
   app.decorate('authEvents', authEvents);
