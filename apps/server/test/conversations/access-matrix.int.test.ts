@@ -54,7 +54,7 @@ describe('접근 매트릭스', () => {
     const routes = ctx.app.accessRoutes;
     const scoped = routes.filter((r) => r.access === 'conversation' || r.access === 'message');
     expect(scoped.length).toBeGreaterThan(0);
-    expect(WS_ACTIONS).toHaveLength(0); // W-09가 WS 동작 행을 추가한다.
+    expect(WS_ACTIONS).toEqual([{ action: 'conversation.subscribe', access: 'conversation' }]); // W-09b WS 행.
     const before = await convState(ctx.schema);
     const ended = ctx.ended.length;
     for (const route of scoped) {

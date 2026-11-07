@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addUser, call, dbState, setupMembersInt, signIn, teardownMembersInt, type MembersIntContext, type Session } from './members-int-harness.js';
 import { login } from '../support/auth-app.js';
 import { createPgMembersStore } from '../../src/modules/members/index.js';
+import { WS_CLOSE_POLICY } from '../../src/shared.js';
+import { as, createChannel, req as convReq } from '../conversations/conv-int-harness.js';
+import { closeLatency, connect, setupWsInt, subscribe } from '../realtime/ws-int-harness.js';
 
 /**
  * 비활성화·owner 보호(TRD §3, §5-1 S10, NC-19, TR-SEC-04 HTTP 부분). FR-AUTH-03 지정 `it`은 WS 5초 close(W-09)가
@@ -77,5 +80,31 @@ describe('비활성화', () => {
   it('없는 사용자는 404, 잘못된 id는 400이다', async () => {
     expect((await call(ctx.app, 'POST', deactivateUrl('00000000-0000-4000-8000-000000000000'), owner)).statusCode).toBe(404);
     expect((await call(ctx.app, 'POST', deactivateUrl('nope'), owner)).statusCode).toBe(400);
+  });
+});
+
+describe('비활성화 WS 전파', () => {
+  it('FR-AUTH-03 비활성화 후 5초 안에 열린 WS가 닫히고 이후 HTTP·재구독은 401이다', async () => {
+    const ws = await setupWsInt();
+    try {
+      const { app, ids } = ws.conv;
+      const owner = await as(app, 'a');
+      const b = await as(app, 'b');
+      const cid = await createChannel(app, owner, 'general');
+      expect((await convReq(app, 'POST', `/api/conversations/${cid}/join`, b)).statusCode).toBe(200);
+      const wsB = await ws.open(b.token);
+      expect(await subscribe(wsB, cid)).toMatchObject({ type: 'conversation.subscribed' });
+      const startedAt = performance.now();
+      expect((await convReq(app, 'POST', `/api/admin/members/${ids.b}/deactivate`, owner)).statusCode).toBe(204);
+      const { code, ms } = await closeLatency(wsB, startedAt);
+      expect(code).toBe(WS_CLOSE_POLICY);
+      expect(ms).toBeLessThanOrEqual(5000);
+      expect((await convReq(app, 'GET', '/api/me', b)).statusCode).toBe(401);
+      expect((await convReq(app, 'GET', `/api/conversations/${cid}/messages`, b)).statusCode).toBe(401);
+      // 재구독: 새 WS handshake 자체가 401로 거부된다.
+      expect(await connect(ws.base, { token: b.token })).toBe('rejected');
+    } finally {
+      await ws.teardown();
+    }
   });
 });

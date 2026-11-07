@@ -42,8 +42,10 @@ function hasMarkedGuard(preHandler: unknown, mark: symbol): boolean {
   return handlers.some((h) => typeof h === 'function' && (h as unknown as Record<symbol, unknown>)[mark] === true);
 }
 
-/** WS 동작 표(B2). W-09가 `/api/ws` 동작을 추가하기 전까지 비어 있다 — 매트릭스 테스트가 0개를 단언한다. */
-export const WS_ACTIONS: readonly { readonly action: string; readonly access: Access }[] = Object.freeze([]);
+/** WS 동작 표(B2). 처리기는 hub에서 `conversations.service.assertAccess`로만 판정한다(W-09b). */
+export const WS_ACTIONS: readonly { readonly action: string; readonly access: Access }[] = Object.freeze([
+  Object.freeze({ action: 'conversation.subscribe', access: 'conversation' as const }),
+]);
 
 function isAccess(value: unknown): value is Access {
   return typeof value === 'string' && (ACCESS_KINDS as readonly string[]).includes(value);

@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { INVITE_TTL_MS } from '../../src/modules/members/routes.js';
 import { inviteCreateResponseSchema, meResponseSchema } from '../../src/shared.js';
 import { acceptBody, call, dbState, setupMembersInt, signIn, teardownMembersInt, type MembersIntContext, type Session } from './members-int-harness.js';
+import { as, createChannel, req as convReq } from '../conversations/conv-int-harness.js';
+import { connect, setupWsInt, subscribe } from '../realtime/ws-int-harness.js';
 
 /**
  * 초대 발급·수락·폐기 HTTP·DB 부분(TRD §3, §5-1 S2·S3, NC-16·NC-20). FR-AUTH-01 지정 `it`은 구독 거부(W-09)가
@@ -135,5 +137,27 @@ describe('초대 발급·수락·폐기', () => {
     const after = await call(ctx.app, 'GET', '/api/members', owner);
     expect(after.json().members).toEqual([{ id: ctx.ownerId, display_name: 'owner', role: 'owner' }]);
     expect((await call(ctx.app, 'GET', '/api/members')).statusCode).toBe(401);
+  });
+});
+
+describe('FR-AUTH-01 지정', () => {
+  it('FR-AUTH-01 미가입자는 조회·구독이 거부되고 만료·사용 완료·폐기 초대는 계정을 만들지 않으며 동시 수락은 1회만 성공하고 수락 계정은 member다', async () => {
+    const ws = await setupWsInt();
+    try {
+      const { app } = ws.conv;
+      const owner = await as(app, 'a');
+      const cid = await createChannel(app, owner, 'general');
+      // 미가입자(세션 없음·위조 token): 조회 401, WS 구독 handshake 거부.
+      expect((await convReq(app, 'GET', '/api/conversations')).statusCode).toBe(401);
+      expect((await convReq(app, 'GET', `/api/conversations/${cid}/messages`)).statusCode).toBe(401);
+      expect(await connect(ws.base, {})).toBe('rejected');
+      expect(await connect(ws.base, { token: 'not-a-session' })).toBe('rejected');
+      // 가입 member는 같은 경로로 구독이 된다(대조군).
+      const c = await as(app, 'c');
+      expect((await convReq(app, 'POST', `/api/conversations/${cid}/join`, c)).statusCode).toBe(200);
+      expect(await subscribe(await ws.open(c.token), cid)).toMatchObject({ type: 'conversation.subscribed' });
+    } finally {
+      await ws.teardown();
+    }
   });
 });

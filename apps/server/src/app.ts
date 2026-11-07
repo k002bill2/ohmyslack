@@ -24,6 +24,7 @@ import { registerSyncRoutes } from './modules/sync/routes.js';
 import { createSyncService } from './modules/sync/service.js';
 import type { SyncStore } from './modules/sync/store.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
+import { registerRealtime, type RealtimeOptions } from './modules/realtime/index.js';
 
 export interface AppOptions {
   /** 정확한 허용 Origin(스킴·호스트·포트). 기본값은 골격 테스트용 `http://localhost`. */
@@ -47,6 +48,8 @@ export interface AppOptions {
   readonly limiter?: LoginLimiter;
   readonly authEvents?: AuthEvents;
   readonly logger?: OpsLogger;
+  /** WS 설정 주입(heartbeat 등). syncStore가 있을 때 `/api/ws`를 등록한다. */
+  readonly realtime?: RealtimeOptions;
 }
 
 const OPTION_KEYS: ReadonlySet<string> = new Set([
@@ -64,6 +67,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'limiter',
   'authEvents',
   'logger',
+  'realtime',
 ]);
 
 declare module 'fastify' {
@@ -159,6 +163,8 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
           registerMessageRoutes(scope, { auth, conversations, messages });
           if (syncStore !== undefined) {
             registerSyncRoutes(scope, { auth, conversations, sync: createSyncService({ store: syncStore, events: readEvents, clock }) });
+            const deps = { auth, conversations, syncStore, authEvents, conversationEvents, messageEvents, readEvents, clock };
+            await registerRealtime(scope, { ...deps, allowedOrigin, ...(options.realtime === undefined ? {} : { options: options.realtime }) });
           }
         }
       }

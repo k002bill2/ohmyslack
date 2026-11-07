@@ -12,3 +12,4 @@ export * from './members.js';
 export * from './conversations.js';
 export * from './messages.js';
 export * from './sync.js';
+export * from './realtime.js';
