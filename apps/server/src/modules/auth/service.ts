@@ -68,9 +68,32 @@ async function checkCredentials(store: AuthStore, email: string, secret: string)
   return ok && user !== undefined && user.status === 'active' ? user : undefined;
 }
 
+/**
+ * 로그인 판정(제한 확인 → 해시 검증 → 실패/성공 기록)을 한 번에 하나씩 실행한다.
+ * 겹쳐 실행되면 동시 요청이 모두 `isAllowed`를 통과한 뒤에야 실패가 기록돼 S1 상한(계정 5·전역 20)을 넘는다.
+ */
+function createSerialQueue(): <T>(task: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(task: () => Promise<T>): Promise<T> => {
+    const run = tail.then(task, task);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
 export function createAuthService(deps: AuthServiceDeps): AuthService {
   const { store, limiter, events, clock } = deps;
   const now = (): Date => new Date(clock());
+  const serial = createSerialQueue();
+
+  async function verifyAttempt(email: string, secret: string): Promise<UserRecord | 'rate_limited' | undefined> {
+    const key = normalizeEmail(email);
+    if (!limiter.isAllowed(key)) return 'rate_limited';
+    const user = await checkCredentials(store, email, secret);
+    if (user === undefined) limiter.recordFailure(key);
+    else limiter.recordSuccess(key);
+    return user;
+  }
 
   async function revoke(session: SessionRecord): Promise<void> {
     await store.revokeSession(session.id, now());
@@ -79,14 +102,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
   return {
     async login(email, secret) {
-      const key = normalizeEmail(email);
-      if (!limiter.isAllowed(key)) return { ok: false, reason: 'rate_limited' };
-      const user = await checkCredentials(store, email, secret);
-      if (user === undefined) {
-        limiter.recordFailure(key);
-        return { ok: false, reason: 'invalid_credentials' };
-      }
-      limiter.recordSuccess(key);
+      const user = await serial(() => verifyAttempt(email, secret));
+      if (user === 'rate_limited') return { ok: false, reason: 'rate_limited' };
+      if (user === undefined) return { ok: false, reason: 'invalid_credentials' };
       const token = randomBytes(TOKEN_BYTES).toString('base64url');
       const createdAt = now();
       const session: SessionRecord = {
