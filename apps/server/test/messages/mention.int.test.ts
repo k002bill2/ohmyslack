@@ -26,9 +26,9 @@ async function targets(rootId: string): Promise<string[]> {
 }
 
 describe('멘션', () => {
-  // 지정 테스트 보류: "이미 읽은 메시지는 새 미읽음이 되지 않으며 읽음으로 해제된다"는 W-09 `PUT /api/read-state`와
-  // `GET /api/conversations` mention_count 집계가 있어야 단언할 수 있다(REPORT "W-09 완성"). 저장 규칙은 아래 보조 테스트가 검증한다.
-  it.todo('FR-MSG-07 멘션은 mention_user_ids의 참여자만 1회 집계되고 자기 멘션은 제외되며 수정 시 추가·제거되고 이미 읽은 메시지는 새 미읽음이 되지 않으며 읽음으로 해제된다');
+  // 지정 테스트(FR-MSG-07) 보류: "이미 읽은 메시지는 새 미읽음이 되지 않으며 읽음으로 해제된다"는 W-09 `PUT /api/read-state`와
+  // `GET /api/conversations` mention_count 집계가 있어야 단언할 수 있다(REPORT "W-09 완성"). todo 선언은 fr-coverage가 실패로
+  // 처리하므로 지정 이름 선언은 W-09가 추가한다. 저장 규칙은 아래 보조 테스트가 검증한다.
 
   it('mention 저장 규칙: 활성 참여자만 1회·자기 제외, 수정 시 추가·제거, 삭제 시 행 제거, 스레드 대상 자격은 유지', async () => {
     const a = await as(ctx.app, 'a');
