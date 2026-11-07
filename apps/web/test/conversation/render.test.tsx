@@ -42,7 +42,7 @@ const XSS_PAYLOADS: readonly (readonly [string, string])[] = [
   ['엔티티 인코딩', '&lt;script&gt;alert(1)&lt;/script&gt;'],
 ];
 
-describe('FR-MSG-01 한글·줄바꿈·http/https 링크·코드 블록은 표시되고 raw HTML·스크립트·그 외 스킴은 실행되지 않는다', () => {
+describe('FR-MSG-01 세부 사례', () => {
   it('한글 본문을 텍스트 그대로 표시한다', () => {
     const root = renderBody('안녕하세요, 회의는 오후 3시입니다.');
     expect(root.textContent).toBe('안녕하세요, 회의는 오후 3시입니다.');
@@ -96,4 +96,20 @@ describe('FR-MSG-01 한글·줄바꿈·http/https 링크·코드 블록은 표�
     }
     expect(safeLinkHref('https:')).toBeUndefined();
   });
+});
+
+it('FR-MSG-01 한글·줄바꿈·http/https 링크·코드 블록은 표시되고 raw HTML·스크립트·그 외 스킴은 실행되지 않는다', async () => {
+  const root = renderBody('안녕\n```\n<b>코드</b>\n```\nhttps://example.com javascript:alert(1)');
+  expect(root.querySelectorAll('br').length).toBe(0);
+  expect(root.querySelector('pre > code')?.textContent).toBe('<b>코드</b>');
+  expect([...root.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['https://example.com/']);
+  assertInert(root);
+  cleanup();
+  const multi = renderBody('첫 줄\n둘째 줄');
+  expect(multi.querySelectorAll('br').length).toBe(1);
+  cleanup();
+  for (const [, payload] of XSS_PAYLOADS) {
+    assertInert(renderBody(payload));
+    cleanup();
+  }
 });

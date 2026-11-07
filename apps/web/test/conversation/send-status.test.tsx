@@ -52,7 +52,7 @@ function view(item: PendingMessage, onRetry = vi.fn(), onDiscard = vi.fn()) {
 const sending = createPending({ conversationId: CONV, authorId: ME, clientMessageId: 'cm-1', body: '안녕', online: true });
 const key = { conversationId: CONV, authorId: ME, clientMessageId: 'cm-1' };
 
-describe('FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 않고 HTTP 오류는 실패와 재시도로 표시하며 연결 단절만으로 미저장을 단정하지 않고 자동 전송 큐를 만들지 않는다', () => {
+describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
   it('① 2xx 전에는 저장 확인을 표시하지 않고 「전송 중」, 2xx 후 저장 확인(표시 없음)', async () => {
     const { ctl, pending, item } = setup();
     const done = ctl.submit(CONV, '안녕');
@@ -145,7 +145,8 @@ describe('FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 �
     const first = ctl.submit(CONV, '같은 본문');
     pending[0]?.reject(new Error('network'));
     await first;
-    fireEvent.click((view(item()), screen.getByRole('button', { name: '저장 여부 확인 중 · 다시 시도' })));
+    view(item());
+    fireEvent.click(screen.getByRole('button', { name: '저장 여부 확인 중 · 다시 시도' }));
     const retry = ctl.retry('cm-1');
     expect(item().status).toBe('sending');
     pending[1]?.resolve({ ok: true, messageId: 'm-1' });
@@ -222,4 +223,26 @@ describe('FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 �
     expect(calls).toHaveLength(1);
     pending[0]?.resolve({ ok: true, messageId: 'm' });
   });
+});
+
+it('FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 않고 HTTP 오류는 실패와 재시도로 표시하며 연결 단절만으로 미저장을 단정하지 않고 자동 전송 큐를 만들지 않는다', async () => {
+  const { ctl, pending, calls } = setup();
+  const a = ctl.submit(CONV, 'a');
+  expect(ctl.items()[0]?.status).toBe('sending');
+  const b = ctl.submit(CONV, 'b');
+  const c = ctl.submit(CONV, 'c');
+  pending[0]?.resolve({ ok: true, messageId: 'm-1' });
+  pending[1]?.resolve({ ok: false, status: 500 });
+  pending[2]?.reject(new TypeError('Failed to fetch'));
+  await Promise.all([a, b, c]);
+  expect(ctl.items().map((it) => it.status)).toEqual(['confirmed', 'failed', 'unknown']);
+  ctl.wsClosed();
+  expect(ctl.items().map((it) => it.status)).toEqual(['confirmed', 'failed', 'unknown']);
+  expect(calls).toHaveLength(3);
+  ctl.messageCreated({ conversationId: CONV, authorId: 'user-other', clientMessageId: 'cm-3' }, 'x');
+  expect(ctl.items()[2]?.status).toBe('unknown');
+  ctl.messageCreated({ conversationId: CONV, authorId: ME, clientMessageId: 'cm-3' }, 'm-3');
+  expect(ctl.items()[2]?.status).toBe('confirmed');
+  view(ctl.items()[1] as PendingMessage);
+  expect(screen.getByRole('alert').textContent).toContain('전송 실패 · 다시 시도');
 });

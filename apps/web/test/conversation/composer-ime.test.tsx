@@ -34,7 +34,7 @@ function compose(box: HTMLTextAreaElement, value: string): void {
   fireEvent.compositionEnd(box, { data: value });
 }
 
-describe('FR-MSG-08 조합 중 Enter와 조합 확정 Enter는 전송하지 않고 확정 후 독립 Enter는 1회 전송하며 조합 중 입력이 훼손되지 않는다', () => {
+describe('FR-MSG-08 세부 사례(DEV_DESIGN 6-4 1–6)', () => {
   it('사례 1: keydown Enter + isComposing=true → 전송 0, 입력 보존', () => {
     const { onSend, box } = setup();
     type(box, '안녕');
@@ -200,4 +200,44 @@ describe('FR-MSG-08 조합 중 Enter와 조합 확정 Enter는 전송하지 않�
     expect(decideKey(base, { composing: false, justComposed: false, mentionOpen: false })).toBe('default');
     expect(decideKey(base, { composing: false, justComposed: false, mentionOpen: true })).toBe('default');
   });
+});
+
+it('FR-MSG-08 조합 중 Enter와 조합 확정 Enter는 전송하지 않고 확정 후 독립 Enter는 1회 전송하며 조합 중 입력이 훼손되지 않는다', async () => {
+  const onMentionKey = vi.fn();
+  const { onSend, box } = setup();
+  // 사례 1·2: 조합 중 Enter(isComposing·keyCode 229·Process) → 전송 0, 입력 보존
+  type(box, '안녕');
+  keyDown(box, { isComposing: true });
+  keyDown(box, { keyCode: 229 });
+  keyDown(box, { key: 'Process' });
+  expect(onSend).not.toHaveBeenCalled();
+  expect(box.value).toBe('안녕');
+  // 사례 3: compositionend 직후 같은 틱 Enter(isComposing=false) → 0, 다음 독립 Enter → 1
+  compose(box, '안녕하세요');
+  keyDown(box, { isComposing: false });
+  expect(onSend).not.toHaveBeenCalled();
+  fireEvent.keyUp(box, { key: 'Enter' });
+  keyDown(box, {});
+  expect(onSend).toHaveBeenCalledTimes(1);
+  expect(onSend).toHaveBeenLastCalledWith('안녕하세요');
+  // 사례 4: 확정 후 시간이 지난 독립 Enter → 1
+  compose(box, '확정');
+  act(() => {
+    vi.advanceTimersByTime(JUST_COMPOSED_WINDOW_MS);
+  });
+  keyDown(box, {});
+  expect(onSend).toHaveBeenCalledTimes(2);
+  // 사례 5: 조합 중 Shift+Enter는 IME에 맡김(입력 훼손 0), 전송 대기 중 새 조합 보존
+  fireEvent.compositionStart(box);
+  type(box, '가나');
+  expect(keyDown(box, { shiftKey: true, isComposing: true })).toBe(true);
+  expect(box.value).toBe('가나');
+  expect(onSend).toHaveBeenCalledTimes(2);
+  cleanup();
+  // 사례 6: 멘션 후보 열림 Enter = 선택, 전송 0
+  const mention = setup({ mentionOpen: true, onMentionKey });
+  type(mention.box, '@홍');
+  keyDown(mention.box, {});
+  expect(onMentionKey).toHaveBeenCalledWith('Enter');
+  expect(mention.onSend).not.toHaveBeenCalled();
 });
