@@ -132,7 +132,10 @@ export interface ProvenanceEntry {
   readonly license: string;
 }
 
-/** §3-1 폰트 행. 파일 동봉·@font-face는 이 모듈 범위 밖(폰트 파일 미동봉). */
+/**
+ * §3-1 폰트 행. Pretendard는 v1.3.9 공식 웹 빌드 `PretendardVariable.woff2`를 무수정 동봉한다
+ * (`apps/web/public/fonts/` — LICENSE.txt·SOURCES.md 함께, @font-face는 `src/ui/base.css`). 나머지는 폴백 스택 이름만(파일 미동봉).
+ */
 const FONTS: readonly ProvenanceEntry[] = [
   { name: 'Pretendard', source: 'https://raw.githubusercontent.com/orioncactus/pretendard/main/LICENSE', license: 'OFL-1.1' },
   { name: 'Noto Sans KR', source: 'https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE', license: 'OFL-1.1' },

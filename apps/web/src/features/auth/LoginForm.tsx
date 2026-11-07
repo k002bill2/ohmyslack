@@ -58,27 +58,29 @@ export function LoginForm({ sessionEnded = false, onLogin, onSuccess }: LoginFor
   const retry = () => void attempt();
 
   return (
-    <form onSubmit={submit}>
-      <h1>{LOGIN_COPY.title}</h1>
-      <p>{LOGIN_COPY.intro}</p>
-      {sessionEnded && <p role="status">{SESSION_ENDED_TEXT}</p>}
-      <label htmlFor={emailId}>이메일</label>
-      <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
-      <label htmlFor={passwordId}>비밀번호</label>
-      <input
-        id={passwordId}
-        type="password"
-        autoComplete="current-password"
-        required
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      {error === 'limited' && <p role="alert">{RATE_LIMITED_TEXT}</p>}
-      {error === 'credentials' && <p role="alert">{LOGIN_COPY.credentials}</p>}
-      {error === 'invalid' && <p role="alert">{LOGIN_COPY.invalidRequest}</p>}
-      {error === 'network' && <ErrorState message={LOGIN_COPY.network} onRetry={retry} retryDisabled={pending} />}
-      {error === 'server' && <ErrorState message={LOGIN_COPY.server} onRetry={retry} retryDisabled={pending} />}
-      <button type="submit" disabled={pending}>로그인</button>
-    </form>
+    <div className="auth-screen">
+      <form className="auth-card" onSubmit={submit}>
+        <h1>{LOGIN_COPY.title}</h1>
+        <p>{LOGIN_COPY.intro}</p>
+        {sessionEnded && <p role="status">{SESSION_ENDED_TEXT}</p>}
+        <label htmlFor={emailId}>이메일</label>
+        <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <label htmlFor={passwordId}>비밀번호</label>
+        <input
+          id={passwordId}
+          type="password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        {error === 'limited' && <p role="alert">{RATE_LIMITED_TEXT}</p>}
+        {error === 'credentials' && <p role="alert">{LOGIN_COPY.credentials}</p>}
+        {error === 'invalid' && <p role="alert">{LOGIN_COPY.invalidRequest}</p>}
+        {error === 'network' && <ErrorState message={LOGIN_COPY.network} onRetry={retry} retryDisabled={pending} />}
+        {error === 'server' && <ErrorState message={LOGIN_COPY.server} onRetry={retry} retryDisabled={pending} />}
+        <button type="submit" disabled={pending}>로그인</button>
+      </form>
+    </div>
   );
 }
