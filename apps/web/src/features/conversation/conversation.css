@@ -433,3 +433,8 @@
     width: min(280px, 100%);
   }
 }
+/* 01/05 본문 @멘션 토큰: teal(accent-text) 굵게. */
+.msg-mention {
+  color: var(--accent-text);
+  font-weight: 700;
+}
