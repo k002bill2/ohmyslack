@@ -926,3 +926,11 @@ body {
   border-radius: 0;
   font-size: var(--text-lg);
 }
+
+/* 시안 04 설치 안내 카드(W-11d): compact 공간 목록 위 한 행을 더 쓴다. 배너 1행 · 카드 2행 · 목록 3행. */
+.app-shell[data-layout='compact']:has(> .install-card) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.app-shell[data-layout='compact'] > .install-card ~ .sidebar {
+  grid-row: 3;
+}

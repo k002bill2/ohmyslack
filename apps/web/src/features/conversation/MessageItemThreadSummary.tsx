@@ -21,6 +21,10 @@ export function ThreadSummary({ rootId, count, unread, holding, onOpen }: Thread
   if (count < 1) return null;
   return (
     <button type="button" className="thread-summary" data-thread-summary-for={rootId} onClick={() => onOpen(rootId)}>
+      {/* 시안 01·05 「↳」: 장식이라 접근 이름에서 뺀다(W-11d). */}
+      <span className="thread-summary-icon" aria-hidden="true">
+        ↳{' '}
+      </span>
       {THREAD_SUMMARY_COPY.replies(count)}
       {shown.current && (
         <>

@@ -13,7 +13,9 @@ const tops = new WeakMap<Element, number>();
 const descriptors = ['scrollHeight', 'clientHeight', 'scrollTop'].map(
   (k) => [k, Object.getOwnPropertyDescriptor(Element.prototype, k)] as const,
 );
-const height = (el: Element) => (el.classList.contains('message-list') ? el.children.length * ITEM : 0);
+// W-11d: 목록에 CMP-10 날짜 구분선(li)이 들어가므로 높이·개수는 메시지 항목(.msg-item)만 센다.
+const items = (el: Element) => el.querySelectorAll(':scope > .msg-item');
+const height = (el: Element) => (el.classList.contains('message-list') ? items(el).length * ITEM : 0);
 
 beforeEach(() => {
   Object.defineProperty(Element.prototype, 'scrollHeight', { configurable: true, get(this: Element) { return height(this); } });
@@ -59,7 +61,7 @@ describe('CMP-06 하단 고정(UI_STATES §2-4)', () => {
     const { ds, list } = await openGeneral();
     expect(list.scrollTop).toBe(1000 - VIEW);
     act(() => ds.send({ conversationId: 'c1' }, '새 메시지'));
-    expect(list.children).toHaveLength(11);
+    expect(items(list)).toHaveLength(11);
     expect(list.scrollTop).toBe(1100 - VIEW);
   });
 
@@ -68,7 +70,7 @@ describe('CMP-06 하단 고정(UI_STATES §2-4)', () => {
     list.scrollTop = 100;
     fireEvent.scroll(list);
     act(() => ds.send({ conversationId: 'c1' }, '새 메시지'));
-    expect(list.children).toHaveLength(11);
+    expect(items(list)).toHaveLength(11);
     expect(list.scrollTop).toBe(100);
     // 다시 맨 아래로 내리면 고정이 되살아난다.
     list.scrollTop = 10_000;

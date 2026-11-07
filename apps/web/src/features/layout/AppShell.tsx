@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, MessageItem, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
+import { Composer, DateSeparator, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
+import { InstallCard } from '../pwa';
 import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
+import { startsNewDay, useNewMessagesSeq } from './message-dividers.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
@@ -78,8 +80,12 @@ function ConversationPane(props: {
   readonly onSeen?: (seq: number) => void;
   /** wide에서 스레드가 열려 있으면 헤더 오른쪽 패널 토글(시안 01)로 닫는다. */
   readonly onCloseThread?: () => void;
+  /** catch-up 중 — 「여기부터 새 메시지」 위치 계산 보류(UI_STATES §2-4). */
+  readonly holding: boolean;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
+  const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding);
+  const memberCount = space.kind === 'channel' ? (membership?.mentions?.candidates.length ?? 0) : 0;
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
   const onPinScroll = usePinBottom(list, space.id);
@@ -104,7 +110,9 @@ function ConversationPane(props: {
         )}
         <div className="conversation-heading">
           <h1 className="conversation-title">{spaceTitle(space)}</h1>
-          <span className="conversation-meta">{SHELL_COPY.kind[space.kind]}</span>
+          <span className="conversation-meta">
+            {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
+          </span>
         </div>
         {membership && space.kind === 'channel' && !left && membership.onLeave && <LeaveChannelControl onLeave={membership.onLeave} />}
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
@@ -127,17 +135,20 @@ function ConversationPane(props: {
         <p className="message-empty">첫 메시지를 남겨 보세요</p>
       ) : (
         <ul ref={list} className="message-list" onScroll={onListScroll}>
-          {roots.map((m) => (
-            <MessageItem
-              key={m.id}
-              message={m}
-              onReply={props.onReply}
-              onRetry={props.onRetry}
-              onDiscard={props.onDiscard}
-              {...props.itemActions}
-              threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
-              timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
-            />
+          {roots.map((m, i) => (
+            <Fragment key={m.id}>
+              {startsNewDay(roots, i) && <DateSeparator at={m.createdAt} />}
+              {newSeq !== null && m.seq === newSeq && <NewMessagesDivider />}
+              <MessageItem
+                message={m}
+                onReply={props.onReply}
+                onRetry={props.onRetry}
+                onDiscard={props.onDiscard}
+                {...props.itemActions}
+                threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
+                timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
+              />
+            </Fragment>
           ))}
         </ul>
       )}
@@ -202,7 +213,9 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       const id = CSS.escape(prev);
       const target =
         shell.current?.querySelector<HTMLElement>(`[data-reply-for="${id}"]`) ??
-        shell.current?.querySelector<HTMLElement>(`[data-thread-summary-for="${id}"]`);
+        shell.current?.querySelector<HTMLElement>(`[data-thread-summary-for="${id}"]`) ??
+        // compact는 인라인 「답글」이 없다(시안 08 액션 시트) — 원문 항목 자체로(W-11d).
+        shell.current?.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
       target?.focus();
     }
   }, [state.threadRootId]);
@@ -391,6 +404,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(membership === undefined ? {} : { membership })}
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
+      holding={snap.connection === 'catching-up'}
     />
   );
   const thread = threadOpen && space && root && (
@@ -406,9 +420,16 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onDiscard={discard}
       messageActions={messageActions}
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
+      spaceTitle={spaceTitle(space)}
     />
   );
-  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || sidebar;
+  // 시안 04: compact 공간 목록 위 설치 안내 카드(standalone·미지원이면 InstallCard가 렌더하지 않음).
+  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || (
+    <>
+      <InstallCard />
+      {sidebar}
+    </>
+  );
 
   return (
     <div

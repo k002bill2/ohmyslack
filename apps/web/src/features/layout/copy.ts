@@ -3,8 +3,10 @@
  * 정본 COPY 편입 여부는 Jarvis 결정(REPORT 「문구 차이 표」).
  */
 export const SHELL_COPY = Object.freeze({
-  /** 대화 헤더 보조 줄(시안 01 「채널 · 멤버 3」 중 종류만 — 멤버 수는 데이터 없음). */
+  /** 대화 헤더 보조 줄(시안 01 「채널 · 멤버 3」 — 멤버 수를 아직 모를 때·DM은 종류만). */
   kind: Object.freeze({ channel: '채널', dm: '대화' }),
+  /** 시안 01 「채널 · 멤버 n」(멤버 수는 이미 받은 대화 멤버 목록 — 새 API 호출 없음, W-11d). */
+  channelMeta: (count: number) => `채널 · 멤버 ${count}`,
   /** 헤더 오른쪽 스레드 패널 토글(시안 01). 열린 스레드가 있을 때만 렌더 = 닫기 동작. */
   closeThreadPanel: '스레드 패널 닫기',
 });
