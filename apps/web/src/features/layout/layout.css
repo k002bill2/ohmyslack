@@ -1,0 +1,104 @@
+/*
+ * AppShell 정적 스타일(디자인 §5-2–5-4, §7-1). 구간 판정은 matchMedia + 토큰 상수(JS)가 하고
+ * 여기서는 data-layout / data-sidebar 속성만 본다 — 구간 수치를 CSS에 복제하지 않는다.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.app-shell {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg-app);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+.app-shell > * {
+  min-width: 0;
+}
+.connection-banner {
+  grid-column: 1 / -1;
+  padding: var(--space-2) var(--space-4);
+}
+.connection-banner[data-state='reconnecting'] {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+.connection-banner[data-state='offline'] {
+  color: var(--danger-text);
+}
+.app-shell[data-layout='compact'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell[data-layout='medium'] {
+  grid-template-columns: var(--sidebar-w) minmax(var(--body-min-medium), 1fr);
+}
+.app-shell[data-layout='wide'] {
+  grid-template-columns: var(--sidebar-w) minmax(var(--body-min), 1fr) auto;
+}
+.app-shell[data-layout='wide'][data-sidebar='collapsed'] {
+  grid-template-columns: var(--sidebar-w-collapsed) minmax(var(--body-min), 1fr) auto;
+}
+.sidebar {
+  background: var(--bg-sidebar);
+}
+.space-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.space-item {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+.space-selected {
+  border-left-color: var(--accent-solid);
+  background: var(--bg-active);
+}
+.space-unread .space-name {
+  font-weight: 700;
+}
+.conversation-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.message-list,
+.thread-root,
+.thread-replies {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.thread-wide {
+  width: var(--thread-w);
+  background: var(--bg-sidebar);
+}
+.thread-medium {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: var(--thread-overlay-w);
+  background: var(--bg-sidebar);
+  box-shadow: var(--shadow-popover);
+}
+.message-empty,
+.thread-empty {
+  color: var(--text-muted);
+}

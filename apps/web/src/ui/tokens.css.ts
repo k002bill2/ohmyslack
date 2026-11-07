@@ -3,7 +3,7 @@
  * 라이트는 `:root`, 다크는 `@media (prefers-color-scheme: dark)`(§3-3 다크 모드), 모션 축소는 §3-5.
  * 앱 연결(main.tsx import)은 W-10 범위.
  */
-import { tokens } from './tokens.js';
+import { layoutVars, tokens } from './tokens.js';
 
 type VarMap = Readonly<Record<string, string>>;
 
@@ -17,7 +17,7 @@ function colorVars(scheme: 'light' | 'dark'): VarMap {
 
 export function buildTokensCss(): string {
   const base: VarMap = {
-    ...tokens.typography, ...tokens.space, ...tokens.radius, ...tokens.shadow, ...tokens.motion,
+    ...tokens.typography, ...tokens.space, ...layoutVars, ...tokens.radius, ...tokens.shadow, ...tokens.motion,
     ...colorVars('light'),
   };
   return [
