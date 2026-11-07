@@ -163,6 +163,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let readTimer: unknown = null;
   /** 현재 `readTimer`가 실패 재시도(백오프) 타이머인지와 연속 실패 횟수(Codex r1 P2-3). */
   let readTimerIsRetry = false;
+  /** `stop()` 뒤: 읽음 송신·재시도·목록 재조회를 예약하지 않는다(`start()`가 다시 연다, Codex r2 P2). */
+  let stopped = false;
+  /** 답글 이력을 끝까지(has_more=false) 받은 root — 누락 없는 로드 전에는 스레드 읽음을 보내지 않는다(PRD §7-7, Codex r2 P2). */
+  let repliesLoaded: ReadonlySet<string> = new Set();
   let readFailures = 0;
   /** 오래된 목록 때문에 보류한 스레드 위치 — 목록 재조회 뒤 다시 평가한다(Codex r1 P2-1). */
   let deferredThreadReads: ReadonlyMap<string, { readonly conversationId: string; readonly rootId: string; readonly seq: number }> = new Map();
@@ -290,6 +294,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     readQueue = new Map();
     readSent = new Map();
     deferredThreadReads = new Map();
+    repliesLoaded = new Set();
     readFailures = 0;
     background = new Set();
     if (readTimer !== null) clearTimer(readTimer);
@@ -429,6 +434,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   /** 목록 재조회 묶음: trailing 지연 + in-flight 1개(진행 중 요청이 끝나면 1회 더). */
   const scheduleReload = () => {
+    if (stopped) return;
     if (reloading) {
       reloadAgain = true;
       return;
@@ -653,7 +659,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     if (readTimer !== null) clearTimer(readTimer);
     readTimer = null;
     readTimerIsRetry = false;
-    if (ended || connection !== 'connected' || readQueue.size === 0) return;
+    if (ended || stopped || connection !== 'connected' || readQueue.size === 0) return;
     const batch = [...readQueue.values()];
     readQueue = new Map();
     for (const item of batch) {
@@ -688,7 +694,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   /** 실패한 읽음 재시도: 1s→2s→4s… 상한 30s. 연결됨이 아니면 복귀 완료 때 `flushReads`가 보낸다. */
   const scheduleReadRetry = () => {
-    if (readTimer !== null || readQueue.size === 0) return;
+    if (stopped || readTimer !== null || readQueue.size === 0) return;
     const delay = Math.min(READ_RETRY_BASE_MS * 2 ** readFailures, READ_RETRY_MAX_MS);
     readFailures += 1;
     readTimerIsRetry = true;
@@ -710,6 +716,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   function markRead(conversationId: string, rootId: string | null, seq: number, defer = true): void {
     if (ended || conversationId !== current || !isVisible()) return;
     const key = readKey(conversationId, rootId);
+    // 답글 이력 로드가 끝나기 전 위치는 보류한다 — 로드 완료 뒤 다시 평가한다(표시 안 된 중간 답글 보호).
+    if (rootId !== null && !repliesLoaded.has(rootId)) {
+      if (seq > (deferredThreadReads.get(key)?.seq ?? 0)) deferredThreadReads = new Map(deferredThreadReads).set(key, { conversationId, rootId, seq });
+      return;
+    }
     if (rootId !== null) {
       const c = summaries.find((x) => x.id === conversationId);
       if (c?.unread_threads.some((t) => t.root_message_id === rootId) !== true) {
@@ -726,7 +737,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       readTimer = null;
       readTimerIsRetry = false;
     }
-    if (readTimer === null) readTimer = setTimer(flushReads, READ_FLUSH_MS);
+    if (readTimer === null && !stopped) readTimer = setTimer(flushReads, READ_FLUSH_MS);
   }
 
   const resume = async (retried = false): Promise<boolean> => {
@@ -779,7 +790,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         for (const m of res.replies) fold = foldView(0, m);
         emit();
         const last = res.replies.at(-1);
-        if (!res.has_more || last === undefined) return;
+        if (!res.has_more || last === undefined) {
+          repliesLoaded = new Set(repliesLoaded).add(rootId);
+          retryDeferredThreadReads();
+          return;
+        }
         after = last.seq;
       }
     } catch (e) {
@@ -905,6 +920,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       current = conversationId !== null && leftChannels.has(conversationId) ? null : conversationId;
       // 대화 전환: 보류 스레드 위치와 재시도 백오프를 초기화한다(Codex r1 P2-1·3).
       deferredThreadReads = new Map();
+      repliesLoaded = new Set();
       readFailures = 0;
       // 배경 구독 중이었어도 현재 대화는 기존 절차(ACK 구독)로 다시 구독한다(BRIEF ★2 현재 대화 절차 불변).
       if (current !== null && background.has(current)) background = new Set([...background].filter((b) => b !== current));
@@ -922,6 +938,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       void loadReplies(rootId);
     },
     start() {
+      stopped = false;
       const life = deps.lifecycle;
       if (life !== undefined) {
         // 전경 복귀는 WS가 살아 있어도 항상 catch-up(UI_STATES C8, DD R-03) — 5분 이상 백그라운드 복귀를 포함한다.
@@ -972,6 +989,12 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       }
     },
     stop() {
+      stopped = true;
+      if (readTimer !== null) clearTimer(readTimer);
+      if (reloadTimer !== null) clearTimer(reloadTimer);
+      readTimer = null;
+      readTimerIsRetry = false;
+      reloadTimer = null;
       detach();
       generation += 1;
       realtime.stop();

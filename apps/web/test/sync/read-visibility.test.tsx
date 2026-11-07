@@ -56,6 +56,16 @@ function world(opts: { unread?: number; threads?: unknown[] } = {}) {
   return { ...ctx, timers, doc, puts };
 }
 
+/** 답글 이력 로드(누락 없는 로드 완료) — 스레드 읽음 저장의 전제(Codex r2 P2). */
+async function openLoadedThread(w: ReturnType<typeof world>, root: string) {
+  w.server.on(`GET /api/messages/${root}/replies`, () => ({
+    status: 200,
+    body: { root: message(1, { id: root }), replies: [], has_more: false },
+  }));
+  w.ds.openThread?.(root);
+  await settle();
+}
+
 const putCount = (log: readonly string[]) => log.filter((l) => l === 'PUT /api/read-state').length;
 
 describe('FR-SYNC-03 읽음 저장(웹 보조)', () => {
@@ -116,6 +126,8 @@ describe('FR-SYNC-03 읽음 저장(웹 보조)', () => {
     const w = world({ threads: [{ root_message_id: ROOT, last_read_seq: 0, last_reply_seq: 9, unread_reply_count: 2 }] });
     w.ds.open?.(CONV);
     expect(await w.ds.resume()).toBe(true);
+    await openLoadedThread(w, ROOT);
+    await openLoadedThread(w, U(999));
     w.ds.markRead?.(CONV, U(999), 9); // unread 대상 아님 → 무시
     w.timers.run(READ_FLUSH_MS);
     await settle();
@@ -199,6 +211,7 @@ describe('FR-SYNC-03 읽음 저장 복구(L43b, Codex r1 P2)', () => {
     const w = world({ threads: [] });
     w.ds.open?.(CONV);
     expect(await w.ds.resume()).toBe(true);
+    await openLoadedThread(w, ROOT);
     // 오래된 목록에는 root가 없다 → 바로 보내지 않는다.
     w.ds.markRead?.(CONV, ROOT, 6);
     w.timers.run(READ_FLUSH_MS);
@@ -316,5 +329,43 @@ describe('FR-SYNC-03 읽음 저장 복구(L43b, Codex r1 P2)', () => {
     w.timers.run(30000);
     await settle();
     expect(w.timers.queue.some((t) => t.ms === 1000)).toBe(true);
+  });
+});
+
+describe('FR-SYNC-03 읽음 저장(L43b, Codex r2 P2)', () => {
+  it('답글 이력 로드가 끝나기 전 스레드 위치는 보내지 않고, 로드 완료 뒤 보낸다', async () => {
+    const ROOT = U(101);
+    const w = world({ threads: [{ root_message_id: ROOT, last_read_seq: 0, last_reply_seq: 9, unread_reply_count: 2 }] });
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    // 이력 로드 실패(미완료) → 표시 안 된 답글이 있을 수 있으므로 보내지 않는다.
+    w.server.on(`GET /api/messages/${ROOT}/replies`, () => 'network');
+    w.ds.openThread?.(ROOT);
+    await settle();
+    w.ds.markRead?.(CONV, ROOT, 9);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(putCount(w.server.log)).toBe(0);
+    // 이력을 끝까지 받으면 보류한 위치를 보낸다.
+    await openLoadedThread(w, ROOT);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(w.puts).toEqual([{ conversation_id: CONV, thread_root_id: ROOT, last_read_seq: 9 }]);
+  });
+
+  it('stop() 뒤에는 대기 중 읽음·재시도·목록 재조회를 보내지 않는다', async () => {
+    const w = world();
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    w.server.on('PUT /api/read-state', () => ({ status: 503 }));
+    w.ds.markRead?.(CONV, null, 5);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(putCount(w.server.log)).toBe(1);
+    w.ds.stop();
+    expect(w.timers.queue.filter((t) => t.ms === READ_FLUSH_MS || t.ms >= 1000)).toHaveLength(0);
+    for (const ms of [1000, 2000, READ_FLUSH_MS, BACKGROUND_RELOAD_MS]) w.timers.run(ms);
+    await settle();
+    expect(putCount(w.server.log)).toBe(1);
   });
 });
