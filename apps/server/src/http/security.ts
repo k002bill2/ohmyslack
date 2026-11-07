@@ -27,9 +27,9 @@ export function normalizeHost(host: string | undefined): string | undefined {
 
 /** Origin이 허용 출처와 스킴·호스트·포트까지 정확히 같은지(NC-03). 없음·`null`은 거부. */
 export function isAllowedOrigin(origin: string | undefined, allowedOrigin: string): boolean {
-  if (origin === undefined || origin === 'null') return false;
+  if (origin === undefined || origin === 'null' || origin !== allowedOrigin) return false;
   try {
-    return new URL(origin).origin === allowedOrigin && origin === allowedOrigin;
+    return new URL(origin).origin === allowedOrigin;
   } catch {
     return false;
   }
@@ -53,7 +53,8 @@ export function registerRequestGuards(app: FastifyInstance, options: SecurityOpt
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
     const host = normalizeHost(headerValue(request, 'host'));
     if (host === undefined || !hosts.has(host)) return sendError(request, reply, 400, 'host_not_allowed');
-    if (isStateChanging(request.method) && !isAllowedOrigin(headerValue(request, 'origin'), options.allowedOrigin)) {
+    // 등록되지 않은 경로는 Origin과 무관하게 404(라우트 존재를 Origin 검사가 드러내지 않게).
+    if (!request.is404 && isStateChanging(request.method) && !isAllowedOrigin(headerValue(request, 'origin'), options.allowedOrigin)) {
       return sendError(request, reply, 403, 'origin_rejected');
     }
     return undefined;
