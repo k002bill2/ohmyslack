@@ -121,13 +121,36 @@ body {
 .sidebar-actions,
 .sidebar-account {
   display: flex;
-  flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-2);
 }
+/* 상단 작업 버튼: 세로 목록, 260px 안에서 줄바꿈 없음. */
+.sidebar-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+.sidebar-actions .btn {
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+/* 하단 계정: 표시 이름 말줄임 + 보조 버튼. 「멤버 관리」는 한 줄 전체. */
 .sidebar-account {
   margin-top: auto;
+  flex-wrap: wrap;
   align-items: center;
+  border-top: 1px solid var(--border-subtle);
+}
+.sidebar-account .account-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+.sidebar-account .btn:first-child {
+  flex: 1 0 100%;
+  justify-content: flex-start;
 }
 .dialog-backdrop {
   position: fixed;
@@ -143,10 +166,232 @@ body {
   overflow: auto;
   padding: var(--space-4);
   background: var(--bg-elevated);
-  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+  box-sizing: border-box;
 }
 .dialog-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.dialog-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+
+/*
+ * W-10h 공통 컨트롤(D §3-2·§7-1): 버튼(기본·보조·위험)·입력 최소 44px, 토큰 색만, 포커스 링은 :focus-visible 공통.
+ * auth.css(.auth-card 범위)는 그대로 둔다 — 같은 값을 쓰되 로그인 화면 테스트 기대값을 바꾸지 않기 위해.
+ */
+.btn,
+.dialog-close,
+.error-state button,
+.space-screen-header button,
+.channel-browser button,
+.create-channel button,
+.dm-starter button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-app);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+.btn-secondary:hover,
+.dialog-close:hover,
+.error-state button:hover {
+  background: var(--bg-hover);
+}
+/* accent 위 글자 역할 토큰이 없어(§3-3) auth.css와 같은 accent-bg 면 + accent-text 글자. */
+.btn-primary,
+.create-channel button[type='submit'],
+.dm-starter button[type='submit'] {
+  border-color: var(--accent-solid);
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+.btn-danger {
+  border-color: var(--danger-solid);
+  background: var(--bg-app);
+  color: var(--danger-text);
+}
+.btn:disabled,
+.create-channel button:disabled,
+.dm-starter button:disabled,
+.channel-browser button:disabled,
+.error-state button:disabled {
+  border-color: var(--border-subtle);
+  background: var(--bg-active);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+.field,
+.create-channel input,
+.dm-starter select {
+  min-height: 44px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+}
+.create-channel input[aria-invalid='true'] {
+  border-color: var(--danger-solid);
+}
+/* Dialog 폼: 라벨/입력/오류/작업 버튼(오른쪽 정렬) 세로 배치. */
+.dialog-form,
+.create-channel,
+.dm-starter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  line-height: var(--leading-body);
+}
+.dialog-form p {
+  margin: 0;
+}
+.create-channel > button,
+.dm-starter > button {
+  align-self: flex-end;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.field-error,
+.error-state,
+.error-state p {
+  color: var(--danger-text);
+}
+.field-error {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+.error-state p {
+  margin: 0;
+}
+.field-hint {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.empty-state {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+.channel-browser {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.channel-browser li,
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.channel-browser li > span,
+.member-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.space-screen {
+  padding: var(--space-4);
+}
+.space-screen-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.space-screen-header h1 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+/* CMP-25 MemberAdmin(`/settings/members`). 비활성화 완료 행은 muted(투명도 아님 — 글자색 토큰). */
+.member-admin-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) var(--space-6);
+}
+.member-admin-screen > .btn {
+  align-self: flex-start;
+}
+.member-admin-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+}
+.member-admin-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-3);
+}
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.member-role,
+.member-status {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.member-inactive .member-name {
+  color: var(--text-muted);
+}
+.dialog-form input[readonly] {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+@media (width <= 640px) {
+  .dialog {
+    min-width: 0;
+    width: calc(100% - 2 * var(--space-4));
+  }
+  .member-admin-screen {
+    padding: var(--space-4);
+  }
+  .member-admin-actions {
+    justify-content: stretch;
+  }
+  .member-admin-actions .btn {
+    flex: 1 1 auto;
+  }
 }
