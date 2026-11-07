@@ -18,7 +18,9 @@
     "check:fr-coverage": "tsx tools/bin/check-fr-coverage.ts",
     "check:log-leak": "tsx tools/bin/check-log-leak.ts",
     "drill:restore": "bash tools/restore-drill.sh",
-    "e2e:realgap": "tsx tools/bin/assert-test-db.ts && vitest run --config e2e/vitest.realgap.config.ts"
+    "e2e:realgap": "tsx tools/bin/assert-test-db.ts && vitest run --config e2e/vitest.realgap.config.ts",
+    "perf:latency": "tsx tools/bin/assert-test-db.ts && vitest run --config perf/vitest.perf.config.ts",
+    "perf:latency:smoke": "PERF_DURATION_S=30 pnpm perf:latency"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
