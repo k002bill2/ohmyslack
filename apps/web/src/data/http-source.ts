@@ -55,7 +55,7 @@ type Summary = ConversationsResponse['conversations'][number];
 
 /** 구독 거절(`error` 프레임에 대화 ID가 실린 경우). */
 class SubscribeRejected extends Error {
-  constructor(readonly retryable: boolean) {
+  constructor(readonly code: string) {
     super('subscribe rejected');
   }
 }
@@ -65,12 +65,13 @@ const readKey = (conversationId: string, rootId: string | null) => (rootId === n
 
 /**
  * 목록 항목 → Space. `reads`(WS `read.updated`로 받은 읽음 위치)와 서버 값을 단조 병합해 큰 쪽을 쓴다.
- * 병합한 위치가 마지막 seq에 닿으면 미읽음·멘션을 0으로, 스레드는 마지막 답글에 닿으면 미읽음 스레드에서 뺀다.
+ * 병합한 위치가 마지막 seq에 닿으면 미읽음을 0으로, 스레드는 마지막 답글에 닿으면 미읽음 스레드에서 뺀다.
  */
 function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: ReadonlyMap<string, number>): Space {
   const peer = c.peer_user_id === null ? undefined : names.get(c.peer_user_id);
   const read = Math.max(c.last_read_seq, reads.get(c.id) ?? 0);
   const caughtUp = read > c.last_read_seq && read >= c.last_seq;
+  // mention_count는 본문·스레드 합산이라 로컬에서 줄이지 않는다 — read.updated 뒤 목록 재조회(서버 집계)를 따른다(Codex r1 P2).
   const threadsRead = c.unread_threads.filter((t) => {
     const r = Math.max(t.last_read_seq, reads.get(readKey(c.id, t.root_message_id)) ?? 0);
     return r > t.last_read_seq && r >= t.last_reply_seq;
@@ -80,7 +81,7 @@ function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: Readonly
     kind: c.kind,
     name: c.name ?? peer ?? '',
     unreadCount: caughtUp ? 0 : c.unread_count,
-    mentionCount: caughtUp ? 0 : c.mention_count,
+    mentionCount: c.mention_count,
     unreadThreadCount: Math.max(0, c.unread_thread_count - threadsRead),
   };
 }
@@ -240,7 +241,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       case 'error':
         // 대화 ID가 실린 오류는 그 대화의 구독 거절 — ACK 대기를 끝낸다(Codex r3 P2).
         if (frame.conversation_id !== undefined) {
-          acks.get(frame.conversation_id)?.reject(new SubscribeRejected(frame.retryable));
+          acks.get(frame.conversation_id)?.reject(new SubscribeRejected(frame.code));
           acks.delete(frame.conversation_id);
         }
         if (frame.code === 'cursor_expired') void resume();
@@ -314,6 +315,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       page = await api.get<ConversationsResponse>(`/api/conversations?after=${encodeURIComponent(page.next_cursor)}`);
       all.push(...page.conversations);
     }
+    // 세션 종료 뒤 늦게 도착한 목록 응답은 버린다(Codex r1 P2).
+    if (ended) return [];
     summaries = all;
     spaces = all.map((c) => toSpace(c, names, reads));
     return all;
@@ -326,18 +329,19 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     if (!ended) emit();
   };
 
-  /** WS `read.updated`: 읽음 위치를 단조 병합하고 배지를 다시 계산한다. 끝까지 읽지 않았으면 서버 집계를 다시 읽는다. */
+  /** WS `read.updated`: 읽음 위치를 단조 병합해 배지를 즉시 다시 계산하고, 멘션·부분 읽음은 서버 집계(목록 재조회)로 맞춘다. */
   const applyRead = (conversationId: string, rootId: string | null, seq: number) => {
     const key = readKey(conversationId, rootId);
     if (seq <= (reads.get(key) ?? 0)) return;
     reads = new Map(reads).set(key, seq);
     spaces = summaries.map((c) => toSpace(c, names, reads));
     emit();
-    const c = summaries.find((s) => s.id === conversationId);
-    if (c === undefined) return;
-    const t = rootId === null ? undefined : c.unread_threads.find((u) => u.root_message_id === rootId);
-    const stale = rootId === null ? seq > c.last_read_seq && seq < c.last_seq : t !== undefined && seq > t.last_read_seq && seq < t.last_reply_seq;
-    if (stale) void loadList().then(emit, () => undefined);
+    void loadList().then(
+      () => {
+        if (!ended) emit();
+      },
+      () => undefined,
+    );
   };
 
   /** 새 기기·410: 목록 → 대화별 snapshot → 첫 snapshot_cursor부터 catch-up(TRD §3). */
@@ -393,7 +397,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       try {
         await subscribe(target, watermark);
       } catch (e) {
-        if (!(e instanceof SubscribeRejected) || e.retryable) throw e;
+        // 접근 거절(not_found)만 현재 대화를 내린다. cursor_expired 등은 프레임 처리가 시작한 복귀 절차가 재구독한다(Codex r1 P2).
+        if (!(e instanceof SubscribeRejected) || e.code !== 'not_found') throw e;
         if (gen !== generation) return false;
         await release(target);
         continue;
@@ -481,7 +486,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       void loadHistory(conversationId);
       if (!resuming && checkpoint !== null) {
         subscribe(conversationId, checkpoint).catch((e: unknown) => {
-          if (e instanceof SubscribeRejected && !e.retryable && !ended) void release(conversationId).catch(() => undefined);
+          if (e instanceof SubscribeRejected && e.code === 'not_found' && !ended) void release(conversationId).catch(() => undefined);
         });
       }
     },

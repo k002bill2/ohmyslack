@@ -49,6 +49,51 @@ describe('W-10d 구독 거절', () => {
   });
 });
 
+describe('W-10d Codex r1', () => {
+  it('P2 대화 전환 구독의 cursor_expired는 현재 대화를 유지한 채 catch-up·재구독한다(해제는 not_found만)', async () => {
+    const { server, ds, storage } = setup();
+    const OTHER = U(11);
+    server.on('GET /api/conversations', () => ({ status: 200, body: { conversations: [summary(), summary({ id: OTHER, name: 'b' })], next_cursor: null } }));
+    server.on(`GET /api/conversations/${OTHER}/messages`, () => ({ status: 200, body: { messages: [], has_more: false } }));
+    writeCheckpoint(ME, 3, storage);
+    ds.open?.(CONV);
+    expect(await ds.resume()).toBe(true);
+    server.autoAck = false;
+    ds.open?.(OTHER);
+    await settle(2);
+    const mark = server.socket.sent.length;
+    server.autoAck = true;
+    server.socket.push({ type: 'error', code: 'cursor_expired', retryable: false, conversation_id: OTHER });
+    await settle(12);
+    const subs = server.socket.sent.slice(mark) as { type: string; conversation_id: string }[];
+    expect(subs.some((f) => f.type === 'conversation.subscribe' && f.conversation_id === OTHER)).toBe(true);
+    expect(ds.getSnapshot().connection).toBe('connected');
+  });
+
+  it('P2 세션 종료 뒤 늦게 온 목록 응답이 대화 목록을 되살리지 않는다', async () => {
+    let gate: Promise<void> | null = null;
+    const ctx: { server?: ReturnType<typeof setup>['server'] } = {};
+    const fetch = (input: string, init?: RequestInit): Promise<Response> => {
+      const real = () => (ctx.server as NonNullable<typeof ctx.server>).fetch(input, init);
+      return gate !== null && input.startsWith('/api/conversations') ? gate.then(real) : real();
+    };
+    const { server, ds, storage, ended } = setup({ fetch });
+    ctx.server = server;
+    writeCheckpoint(ME, 3, storage);
+    server.on('GET /api/conversations', () => ({ status: 200, body: { conversations: [summary({ last_seq: 10, last_read_seq: 4, unread_count: 6 })], next_cursor: null } }));
+    expect(await ds.resume()).toBe(true);
+    let release: (() => void) | undefined;
+    gate = new Promise<void>((r) => (release = r));
+    server.socket.push({ type: 'read.updated', conversation_id: CONV, thread_root_id: null, last_read_seq: 6, updated_at: 'x' });
+    server.on('POST /api/auth/logout', () => ({ status: 204 }));
+    await ds.logout();
+    expect(ended).toEqual(['logout']);
+    release?.();
+    await settle(6);
+    expect(ds.getSnapshot().spaces).toEqual([]);
+  });
+});
+
 describe('W-10d 1008 정책 종료', () => {
   it('/api/me 200이면 소켓을 다시 열고 복귀 절차(catch-up·구독)를 밟는다', async () => {
     const { server, ds, storage, ended } = setup();
@@ -99,10 +144,11 @@ describe('W-10d read.updated', () => {
     expect(ds.getSnapshot().spaces[0]?.unreadCount).toBe(6);
     server.socket.push({ type: 'read.updated', conversation_id: CONV, thread_root_id: null, last_read_seq: 10, updated_at: 'x' });
     await settle(2);
-    expect(ds.getSnapshot().spaces[0]).toMatchObject({ unreadCount: 0, mentionCount: 0, unreadThreadCount: 1 });
+    // 멘션은 본문·스레드 합산이라 로컬에서 0으로 만들지 않고 서버 집계(목록 재조회)를 따른다(Codex r1 P2).
+    expect(ds.getSnapshot().spaces[0]).toMatchObject({ unreadCount: 0, mentionCount: 1, unreadThreadCount: 1 });
     server.socket.push({ type: 'read.updated', conversation_id: CONV, thread_root_id: null, last_read_seq: 5, updated_at: 'y' });
     await settle(2);
-    expect(ds.getSnapshot().spaces[0]).toMatchObject({ unreadCount: 0, mentionCount: 0 });
+    expect(ds.getSnapshot().spaces[0]?.unreadCount).toBe(0);
     // 목록을 다시 읽어도(서버가 아직 4를 돌려줘도) 병합한 읽음 위치는 뒤로 가지 않는다.
     expect(await ds.resume()).toBe(true);
     expect(ds.getSnapshot().spaces[0]?.unreadCount).toBe(0);
