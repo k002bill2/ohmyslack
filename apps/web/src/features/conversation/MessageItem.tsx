@@ -88,7 +88,7 @@ function MessageItemView(props: MessageItemProps) {
   };
 
   return (
-    <li ref={item} tabIndex={-1} className="msg-item" aria-label={messageLabel(message.author, message.createdAt)}>
+    <li ref={item} tabIndex={-1} className="msg-item" data-message-id={message.id} aria-label={messageLabel(message.author, message.createdAt)}>
       <span className="msg-author">{message.author}</span>
       {isEditing ? (
         <MessageEditor
