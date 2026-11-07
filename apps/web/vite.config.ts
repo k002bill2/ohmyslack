@@ -20,6 +20,9 @@ export function tokensCssPlugin(): Plugin {
   };
 }
 
+// 시각 표시 테스트는 디자인 §7-2 예시(KST)를 단언한다. 실행 환경 시간대(CI는 UTC)에 결과가 흔들리지 않게 테스트 프로세스만 고정한다.
+if (process.env.VITEST) process.env.TZ = 'Asia/Seoul';
+
 export default defineConfig({
   plugins: [react(), tokensCssPlugin()],
   build: { cssCodeSplit: false },
