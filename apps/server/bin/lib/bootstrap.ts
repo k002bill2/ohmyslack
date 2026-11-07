@@ -20,6 +20,25 @@ export interface BootstrapOwnerResult {
 
 const USAGE = '사용법: bootstrap-owner --email <이메일> --name <표시 이름> [--workspace <워크스페이스 이름>] (비밀번호는 TTY 또는 stdin)';
 
+/** 셸 밖(메모·메신저)에서 복사한 따옴표가 값에 섞인 흔적. 양끝만 본다(중간 따옴표는 이름일 수 있다). */
+const EDGE_QUOTES = new Set(['"', "'", '\u201C', '\u201D', '\u2018', '\u2019']);
+
+/** 양끝 공백 제거 후 첫·끝 글자가 따옴표면 거부한다(조용히 고치지 않음). 값은 출력하지 않고 길이만 알린다. */
+function refuseEdgeQuotes(option: 'name' | 'workspace', value: string | undefined): void {
+  if (value === undefined) return;
+  const chars = [...value.trim()];
+  const first = chars[0];
+  const last = chars[chars.length - 1];
+  if (first === undefined || last === undefined) return;
+  if (!EDGE_QUOTES.has(first) && !EDGE_QUOTES.has(last)) return;
+  throw new CliRefusal(
+    'quoted_value',
+    `--${option} 값(길이 ${chars.length}자)의 앞이나 끝에 따옴표 문자(" ' “ ” ‘ ’)가 값으로 들어 있습니다. ` +
+      '셸에서 직접 입력한 " 로 값 전체를 감싸 다시 실행하세요(예: --name "홍길동"). 따옴표를 복사해 붙여넣지 마세요',
+    true,
+  );
+}
+
 async function resolveWorkspace(client: pg.PoolClient, name: string | undefined): Promise<{ id: string; created: boolean }> {
   const existing = await client.query<{ id: string }>('SELECT id FROM workspaces ORDER BY created_at, id');
   if (existing.rows.length > 1) throw new CliRefusal('multiple_workspaces', '워크스페이스가 2개 이상입니다');
@@ -63,6 +82,8 @@ export function runBootstrapOwner(argv: readonly string[], io: CliIo, pool: pg.P
   return runCommand(io, 'bootstrap-owner', async () => {
     const options = parseOptions(argv, ['email', 'name', 'workspace']);
     if (options?.email === undefined || options.name === undefined) throw new CliRefusal('usage', USAGE);
+    refuseEdgeQuotes('name', options.name);
+    refuseEdgeQuotes('workspace', options.workspace);
     const password = await readPolicyPassword(io);
     const result = await bootstrapOwner(pool, {
       email: options.email,
