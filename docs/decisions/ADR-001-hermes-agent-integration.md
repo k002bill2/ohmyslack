@@ -122,6 +122,7 @@
 | 보존 | 오디오 30일, 이미지 90일 후 바이트 삭제(자리표시자 유지), 메시지 삭제 시 즉시 | 용량 예: 3 MiB × 1일 1회 × 30일 ≈ 90 MiB(추정) |
 | 업로드 흐름 | `POST attachments` → 미결속 id → 메시지 생성 `attachment_ids` → 1시간 미결속 자동 삭제 | Mattermost `POST /files` → `posts{file_ids}`와 같은 2단계(`mattermost/adapter.py:225-239`) |
 | 수신(사람→Jarvis) | 웹 작성기에서 이미지 첨부 → 어댑터가 봇 토큰으로 받아 `cache_*_from_bytes` | H2 단계 |
+| 본문 규칙 ★ | 첨부 메시지도 **본문 필수 유지**(FR-MSG-01·DB CHECK `0001_initial_schema.sql:125`·zod `messages.ts:15-18` 불변). 어댑터는 `send_voice` 등의 caption(없으면 파일명)을, 웹은 자리 문구를 본문으로 채움 | 대안: 첨부 있으면 빈 본문 허용 — 기존 P0 의미 변경(PRD:194 계약 1)이라 기각 |
 
 ### (h) 승인 UX — ★ 텍스트 명령(최소안)
 
@@ -133,7 +134,7 @@
 ### (i) 알림 — ★ Web Push는 전환(H4)의 필수 요건, 도입은 H3
 
 - **판단 근거(추정)**: 브리핑은 cron이 정해진 시각에 보내는 비동기 메시지입니다. 알림이 없으면 영환님이 앱을 열어야만 도착을 압니다. Slack을 계속 쓰는 이유 중 「브리핑을 받는다」의 실체는 iPhone 알림이므로, 푸시 없이 Slack을 끄면 기능 후퇴입니다. 반면 Slack과 병행하는 H1–H2 동안은 Slack 알림이 남아 있어 푸시가 없어도 됩니다.
-- **범위(★ 최소)**: Jarvis DM의 새 최상위 메시지와 자기 스레드 답글, 자기 멘션. payload에는 `conversation_id`/`thread_root_id`만, **본문·이름 미포함**, 알림 문구는 SW 고정(「Jarvis」/「새 메시지가 있습니다」). iOS는 silent push가 금지이므로 SW는 항상 알림을 띄웁니다(https://webkit.org/blog/12945/meet-web-push/).
+- **범위(★ 최소)**: Jarvis DM의 새 최상위 메시지와 자기 스레드 답글, 자기 멘션. payload에는 `conversation_id`/`thread_root_id`/`from_bot`만, **본문·이름 미포함**, 알림 문구는 SW 고정(「Jarvis」/「새 메시지가 있습니다」). iOS는 silent push가 금지이므로 SW는 항상 알림을 띄웁니다(https://webkit.org/blog/12945/meet-web-push/).
 - **조건(사실)**: iOS/iPadOS 16.4+, 홈 화면 추가 + manifest `display: standalone`, 권한 요청은 사용자 동작에서만(https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/). 현 manifest는 standalone(`apps/web/public/manifest.webmanifest`).
 - **네트워크**: 서버가 push service(`*.push.apple.com`)로 **outbound HTTPS**를 처음으로 합니다. 인바운드 노출은 변하지 않습니다. tailnet 전용 origin에서 iOS 구독·수신이 되는지는 공식 근거 없음 → **확인 필요**(QA-FR-CLIENT-05 실기 시험을 H3 첫 작업으로).
 - **VAPID 키**: 로컬 명령 `vapid-keygen`으로 P-256 생성, 개인키는 저장소 밖 600 파일, 환경 변수로 경로만 주입, 미설정 시 푸시만 비활성. `sub`는 공백 없는 `mailto:` 실제 주소(Apple의 403 BadJwtToken 비공식 보고 — https://developer.apple.com/forums/thread/725473). 키 회전 = 전 구독 재등록(RFC 8292).
@@ -202,7 +203,7 @@
 ## 8. 영환님 결정 필요 (★ 권장 먼저)
 
 1. **D-1 ★ 플러그인 어댑터(A) 채택** — 대안 B는 브리핑 전달 불가, C는 목표 불충족.
-2. **D-2 ★ 새 P0를 기존 G1(MVP 게이트)에 포함** — 대안: Hermes 전용 게이트 GH를 따로 두고 G1은 33개 유지(그 경우 `check:fr-coverage`에 게이트 구분 표기 추가 필요).
+2. **D-2 ★ 새 P0를 기존 G1(MVP 게이트)에 포함**(P0 33 → 42) — 대안: Hermes 전용 게이트 GH를 따로 두고 G1은 33개 유지(그 경우 `check:fr-coverage`에 게이트 구분 표기 추가 필요). 어느 쪽이든 FR-BOT-04·06의 어댑터 측 동작은 vitest 지정 테스트가 될 수 없어(탐색 범위 5곳, DEV_DESIGN §2-1) 수동 증거 `QA-FR-BOT-0x`로 판정합니다.
 3. **D-3 ★ Web Push는 H4(전환)의 필수 요건, 구현은 H3** — 대안: 푸시 없이 전환(앱을 직접 열어 확인).
 4. **D-4 ★ 첨부 바이트를 PG `bytea`에 저장(10 MiB·오디오 30일 보존)** — 대안: 맥 로컬 디렉터리(백업 드릴 범위 확장 필요).
 5. **D-5 ★ 승인은 텍스트 명령(`/approve`·`/deny`)으로 시작, 버튼은 P1**.
