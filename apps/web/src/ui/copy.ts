@@ -135,6 +135,24 @@ export const MEMBER_DEACTIVATE_COPY = {
   confirm: DIALOG_TITLES.deactivateMember,
 } as const;
 
+/**
+ * CMP-25 MemberAdmin 화면·초대 발급 Dialog(W-10h). 모두 정본 문구 그대로:
+ * title = D §4-2 표·UI_STATES §3 표 「멤버 관리」, inviteWarning = UI_STATES §2-8·§2-12 / D §10-2 S1,
+ * expiresLabel = UI_STATES §2-12 「만료 시각」, copy = UI_STATES §2-12 「가능한 동작: 복사」,
+ * deactivateBody = D §4-3 용어표·UI_STATES §2-8, inactive = UI_STATES §2-12 「비활성」 라벨,
+ * roles = D §4-2 「(관리자)」·UI_STATES §6-1 「A=관리자, B=멤버」.
+ */
+export const MEMBER_ADMIN_COPY = {
+  title: '멤버 관리',
+  createInvite: DIALOG_TITLES.createInvite,
+  inviteWarning: '이 창을 닫으면 다시 볼 수 없습니다',
+  expiresLabel: '만료 시각',
+  copy: '복사',
+  deactivateBody: '이 멤버의 모든 기기가 5초 안에 로그아웃되며 다시 로그인할 수 없습니다',
+  inactive: '비활성',
+  roles: { owner: '관리자', member: '멤버' },
+} as const;
+
 /** 공간 전환기(G-33). 컴포넌트 미구현 — 상수만. */
 export const SPACE_SWITCHER_COPY = {
   title: '공간 이동',
