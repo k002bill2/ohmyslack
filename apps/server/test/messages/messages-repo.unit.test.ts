@@ -147,8 +147,12 @@ describe('createPgMessagesStore: send', () => {
     };
     expect(await send({ body: 'other' })).toEqual({ kind: 'conflict' });
     expect(await send({ threadRootId: 'r1' })).toEqual({ kind: 'conflict' });
-    expect(await send({}, (sql) => (sql === MENTION_FILTER_SQL ? ok([{ id: U2 }, { id: U3 }]) : undefined))).toEqual({ kind: 'conflict' });
-    expect(await send({}, (sql) => (sql === MENTION_FILTER_SQL ? ok([{ id: U3 }]) : undefined))).toEqual({ kind: 'conflict' });
+    // 저장 mention(U2)이 요청에 없으면 충돌.
+    expect(await send({ mentionUserIds: [] })).toEqual({ kind: 'conflict' });
+    // 요청에만 있는 U3가 생성 시점에 이미 활성 참여자였으면 충돌, 아니었으면(나중에 참여) 같은 요청.
+    const eligible = (rows: unknown[]) => (sql: string) => (sql.trim().startsWith('SELECT 1 FROM conversation_members cm') ? ok(rows) : undefined);
+    expect(await send({ mentionUserIds: [U2, U3] }, eligible([{}]))).toEqual({ kind: 'conflict' });
+    expect(await send({ mentionUserIds: [U2, U3] }, eligible([]))).toMatchObject({ kind: 'replayed' });
     expect(await send({}, (sql) => (isLoad(sql) ? none() : undefined))).toEqual({ kind: 'conflict' });
   });
 

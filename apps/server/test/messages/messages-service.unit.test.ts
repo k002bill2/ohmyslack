@@ -30,8 +30,8 @@ function record(over: Partial<MessageRecord> = {}): MessageRecord {
 interface Fake {
   sendResult: SendResult;
   writeResult: WriteResult;
-  got?: MessageRecord;
-  located?: { conversationId: string; authorId: string; threadRootId: string | null };
+  got?: MessageRecord | undefined;
+  located?: { conversationId: string; authorId: string; threadRootId: string | null } | undefined;
   readonly sent: NewMessage[];
   readonly calls: string[];
 }
