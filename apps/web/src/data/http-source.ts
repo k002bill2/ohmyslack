@@ -60,6 +60,9 @@ const HISTORY_LIMIT = 100;
 export const READ_FLUSH_MS = 500;
 /** 배경 대화 변경 → 목록 재조회 묶음 지연(BRIEF ★2). */
 export const BACKGROUND_RELOAD_MS = 300;
+/** 읽음 저장 실패 재시도 백오프(Codex r1 P2-3): 1s에서 2배씩, 상한 30s. */
+export const READ_RETRY_BASE_MS = 1000;
+export const READ_RETRY_MAX_MS = 30_000;
 
 type Summary = ConversationsResponse['conversations'][number];
 
@@ -158,6 +161,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let readQueue: ReadonlyMap<string, { readonly conversationId: string; readonly rootId: string | null; readonly seq: number }> = new Map();
   let readSent: ReadonlyMap<string, number> = new Map();
   let readTimer: unknown = null;
+  /** 현재 `readTimer`가 실패 재시도(백오프) 타이머인지와 연속 실패 횟수(Codex r1 P2-3). */
+  let readTimerIsRetry = false;
+  let readFailures = 0;
+  /** 오래된 목록 때문에 보류한 스레드 위치 — 목록 재조회 뒤 다시 평가한다(Codex r1 P2-1). */
+  let deferredThreadReads: ReadonlyMap<string, { readonly conversationId: string; readonly rootId: string; readonly seq: number }> = new Map();
   /** 생성·참여·DM 직후 호출자가 `open(id)`할 대화 — 배경 구독에서 빼 이중 구독을 막는다. */
   let opening: string | null = null;
   const isVisible = () => (deps.lifecycle?.doc.visibilityState ?? 'visible') === 'visible';
@@ -281,6 +289,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     reads = new Map();
     readQueue = new Map();
     readSent = new Map();
+    deferredThreadReads = new Map();
+    readFailures = 0;
     background = new Set();
     if (readTimer !== null) clearTimer(readTimer);
     if (reloadTimer !== null) clearTimer(reloadTimer);
@@ -364,6 +374,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
           sendController.messageCreated(key, frame.message.id);
         }
         emit();
+        // 현재 대화의 남의 답글: 스레드 unread 대상(서버 집계)을 목록 재조회로 맞춘다 — 열린 스레드 읽음 저장의 전제(Codex r1 P2-1).
+        if (frame.type === 'message.created' && frame.message.thread_root_id != null && frame.message.author_id !== userId) scheduleReload();
         if (frame.type === 'message.created') probeMark('emit', frame.message.id, frame.message.created_at);
         return;
       case 'message.deleted':
@@ -528,6 +540,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     spaces = withLeft(all.map((c) => toSpace(c, names, reads)));
     listState = 'ready';
     syncBackground();
+    retryDeferredThreadReads();
     return all;
   };
 
@@ -639,6 +652,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const flushReads = () => {
     if (readTimer !== null) clearTimer(readTimer);
     readTimer = null;
+    readTimerIsRetry = false;
     if (ended || connection !== 'connected' || readQueue.size === 0) return;
     const batch = [...readQueue.values()];
     readQueue = new Map();
@@ -654,35 +668,66 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         })
         .then(
           (res) => {
-            if (!ended) applyRead(res.conversation_id, res.thread_root_id, res.last_read_seq);
+            if (ended) return;
+            readFailures = 0;
+            applyRead(res.conversation_id, res.thread_root_id, res.last_read_seq);
           },
           (e: unknown) => {
-            if (!(e instanceof NetworkError) || ended) return;
-            // 네트워크 오류: 보낸 기록을 되돌리고 대기열에 다시 넣는다(다음 읽음·복귀 완료 때 송신).
+            const transient = e instanceof NetworkError || (e instanceof HttpStatusError && e.status >= 500);
+            if (!transient || ended) return;
+            // 네트워크 오류·5xx: 보낸 기록을 되돌리고 대기열에 다시 넣은 뒤 백오프 재시도를 예약한다(Codex r1 P2-2·3). 4xx는 버린다.
             const sent = new Map(readSent);
-            sent.delete(key);
+            if (sent.get(key) === item.seq) sent.delete(key);
             readSent = sent;
             if ((readQueue.get(key)?.seq ?? 0) < item.seq) readQueue = new Map(readQueue).set(key, item);
+            scheduleReadRetry();
           },
         );
     }
+  };
+
+  /** 실패한 읽음 재시도: 1s→2s→4s… 상한 30s. 연결됨이 아니면 복귀 완료 때 `flushReads`가 보낸다. */
+  const scheduleReadRetry = () => {
+    if (readTimer !== null || readQueue.size === 0) return;
+    const delay = Math.min(READ_RETRY_BASE_MS * 2 ** readFailures, READ_RETRY_MAX_MS);
+    readFailures += 1;
+    readTimerIsRetry = true;
+    readTimer = setTimer(flushReads, delay);
+  };
+
+  /** 목록 재조회 뒤 보류한 스레드 위치를 다시 평가한다 — 서버 unread 대상 root일 때만 통과한다(PRD §7-7). */
+  const retryDeferredThreadReads = () => {
+    if (deferredThreadReads.size === 0) return;
+    const items = [...deferredThreadReads.values()];
+    deferredThreadReads = new Map();
+    for (const item of items) markRead(item.conversationId, item.rootId, item.seq, false);
   };
 
   /**
    * 화면이 실제로 보여 준 위치(BRIEF ★1, PRD §7-7): 전경·현재 대화일 때만 받는다. 스레드는 서버 unread 대상 root일 때만.
    * 같은 키는 최대 seq로 합치고 trailing 지연 뒤 보낸다.
    */
-  const markRead = (conversationId: string, rootId: string | null, seq: number) => {
+  function markRead(conversationId: string, rootId: string | null, seq: number, defer = true): void {
     if (ended || conversationId !== current || !isVisible()) return;
+    const key = readKey(conversationId, rootId);
     if (rootId !== null) {
       const c = summaries.find((x) => x.id === conversationId);
-      if (c?.unread_threads.some((t) => t.root_message_id === rootId) !== true) return;
+      if (c?.unread_threads.some((t) => t.root_message_id === rootId) !== true) {
+        // 목록이 오래됐을 수 있다: 다음 재조회 뒤 다시 평가한다(재조회 결과에도 없으면 버린다).
+        if (defer && seq > (deferredThreadReads.get(key)?.seq ?? 0)) deferredThreadReads = new Map(deferredThreadReads).set(key, { conversationId, rootId, seq });
+        return;
+      }
     }
-    const key = readKey(conversationId, rootId);
     if (seq <= readFloor(conversationId, rootId) || seq <= (readQueue.get(key)?.seq ?? 0)) return;
     readQueue = new Map(readQueue).set(key, { conversationId, rootId, seq });
+    // 새 위치는 백오프 대기 중이어도 짧은 묶음 지연으로 다시 예약한다(대기열 전체를 함께 보낸다).
+    if (readTimer !== null && readTimerIsRetry) {
+      clearTimer(readTimer);
+      readTimer = null;
+      readTimerIsRetry = false;
+    }
     if (readTimer === null) readTimer = setTimer(flushReads, READ_FLUSH_MS);
-  };
+  }
 
   const resume = async (retried = false): Promise<boolean> => {
     if (ended) return false;
@@ -858,6 +903,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       else if (prev !== null) realtime.send({ type: 'conversation.unsubscribe', conversation_id: prev });
       // 나간 채널은 구독·이력을 열지 않는다(구독은 서버가 거절한다) — 다시 참여 뒤 `open(id)`이 연다.
       current = conversationId !== null && leftChannels.has(conversationId) ? null : conversationId;
+      // 대화 전환: 보류 스레드 위치와 재시도 백오프를 초기화한다(Codex r1 P2-1·3).
+      deferredThreadReads = new Map();
+      readFailures = 0;
       // 배경 구독 중이었어도 현재 대화는 기존 절차(ACK 구독)로 다시 구독한다(BRIEF ★2 현재 대화 절차 불변).
       if (current !== null && background.has(current)) background = new Set([...background].filter((b) => b !== current));
       if (current === null || conversationId === null) return;

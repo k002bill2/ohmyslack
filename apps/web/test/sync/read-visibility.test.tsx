@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { AppShell } from '../../src/features/layout';
 import { createMemoryDataSource, type DataSource } from '../../src/data';
-import { READ_FLUSH_MS } from '../../src/data/http-source.js';
+import { BACKGROUND_RELOAD_MS, READ_FLUSH_MS } from '../../src/data/http-source.js';
 import { writeCheckpoint } from '../../src/features/sync';
-import { CONV, ME, U, flush, setup, summary } from './fake-server.js';
+import { CONV, ME, U, flush, message, setup, summary } from './fake-server.js';
 
 afterEach(cleanup);
 
@@ -193,3 +193,128 @@ describe('FR-SYNC-03 화면 판정(AppShell)', () => {
   });
 });
 
+describe('FR-SYNC-03 읽음 저장 복구(L43b, Codex r1 P2)', () => {
+  it('열린 스레드의 새 답글: 목록 재조회로 unread 대상이 되면 보류한 위치를 저장한다(열어 보기만 한 스레드는 저장 안 함)', async () => {
+    const ROOT = U(101);
+    const w = world({ threads: [] });
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    // 오래된 목록에는 root가 없다 → 바로 보내지 않는다.
+    w.ds.markRead?.(CONV, ROOT, 6);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(putCount(w.server.log)).toBe(0);
+    // 서버 집계: 새 답글로 root가 unread 대상이 됐다.
+    w.server.on('GET /api/conversations', () => ({
+      status: 200,
+      body: {
+        conversations: [summary({ last_seq: 6, unread_count: 0, unread_threads: [{ root_message_id: ROOT, last_read_seq: 0, last_reply_seq: 6, unread_reply_count: 1 }] })],
+        next_cursor: null,
+      },
+    }));
+    // 현재 대화 답글 프레임 → 묶음 재조회 예약.
+    w.server.socket.push({ type: 'message.created', change_id: 41, conversation_id: CONV, message: message(6, { thread_root_id: ROOT }) });
+    expect(w.timers.queue.filter((t) => t.ms === BACKGROUND_RELOAD_MS)).toHaveLength(1);
+    w.timers.run(BACKGROUND_RELOAD_MS);
+    await settle();
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(w.puts).toEqual([{ conversation_id: CONV, thread_root_id: ROOT, last_read_seq: 6 }]);
+  });
+
+  it('열어 보기만 한 스레드는 재조회 뒤에도 unread 대상이 아니면 저장하지 않는다', async () => {
+    const ROOT = U(101);
+    const w = world({ threads: [] });
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    w.ds.markRead?.(CONV, ROOT, 6);
+    w.server.socket.push({ type: 'message.created', change_id: 41, conversation_id: CONV, message: message(6, { thread_root_id: ROOT }) });
+    w.timers.run(BACKGROUND_RELOAD_MS);
+    await settle();
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(putCount(w.server.log)).toBe(0);
+  });
+
+  it('5xx 실패는 보낸 기록을 되돌리고 백오프 타이머로 다시 보낸다(4xx는 버린다)', async () => {
+    const w = world();
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    w.server.on('PUT /api/read-state', () => ({ status: 503, body: { error: { code: 'unavailable' } } }));
+    w.ds.markRead?.(CONV, null, 5);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(putCount(w.server.log)).toBe(1);
+    expect(w.timers.queue.some((t) => t.ms === 1000)).toBe(true);
+    w.timers.run(1000);
+    await settle();
+    expect(putCount(w.server.log)).toBe(2);
+    expect(w.timers.queue.some((t) => t.ms === 2000)).toBe(true);
+    // 같은 위치 재보고도 기록이 되돌려져 있어 막히지 않는다.
+    w.server.on('PUT /api/read-state', (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      w.puts.push(body);
+      return { status: 200, body: { ...body, updated_at: '2026-11-08T00:00:00Z' } };
+    });
+    w.timers.run(2000);
+    await settle();
+    expect(w.puts).toEqual([{ conversation_id: CONV, thread_root_id: null, last_read_seq: 5 }]);
+    expect(w.ds.getSnapshot().spaces[0]?.unreadCount).toBe(0);
+    expect(w.timers.queue.filter((t) => t.ms >= 1000)).toHaveLength(0);
+  });
+
+  it('네트워크 실패는 재시도 타이머를 예약하고, 끊김(offline)이 되면 복귀 완료 때 보낸다', async () => {
+    const w = world();
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    w.server.on('PUT /api/read-state', () => 'network');
+    w.ds.markRead?.(CONV, null, 5);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(putCount(w.server.log)).toBe(1);
+    expect(w.timers.queue.some((t) => t.ms === 1000)).toBe(true);
+    w.timers.run(1000);
+    await settle();
+    expect(putCount(w.server.log)).toBe(2);
+    // 연속 네트워크 실패 2회 → 끊김. 재시도 타이머는 더 보내지 않고 복귀 절차가 보낸다.
+    expect(w.ds.getSnapshot().connection).toBe('offline');
+    w.timers.run(2000);
+    await settle();
+    expect(putCount(w.server.log)).toBe(2);
+    w.server.on('PUT /api/read-state', (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      w.puts.push(body);
+      return { status: 200, body: { ...body, updated_at: '2026-11-08T00:00:00Z' } };
+    });
+    expect(await w.ds.resume()).toBe(true);
+    await settle();
+    expect(w.puts).toEqual([{ conversation_id: CONV, thread_root_id: null, last_read_seq: 5 }]);
+  });
+
+  it('5xx 연속 실패 백오프는 1s→2s→4s… 상한 30s이고 대화 전환 시 초기화된다', async () => {
+    const w = world();
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    w.server.on('PUT /api/read-state', () => ({ status: 500 }));
+    w.ds.markRead?.(CONV, null, 5);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    const delays: number[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const next = w.timers.queue.find((t) => t.ms >= 1000);
+      expect(next).toBeDefined();
+      delays.push(next!.ms);
+      w.timers.run(next!.ms);
+      await settle();
+    }
+    expect(delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+    expect(putCount(w.server.log)).toBe(8);
+    // 대화 전환 → 백오프 초기화: 다음 실패는 다시 1s.
+    w.ds.open?.(U(11));
+    w.ds.open?.(CONV);
+    await settle();
+    w.timers.run(30000);
+    await settle();
+    expect(w.timers.queue.some((t) => t.ms === 1000)).toBe(true);
+  });
+});
