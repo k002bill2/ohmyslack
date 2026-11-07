@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 1안 "두 개의 겹친 원호(대화의 왕복)": 위·아래 원호가 엇갈려 지나감. 독자 제작, 참고 출처 없음. Radix teal 9 위 흰 심볼. -->
+  <rect width="512" height="512" rx="112" fill="#12a594"/>
+  <g stroke="#ffffff" fill="none" stroke-width="40" stroke-linecap="round"><path d="M129.58 254.06 A104 104 0 1 1 334.42 254.06"/><path d="M382.42 257.94 A104 104 0 1 1 177.58 257.94"/></g>
+</svg>
