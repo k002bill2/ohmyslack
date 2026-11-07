@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App.js';
+import { LiveApp, browserSource } from './LiveApp.js';
 import { registerServiceWorker } from './features/pwa';
 import 'virtual:tokens.css';
 
@@ -10,7 +10,7 @@ if (container === null) {
 }
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <LiveApp fetch={(input, init) => window.fetch(input, init)} createSource={browserSource} />
   </StrictMode>,
 );
 
