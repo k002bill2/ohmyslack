@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { ActionResult } from '../../data/index.js';
 import { MESSAGE_ACTION_COPY } from '../../ui/copy.js';
+import { CONVERSATION_DESIGN_COPY } from './copy.js';
 import { MessageBody } from './MessageBody.js';
 import { DeleteMessageDialog } from './MessageItemDelete.js';
 import { MessageEditor } from './MessageItemEditor.js';
@@ -39,6 +40,8 @@ export interface MessageItemProps {
   readonly threadHolding?: boolean;
   /** 보이는 시각 위치(UI_STATES §3 타임스탬프 행): compact = 본문 아래(`below`), medium·wide = 작성자 옆(`inline`, 기본). */
   readonly timePlacement?: 'inline' | 'below';
+  /** 나를 멘션한 메시지면 강조 블록 + 「나를 멘션」 라벨(시안 01). 판정은 호출자(목록)가 한다. */
+  readonly mentionsSelf?: boolean;
 }
 
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -97,6 +100,8 @@ function MessageItemView(props: MessageItemProps) {
   }, [confirming]);
   const actionable = canModify(message, selfId);
   const isEditing = editing && actionable && onEdit !== undefined;
+  const showReply = onReply !== undefined && message.deleted !== true;
+  const mentioned = props.mentionsSelf === true && message.deleted !== true;
 
   const save = async (body: string) => {
     const result = await (onEdit?.(message.id, body) ?? Promise.resolve({ ok: false as const, status: 403 }));
@@ -108,9 +113,10 @@ function MessageItemView(props: MessageItemProps) {
   };
 
   return (
-    <li ref={item} tabIndex={-1} className="msg-item" data-message-id={message.id} aria-label={messageLabel(message.author, message.createdAt)}>
+    <li ref={item} tabIndex={-1} className={mentioned ? 'msg-item msg-mentioned' : 'msg-item'} data-message-id={message.id} aria-label={messageLabel(message.author, message.createdAt)}>
       <span className="msg-author">{message.author}</span>
       {placement === 'inline' && <MessageTime message={message} placement="inline" />}
+      {mentioned && <span className="msg-mention-label">{CONVERSATION_DESIGN_COPY.mentionedSelf}</span>}
       {isEditing ? (
         <MessageEditor
           initial={message.body}
@@ -143,25 +149,30 @@ function MessageItemView(props: MessageItemProps) {
           onDiscard={() => onDiscard?.(pending.clientMessageId)}
         />
       )}
-      {actionable && !isEditing && (
-        <div className="msg-actions">
-          {onEdit !== undefined && (
-            <button type="button" className="msg-action" onClick={() => setEditing(true)}>
-              {MESSAGE_ACTION_COPY.edit}
+      {/* 시안 11 A·B: hover·포커스 시 메시지 오른쪽 위 툴바(정본 UI_STATES §3 「hover·포커스 시 인라인 툴바」). 대표 동작 「답글」 먼저. */}
+      {(showReply || (actionable && !isEditing)) && (
+        <div className="msg-toolbar">
+          {/* 삭제 자리표시자 액션은 「스레드 열기만」(UI_STATES §2-5) — 「답글」 없음, CMP-14는 유지. */}
+          {showReply && (
+            <button type="button" className="msg-action" data-reply-for={message.id} onClick={() => onReply?.(message.id)}>
+              답글
             </button>
           )}
-          {onDelete !== undefined && (
-            <button type="button" className="msg-action" onClick={() => setConfirming(true)}>
-              {MESSAGE_ACTION_COPY.delete}
-            </button>
+          {actionable && !isEditing && (
+            <div className="msg-actions">
+              {onEdit !== undefined && (
+                <button type="button" className="msg-action" onClick={() => setEditing(true)}>
+                  {MESSAGE_ACTION_COPY.edit}
+                </button>
+              )}
+              {onDelete !== undefined && (
+                <button type="button" className="msg-action" onClick={() => setConfirming(true)}>
+                  {MESSAGE_ACTION_COPY.delete}
+                </button>
+              )}
+            </div>
           )}
         </div>
-      )}
-      {/* 삭제 자리표시자 액션은 「스레드 열기만」(UI_STATES §2-5) — 「답글」 없음, CMP-14는 유지. */}
-      {onReply !== undefined && message.deleted !== true && (
-        <button type="button" className="msg-action" data-reply-for={message.id} onClick={() => onReply(message.id)}>
-          답글
-        </button>
       )}
       {confirming && onDelete !== undefined && (
         <DeleteMessageDialog

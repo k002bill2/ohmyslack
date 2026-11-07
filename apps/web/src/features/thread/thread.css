@@ -1,0 +1,45 @@
+/*
+ * W-11b CMP-13 ThreadPanel 시안 반영(01·06). 토큰만. layout.css의 패널 배치(폭·오버레이)는 그대로 두고
+ * `.thread-panel` 하위 복합 선택자로 헤더·원문 상자만 덮는다.
+ */
+.thread-panel .thread-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 0;
+}
+.thread-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.thread-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: var(--leading-tight);
+  color: var(--text);
+}
+.thread-subtitle {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+/* 원문 = 둥근 상자(시안 bg3 → --bg-active). */
+.thread-panel .thread-root {
+  margin: 0 var(--space-3) var(--space-3);
+  border-bottom: 0;
+}
+.thread-panel .thread-root > .msg-item,
+.thread-panel .thread-root > .msg-item:hover {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-active);
+}
+.thread-panel .thread-replies {
+  padding-inline: var(--space-1);
+}

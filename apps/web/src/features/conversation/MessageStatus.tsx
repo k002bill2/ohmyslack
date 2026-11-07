@@ -25,10 +25,10 @@ export function MessageStatus({ item, onRetry, onDiscard }: MessageStatusProps) 
       return (
         <div className="msg-status" role="status">
           <span className="msg-status-label">{COPY.unknownLabel}</span>
-          <button type="button" aria-label={COPY.unknownRetryName} onClick={onRetry}>
+          <button type="button" className="msg-status-retry" aria-label={COPY.unknownRetryName} onClick={onRetry}>
             {RETRY_LABEL}
           </button>
-          <button type="button" onClick={onDiscard}>
+          <button type="button" className="msg-status-discard" onClick={onDiscard}>
             {COPY.unknownDiscard}
           </button>
         </div>
@@ -41,12 +41,12 @@ export function MessageStatus({ item, onRetry, onDiscard }: MessageStatusProps) 
           ) : (
             <>
               <span className="msg-status-label">{COPY.failedLabel}</span>
-              <button type="button" aria-label={COPY.failedRetryName} onClick={onRetry}>
+              <button type="button" className="msg-status-retry" aria-label={COPY.failedRetryName} onClick={onRetry}>
                 {RETRY_LABEL}
               </button>
             </>
           )}
-          <button type="button" onClick={onDiscard}>
+          <button type="button" className="msg-status-discard" onClick={onDiscard}>
             삭제
           </button>
         </div>

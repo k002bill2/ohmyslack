@@ -205,6 +205,7 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
                 role="option"
                 aria-selected={i === active}
                 className={i === active ? 'mention-option mention-active' : 'mention-option'}
+                data-initial={Array.from(c.displayName)[0] ?? ''}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   choose(c);
@@ -225,8 +226,12 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
       <p className={overLimit ? 'composer-limit' : 'visually-hidden'} aria-live="polite">
         {counterAnnouncement(length, MESSAGE_BODY_MAX_CODE_POINTS)}
       </p>
+      {/* 시안 01·05: 원형 아이콘 전송 버튼. 보이는 글자는 시각적으로 숨기고 접근 이름 「전송」 유지. */}
       <button type="button" className="btn btn-primary composer-send" aria-label="전송" disabled={!canSend(text)} onClick={send}>
-        전송
+        <svg className="composer-send-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+          <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="visually-hidden">전송</span>
       </button>
     </div>
   );
