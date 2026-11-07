@@ -57,9 +57,11 @@ function memoryConversations(auth: MemoryAuthStore): Fixture {
       async listMembers(id) {
         return [...(convs.get(id)?.members ?? [])].map((u) => ({ id: u, displayName: auth.users.get(u)?.displayName ?? '' }));
       },
-      async listForUser(userId) {
+      async listForUser(userId, after, limit) {
         return [...convs.values()]
-          .filter((c) => c.members.has(userId))
+          .filter((c) => c.members.has(userId) && (after === undefined || c.id > after))
+          .sort((x, y) => x.id.localeCompare(y.id))
+          .slice(0, limit)
           .map((c) => ({ id: c.id, kind: c.kind, name: c.name, peerUserId: null, lastSeq: 3, lastReadSeq: 1 }));
       },
       async openDm(dm) {
@@ -135,7 +137,21 @@ describe('conversations 라우트: 목록·탐색·생성', () => {
           unread_threads: [],
         },
       ],
+      next_cursor: null,
     });
+  });
+
+  it('GET /api/conversations: cursor paging(최대 100), 범위 밖 limit·잘못된 after는 400 (Codex r1 P2)', async () => {
+    const { app, fx, owner, ownerId } = await setup();
+    const ids = [addConv(fx, 'channel', [ownerId]), addConv(fx, 'channel', [ownerId]), addConv(fx, 'channel', [ownerId])].sort();
+    const first = (await call(app, 'GET', '/api/conversations?limit=2', owner)).json<{ conversations: { id: string }[]; next_cursor: string }>();
+    expect(first.conversations.map((c) => c.id)).toEqual(ids.slice(0, 2));
+    expect(first.next_cursor).toBe(ids[1]);
+    const second = (await call(app, 'GET', `/api/conversations?after=${first.next_cursor}`, owner)).json<{ conversations: { id: string }[]; next_cursor: null }>();
+    expect(second.conversations.map((c) => c.id)).toEqual([ids[2]]);
+    expect(second.next_cursor).toBeNull();
+    expect((await call(app, 'GET', '/api/conversations?limit=101', owner)).statusCode).toBe(400);
+    expect((await call(app, 'GET', '/api/conversations?after=bad', owner)).statusCode).toBe(400);
   });
 
   it('discover: limit 페이징·next_cursor, 잘못된 query는 400', async () => {

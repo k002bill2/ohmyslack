@@ -63,7 +63,13 @@ export const conversationSummarySchema = z.object({
 
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
 
-export const conversationsResponseSchema = z.object({ conversations: z.array(conversationSummarySchema) });
+/** 목록 cursor paging(TRD §3: 최대 100, offset 금지). 쿼리 계약은 discover와 같다. */
+export const conversationsQuerySchema = discoverQuerySchema;
+
+export const conversationsResponseSchema = z.object({
+  conversations: z.array(conversationSummarySchema),
+  next_cursor: z.uuid().nullable(),
+});
 
 export type ConversationsResponse = z.infer<typeof conversationsResponseSchema>;
 

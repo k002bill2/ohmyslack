@@ -41,8 +41,8 @@ const LIST_FOR_USER_SQL = `SELECT c.id, c.kind, c.name, c.last_seq::text AS last
   FROM conversation_members m
   JOIN conversations c ON c.id = m.conversation_id
   LEFT JOIN conversation_read_state r ON r.conversation_id = c.id AND r.user_id = m.user_id
-  WHERE m.user_id = $1 AND m.left_at IS NULL
-  ORDER BY c.kind, c.name_norm NULLS LAST, c.id`;
+  WHERE m.user_id = $1 AND m.left_at IS NULL AND ($2::uuid IS NULL OR c.id > $2::uuid)
+  ORDER BY c.id LIMIT $3`;
 
 const DISCOVER_SQL = `SELECT c.id, c.name FROM conversations c
   WHERE c.kind = 'channel'
@@ -135,7 +135,7 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
       );
       return res.rows.map((r) => ({ id: r.id, displayName: r.display_name }));
     },
-    async listForUser(userId) {
+    async listForUser(userId, after, limit) {
       const res = await pool.query<{
         id: string;
         kind: ConversationKind;
@@ -143,7 +143,7 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
         last_seq: string;
         last_read_seq: string;
         peer_user_id: string | null;
-      }>(LIST_FOR_USER_SQL, [userId]);
+      }>(LIST_FOR_USER_SQL, [userId, after ?? null, limit]);
       return res.rows.map(
         (r): ConversationRow => ({
           id: r.id,

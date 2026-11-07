@@ -4,6 +4,7 @@ import { markConversationGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
 import {
   channelCreateRequestSchema,
+  conversationsQuerySchema,
   discoverQuerySchema,
   dmCreateRequestSchema,
   DISCOVER_LIMIT_MAX,
@@ -59,8 +60,12 @@ function access(request: FastifyRequest): AccessRow {
 }
 
 async function listConversations(deps: ConversationRouteDeps, request: FastifyRequest): Promise<ConversationsResponse> {
-  const rows = await deps.conversations.store.listForUser(requireAuth(request).user.id);
+  const query = parseOr400(conversationsQuerySchema, request.query);
+  const limit = query.limit ?? DISCOVER_LIMIT_MAX;
+  const fetched = await deps.conversations.store.listForUser(requireAuth(request).user.id, query.after, limit + 1);
+  const rows = fetched.slice(0, limit);
   return {
+    next_cursor: fetched.length > limit ? (rows.at(-1)?.id ?? null) : null,
     // TODO(W-08·W-09): unread·mention·스레드 집계를 같은 목록 쿼리에서 채운다(대화별 추가 호출 금지 계약).
     conversations: rows.map((r) => ({
       id: r.id,

@@ -26,10 +26,13 @@ export interface ConversationsService {
   readonly store: ConversationsStore;
 }
 
-/** 채널 이름 정규화(TRD §2): trim → NFC → case-fold(toUpperCase→toLowerCase 근사, 예: ß→ss) → NFC. */
+/**
+ * 채널 이름 정규화(TRD §2): trim → NFC → case-fold → NFC. case-fold는 의존성 없이 lower→upper→lower로 근사한다
+ * (ß·ẞ→ss, ς→σ 등 full folding의 확장 매핑을 흡수, Codex r1 P2).
+ */
 export function normalizeChannelName(raw: string): { readonly name: string; readonly nameNorm: string } {
   const name = raw.trim().normalize('NFC');
-  return { name, nameNorm: name.toUpperCase().toLowerCase().normalize('NFC') };
+  return { name, nameNorm: name.toLowerCase().toUpperCase().toLowerCase().normalize('NFC') };
 }
 
 /** DM 쌍 키: 두 사용자 UUID를 정렬한 고정 표현(TRD §2). 요청 순서와 무관하다. */

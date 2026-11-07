@@ -56,7 +56,8 @@ export interface ConversationsStore {
   /** 활성 멤버십에 left_at을 기록한다. 바뀐 행이 없으면 false. */
   leave(conversationId: string, userId: string, at: Date): Promise<boolean>;
   listMembers(conversationId: string): Promise<readonly MemberRow[]>;
-  listForUser(userId: string): Promise<readonly ConversationRow[]>;
+  /** 활성 멤버십 대화(id 오름차순 cursor, 최대 limit행). */
+  listForUser(userId: string, after: string | undefined, limit: number): Promise<readonly ConversationRow[]>;
   /** 정렬된 pair key로 DM을 찾거나 만든다(두 멤버십 같은 트랜잭션). 상대가 같은 workspace 활성 멤버가 아니면 ok:false. */
   openDm(dm: NewDm): Promise<OpenDmResult>;
 }

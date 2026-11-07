@@ -43,6 +43,14 @@ describe('채널 생성·discover', () => {
     expect((await req(ctx.app, 'GET', '/api/conversations/discover', owner)).json().channels).toEqual([]);
   });
 
+  it('ß·ẞ·SS 표기가 달라도 case-fold 후 같은 이름이면 409다 (Codex r1 P2)', async () => {
+    const owner = await as(ctx.app, 'a');
+    await createChannel(ctx.app, owner, 'Straße');
+    for (const dup of ['STRAẞE', 'STRASSE', 'strasse']) {
+      expect((await req(ctx.app, 'POST', '/api/conversations', owner, { kind: 'channel', name: dup })).statusCode).toBe(409);
+    }
+  });
+
   it('discover는 cursor paging을 하고 limit 범위 밖은 400이다', async () => {
     const owner = await as(ctx.app, 'a');
     const member = await as(ctx.app, 'b');

@@ -67,7 +67,7 @@ describe('createPgConversationsStore: 접근·조회', () => {
     });
     const store = createPgConversationsStore(fx.pool);
     expect(await store.listMembers('c')).toEqual([{ id: 'u', displayName: 'A' }]);
-    expect(await store.listForUser('u')).toEqual([{ id: 'c', kind: 'dm', name: null, peerUserId: 'p', lastSeq: 12, lastReadSeq: 7 }]);
+    expect(await store.listForUser('u', undefined, 101)).toEqual([{ id: 'c', kind: 'dm', name: null, peerUserId: 'p', lastSeq: 12, lastReadSeq: 7 }]);
   });
 });
 
