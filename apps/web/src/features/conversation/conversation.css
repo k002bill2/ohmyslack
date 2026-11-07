@@ -287,7 +287,7 @@
   color: var(--text);
 }
 /* 11 A·B 툴바: 포인터(hover) 장치의 넓은 폭에서는 메시지 오른쪽 위에 떠 있고 hover·포커스 때만 보인다.
-   터치·compact는 인라인으로 항상 보인다(액션 시트 미구현 — REPORT 남은 작업). 44px 터치 대상 유지. */
+   툴바 모드(medium·wide)에서 터치 장치는 인라인으로 항상 보인다. compact는 액션 시트(아래 시안 08). 44px 터치 대상 유지. */
 .msg-toolbar {
   display: inline-flex;
   align-items: center;
@@ -437,4 +437,110 @@
 .msg-mention {
   color: var(--accent-text);
   font-weight: 700;
+}
+/*
+ * 시안 08 / UI_STATES §3 메시지 액션(compact): 길게 누르기 → 하단 액션 시트.
+ * 시트 모드 항목만 iOS 길게 누르기 콜아웃을 끈다(텍스트 선택은 그대로).
+ */
+.msg-item-sheet {
+  -webkit-touch-callout: none;
+}
+/* 접근성 대체 「메시지 작업」: 항목·버튼에 포커스가 있을 때만 보인다(키보드·스크린리더 도달 가능 — display:none 금지). */
+.msg-item .msg-sheet-trigger {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+}
+.msg-item:focus-within .msg-sheet-trigger,
+.msg-item .msg-sheet-trigger:focus-visible {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.dialog-backdrop:has(.msg-action-sheet) {
+  place-items: end stretch;
+}
+.dialog:has(> .msg-action-sheet) {
+  width: 100%;
+  min-width: 0;
+  max-height: 80vh;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-bottom: 0;
+}
+.msg-action-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.msg-sheet-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-app);
+}
+.msg-sheet-author {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.msg-sheet-body {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.msg-sheet-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.msg-sheet-item {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.msg-sheet-item:hover {
+  background: var(--bg-active);
+}
+.msg-sheet-danger {
+  color: var(--danger-text);
+}
+.msg-sheet-cancel {
+  justify-content: center;
+  margin-top: var(--space-2);
+  border-color: var(--border);
 }

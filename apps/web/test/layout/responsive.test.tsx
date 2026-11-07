@@ -51,13 +51,16 @@ describe('FR-CLIENT-02 반응형', () => {
       await user.click(screen.getByRole('button', { name: 'general' }));
       expect(regions()).toMatchObject({ nav: null, page: null });
       expect(regions().main).not.toBeNull();
-      await user.click(screen.getAllByRole('button', { name: '답글' })[0] as HTMLElement);
+      // 시안 08 / UI_STATES §3 메시지 액션: compact는 인라인 「답글」 대신 「메시지 작업」 → 액션 시트 → 「답글」.
+      await user.click(screen.getAllByRole('button', { name: '메시지 작업' })[0] as HTMLElement);
+      await user.click(within(screen.getByRole('dialog', { name: '메시지 작업' })).getByRole('button', { name: '답글' }));
       expect(regions()).toMatchObject({ nav: null, main: null, aside: null, dialog: null });
       expect(regions().page).not.toBeNull();
       await user.click(screen.getByRole('button', { name: '뒤로' }));
       expect(regions().page).toBeNull();
       expect(regions().main).not.toBeNull();
-      expect(document.activeElement).toBe(screen.getAllByRole('button', { name: '답글' })[0]);
+      // 스레드 닫기 포커스 복귀 대상(data-reply-for)은 compact에서 「메시지 작업」 버튼.
+      expect(document.activeElement).toBe(screen.getAllByRole('button', { name: '메시지 작업' })[0]);
       await user.click(screen.getByRole('button', { name: '뒤로' }));
       expect(regions().main).toBeNull();
       expect(regions().nav).not.toBeNull();

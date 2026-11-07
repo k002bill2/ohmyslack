@@ -3,6 +3,7 @@ import type { ActionResult } from '../../data/index.js';
 import { MESSAGE_ACTION_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from './copy.js';
 import { MessageBody } from './MessageBody.js';
+import { MessageActionSheet, useLongPress, type MessageSheetAction } from './MessageActionSheet.js';
 import { DeleteMessageDialog } from './MessageItemDelete.js';
 import { MessageEditor } from './MessageItemEditor.js';
 import { canModify } from './MessageItemRules.js';
@@ -44,6 +45,11 @@ export interface MessageItemProps {
   readonly mentionsSelf?: boolean;
   /** 본문 `@이름` 토큰 근거(대화 멤버 표시 이름, W-11d). 호출자가 안정 참조로 넘긴다. */
   readonly mentionNames?: readonly string[];
+  /**
+   * 메시지 액션 표면(시안 08 / UI_STATES §3 메시지 액션): `toolbar` = hover·포커스 인라인 툴바(medium·wide),
+   * `sheet` = 길게 누르기·「메시지 작업」 버튼 → 액션 시트(compact). 기본은 `timePlacement === 'below'`면 `sheet`.
+   */
+  readonly actionMode?: 'toolbar' | 'sheet';
 }
 
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -92,6 +98,9 @@ function MessageItemView(props: MessageItemProps) {
   const placement = props.timePlacement ?? 'inline';
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  /** 시트에서 고른 동작 — 시트가 언마운트(포커스 복귀·inert 해제)된 뒤 적용해 Dialog를 겹치지 않는다. */
+  const [pendingAction, setPendingAction] = useState<MessageSheetAction | null>(null);
   const item = useRef<HTMLLIElement>(null);
   /** 삭제 후 포커스는 Dialog가 닫혀 배경 `inert`가 풀린 뒤에 항목으로(UI_STATES §8 I-4). */
   const refocus = useRef(false);
@@ -104,6 +113,25 @@ function MessageItemView(props: MessageItemProps) {
   const isEditing = editing && actionable && onEdit !== undefined;
   const showReply = onReply !== undefined && message.deleted !== true;
   const mentioned = props.mentionsSelf === true && message.deleted !== true;
+  const sheetMode = (props.actionMode ?? (placement === 'below' ? 'sheet' : 'toolbar')) === 'sheet';
+  const hasActions = showReply || (actionable && !isEditing);
+  const canEdit = actionable && !isEditing && onEdit !== undefined;
+  const canDelete = actionable && !isEditing && onDelete !== undefined;
+
+  useEffect(() => {
+    if (sheetOpen || pendingAction === null) return;
+    setPendingAction(null);
+    if (pendingAction === 'reply') onReply?.(message.id);
+    else if (pendingAction === 'edit') setEditing(true);
+    else setConfirming(true);
+  }, [sheetOpen, pendingAction, onReply, message.id]);
+
+  const longPress = useLongPress(sheetMode && hasActions && !sheetOpen, () => {
+    // Dialog는 마운트 시 activeElement를 복귀 대상으로 잡는다 — 길게 누르기로 열면 항목으로 돌아오게.
+    item.current?.focus();
+    setSheetOpen(true);
+  });
+  const itemClass = ['msg-item', mentioned ? 'msg-mentioned' : '', sheetMode ? 'msg-item-sheet' : ''].filter(Boolean).join(' ');
 
   const save = async (body: string) => {
     const result = await (onEdit?.(message.id, body) ?? Promise.resolve({ ok: false as const, status: 403 }));
@@ -115,7 +143,14 @@ function MessageItemView(props: MessageItemProps) {
   };
 
   return (
-    <li ref={item} tabIndex={-1} className={mentioned ? 'msg-item msg-mentioned' : 'msg-item'} data-message-id={message.id} aria-label={messageLabel(message.author, message.createdAt)}>
+    <li
+      ref={item}
+      tabIndex={-1}
+      className={itemClass}
+      data-message-id={message.id}
+      aria-label={messageLabel(message.author, message.createdAt)}
+      {...longPress}
+    >
       <span className="msg-author">{message.author}</span>
       {placement === 'inline' && <MessageTime message={message} placement="inline" />}
       {mentioned && <span className="msg-mention-label">{CONVERSATION_DESIGN_COPY.mentionedSelf}</span>}
@@ -152,7 +187,33 @@ function MessageItemView(props: MessageItemProps) {
         />
       )}
       {/* 시안 11 A·B: hover·포커스 시 메시지 오른쪽 위 툴바(정본 UI_STATES §3 「hover·포커스 시 인라인 툴바」). 대표 동작 「답글」 먼저. */}
-      {(showReply || (actionable && !isEditing)) && (
+      {/* 시안 08 / UI_STATES §3 메시지 액션(compact): 인라인 툴바 대신 길게 누르기 + 접근성 대체 버튼 → 액션 시트.
+          인라인 「답글」이 없으므로 스레드 닫기 포커스 복귀 대상(data-reply-for)은 이 버튼이 맡는다. */}
+      {sheetMode && hasActions && (
+        <button
+          type="button"
+          className="msg-sheet-trigger"
+          {...(showReply ? { 'data-reply-for': message.id } : {})}
+          onClick={() => setSheetOpen(true)}
+        >
+          {CONVERSATION_DESIGN_COPY.messageActions}
+        </button>
+      )}
+      {sheetOpen && (
+        <MessageActionSheet
+          author={message.author}
+          body={message.body}
+          canReply={showReply}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          onClose={() => setSheetOpen(false)}
+          onSelect={(action) => {
+            setSheetOpen(false);
+            setPendingAction(action);
+          }}
+        />
+      )}
+      {!sheetMode && hasActions && (
         <div className="msg-toolbar">
           {/* 삭제 자리표시자 액션은 「스레드 열기만」(UI_STATES §2-5) — 「답글」 없음, CMP-14는 유지. */}
           {showReply && (
