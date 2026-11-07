@@ -78,6 +78,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `POST /api/auth/login`, `POST /api/auth/logout` | 로그인·현재 기기 로그아웃. DB 세션 즉시 revoke |
 | `GET /api/me`, `GET /api/sessions` | 현재 계정·기기 세션. 원격 기기 revoke는 P1 |
 | `POST /api/invites`, `POST /api/invites/accept` | owner 발급, 만료/1회 token 원자적 교환; 외부 메일 없음 |
+| `POST /api/invites/{id}/revoke` | owner 전용 초대 폐기(§5-1 S3) |
 | `GET /api/members` | 활성 멤버 목록(초대·DM·멘션 후보). 본인 계정 세션 필요 |
 | `POST /api/admin/members/{user_id}/deactivate` | owner 전용. `users.status=disabled`, 세션 revoke, WS close |
 | `GET /api/conversations` | 현재 접근 가능한 대화와 unread 요약. 대화별 추가 unread 호출 금지 |
@@ -151,6 +152,28 @@ cursor 만료 시 410 snapshot 절차를 사용하고 완료 전 최신 상태�
 | TR-SEC-09 | 개인정보 없는 계측 allowlist | 허용목록 외 필드 0; 계측 실패가 메시지 처리를 막지 않음 |
 | TR-SEC-10 | 백업/복원 경계 | 별도 승인·격리 복원 대조; shared-infra 변경 없음 |
 
+### 5-1. 보안 결정 R3.2 (Jarvis ★, 2026-11-07 — `docs/08-security/THREAT_MODEL.md` §6 해소)
+
+위 본문과 충돌하면 이 절이 우선합니다. 값은 단일 사용자 개인 운영 기준이며 G1 Security 리뷰에서 재확인합니다.
+
+| # | 주제 | 결정 | 근거·대상 테스트 |
+|---|---|---|---|
+| S1 | 로그인 제한 출처 | 앱은 Serve 뒤 루프백 요청만 받으므로 **source IP 제한을 쓰지 않습니다.** 계정별 15분 5회 실패 → 15분 차단(본문 유지) + **전역** 15분 20회 실패 → 15분 차단. 프록시·Tailscale 신원 헤더는 제한 키로도 신뢰하지 않습니다 | §6 #1, NC-06·NC-18, FR-AUTH-06 |
+| S2 | 초대 수명·엔트로피 | 수명 **72시간**, token은 CSPRNG 32바이트(base64url), DB에는 SHA-256 hash만 | §6 #2, NC-16 |
+| S3 | 초대 폐기 | `POST /api/invites/{id}/revoke` 추가(owner, `admin` 메타). 폐기·사용·만료 token 수락은 같은 오류로 거부 | §6 #3, FR-AUTH-01 |
+| S4 | 자격 증명 복구 | 로컬 전용 명령 `apps/server/bin/reset-password.ts`(비노출 입력). 성공 시 대상 계정 **전 세션 revoke + WS 5초 내 close** | §6 #4, NC-21 |
+| S5 | HTTP 캐시 | `/api/**` 모든 응답 `Cache-Control: no-store` | §6 #5, NC-02 |
+| S6 | 보안 헤더(정본 이동) | 모든 HTML·API 응답: `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. 디자인 §6의 `Referrer-Policy`는 이 행을 인용 | §6 #6, NC-13 |
+| S7 | 세션 만료와 WS | 만료 시각 도달 시 열린 WS를 close(1008). WS 트래픽은 세션을 연장하지 않음(HTTP 인증 요청만 연장) | §6 #7, NC-10 |
+| S8 | 세션 절대 상한 | sliding 30일 + **절대 90일** | §6 #9 |
+| S9 | 비밀번호 해시·정책 | Node 26 내장 `crypto.argon2`(argon2id), memory 19456 KiB·passes 2·parallelism 1·tag 32바이트·salt 16바이트, PHC 문자열로 저장. 길이 12–128자(code point), 그 외 조합 규칙 없음 | §6 #13, NC-20 |
+| S10 | owner 보호 | owner 자신 또는 마지막 owner 비활성화는 409, DB 무변경 | §6 #14, NC-19 |
+| S11 | 401·계정 전환 시 checkpoint | 401 수신·로그아웃·다른 계정 로그인 시 sync checkpoint 삭제 | §6 #15, NC-14 |
+| S12 | 복원 후 처리 | 복원 드릴 대상 DB에서 서비스 재개 전 전 세션·미사용 초대 무효화. 비활성화 목록 재적용 방식은 PRD ⚖️-3(백업) 결정 때 확정 | §6 #10, NC-23 |
+| S13 | PG 노출(사실 확인) | shared-postgres는 `127.0.0.1:5432`에만 바인드(2026-11-07 `docker port` 확인), Serve 대상 아님 | §6 #11 |
+
+TR-SEC 추가 행: **TR-SEC-11** 세션 cookie 속성(`HttpOnly`·`Secure`·`SameSite=Lax`·`Path=/`·host-only, 절대 90일) — 통합 테스트로 Set-Cookie 단언(NC-08). **TR-SEC-12** 로그인 제한(S1) — FR-AUTH-06.
+
 위 표는 설계 제안이며 보안 감사나 구현 검증 결과가 아닙니다. 코드·DB·`.env`·인증정보·shared-infra에 접근하지 않았습니다.
 
 ## 6. Tailscale Serve와 PWA
@@ -207,6 +230,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 | R1 초안 | 2026-11-07 | 확정 결정, PRD, 개발설계서와 맞춘 시스템·DB·HTTP/WS·sync·보안·Tailscale·PWA·NFR 제안 |
 | R3 최종안 | 2026-11-07 | R2 Must-fix 반영, 정본 문서 참조, 커밋순 전역 sync cursor·P0 API·읽음·삭제 replay·수치·DDL 계약 확정 |
 | R3.1 (Jarvis 정합) | 2026-11-07 | 디자인 ⚖️-D1 해소: 전송 응답과 `message.created` projection에 `client_message_id` 추가(저장된 컬럼 노출만, 계약 의미 변경 없음). Node 26.13.0 LTS 확인(nodejs.org dist index, 2026-10-28 배포) — 착수 시 고정값 |
+| R3.2 (Jarvis 보안 결정) | 2026-11-07 | 위협 모델 §6 공백 해소: §5-1 S1–S13, TR-SEC-11·12, 초대 폐기 route |
 
 ## 리뷰 반영 기록
 
