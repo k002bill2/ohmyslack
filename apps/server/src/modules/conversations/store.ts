@@ -35,6 +35,23 @@ export interface ConversationRow {
   readonly peerUserId: string | null;
   readonly lastSeq: number;
   readonly lastReadSeq: number;
+  /** unread·mention·스레드 집계. 목록 쿼리가 계산한 경우에만 있고, 없으면 라우트가 0/[]로 낸다. */
+  readonly unread?: UnreadAggregate;
+}
+
+export interface UnreadAggregate {
+  /** 읽지 않은 top-level 원문(자기·삭제 제외). */
+  readonly unreadCount: number;
+  readonly mentionCount: number;
+  readonly threads: readonly UnreadThread[];
+}
+
+export interface UnreadThread {
+  readonly rootMessageId: string;
+  readonly lastReadSeq: number;
+  readonly lastReplySeq: number;
+  readonly unreadReplyCount: number;
+  readonly mentionCount: number;
 }
 
 export interface MemberRow {

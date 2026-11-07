@@ -46,7 +46,7 @@ export const unreadThreadSchema = z.object({
   mention_count: z.number().int(),
 });
 
-/** `GET /api/conversations` 항목(TRD §3:99). unread 집계는 W-08·W-09에서 채운다(현재 0·빈 배열). */
+/** `GET /api/conversations` 항목(TRD §3:99). unread·mention·스레드 집계는 목록 쿼리 하나로 채운다(W-09a). */
 export const conversationSummarySchema = z.object({
   id: z.uuid(),
   kind: z.enum(['channel', 'dm']),

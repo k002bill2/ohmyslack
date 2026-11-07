@@ -71,3 +71,39 @@ describe('수정·삭제', () => {
     expect(row.rows[0]?.body).toBeNull();
   });
 });
+
+describe('수정·삭제 sync 재생(W-09a 보조)', () => {
+  it('보조(TRD:68): 삭제 전 커서부터 여러 페이지 sync 재생 시 삭제 본문 0회', async () => {
+    const a = await as(ctx.app, 'a');
+    const b = await as(ctx.app, 'b');
+    const general = await createChannel(ctx.app, a, 'general');
+    await req(ctx.app, 'POST', `/api/conversations/${general}/join`, b);
+    const before = (await req(ctx.app, 'GET', '/api/sync?after=0', b)).json<{ through_cursor: number }>().through_cursor;
+    const secret = await send(ctx.app, a, general, { body: SECRET_BODY, mention_user_ids: [ctx.ids.b] });
+    for (let i = 0; i < 4; i += 1) await send(ctx.app, a, general, { body: `채움 ${i}` });
+    await req(ctx.app, 'PATCH', `/api/messages/${secret.id}`, a, { body: `${SECRET_BODY} 수정`, mention_user_ids: [ctx.ids.b] });
+    expect((await req(ctx.app, 'DELETE', `/api/messages/${secret.id}`, a)).statusCode).toBe(200);
+
+    // limit=2로 여러 페이지 재생: 같은 watermark, 본문·mention 0회, tombstone만.
+    let query = `after=${before}&limit=2`;
+    const texts: string[] = [];
+    const tombstones: { body: string | null; mention_user_ids: string[]; deleted_at: string | null }[] = [];
+    let through: number | undefined;
+    for (let page = 0; page < 50; page += 1) {
+      const res = await req(ctx.app, 'GET', `/api/sync?${query}`, b);
+      expect(res.statusCode).toBe(200);
+      texts.push(res.body);
+      const json = res.json<{ changes: { message: { id: string; body: string | null; mention_user_ids: string[]; deleted_at: string | null } }[]; has_more: boolean; next_cursor: number; through_cursor: number }>();
+      through ??= json.through_cursor;
+      expect(json.through_cursor).toBe(through);
+      tombstones.push(...json.changes.filter((c) => c.message.id === secret.id).map((c) => c.message));
+      if (!json.has_more) break;
+      query = `after=${json.next_cursor}&through=${through}&limit=2`;
+    }
+    expect(texts.length).toBeGreaterThan(2);
+    expect(texts.join('\n')).not.toContain(SECRET_BODY);
+    expect(tombstones.length).toBeGreaterThan(0);
+    for (const t of tombstones) expect(t).toMatchObject({ body: null, mention_user_ids: [] });
+    expect(tombstones.every((t) => t.deleted_at !== null)).toBe(true);
+  });
+});

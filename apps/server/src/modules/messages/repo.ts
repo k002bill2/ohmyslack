@@ -33,7 +33,7 @@ export const MENTION_FILTER_SQL = `SELECT u.id FROM conversation_members cm JOIN
 
 const ACTIVE_MEMBER_SQL = 'SELECT 1 FROM conversation_members WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL';
 
-interface MessageRow {
+export interface MessageRow {
   id: string;
   conversation_id: string;
   seq: string;

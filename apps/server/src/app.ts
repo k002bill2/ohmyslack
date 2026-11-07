@@ -19,6 +19,10 @@ import { createMessagesService } from './modules/messages/service.js';
 import type { MessagesStore } from './modules/messages/store.js';
 import { registerMemberRoutes } from './modules/members/routes.js';
 import type { MembersStore } from './modules/members/store.js';
+import { createReadEvents, type ReadEvents } from './modules/sync/events.js';
+import { registerSyncRoutes } from './modules/sync/routes.js';
+import { createSyncService } from './modules/sync/service.js';
+import type { SyncStore } from './modules/sync/store.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
 
 export interface AppOptions {
@@ -36,6 +40,9 @@ export interface AppOptions {
   /** 메시지 저장소. conversationsStore와 함께 주어질 때만 메시지 라우트를 등록한다. */
   readonly messagesStore?: MessagesStore;
   readonly messageEvents?: MessageEvents;
+  /** sync·읽음 저장소. messagesStore와 함께 주어질 때만 sync·read-state 라우트를 등록한다. */
+  readonly syncStore?: SyncStore;
+  readonly readEvents?: ReadEvents;
   readonly clock?: () => number;
   readonly limiter?: LoginLimiter;
   readonly authEvents?: AuthEvents;
@@ -51,6 +58,8 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'conversationEvents',
   'messagesStore',
   'messageEvents',
+  'syncStore',
+  'readEvents',
   'clock',
   'limiter',
   'authEvents',
@@ -63,6 +72,7 @@ declare module 'fastify' {
     readonly authEvents: AuthEvents;
     readonly conversationEvents: ConversationEvents;
     readonly messageEvents: MessageEvents;
+    readonly readEvents: ReadEvents;
   }
 }
 
@@ -105,6 +115,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   const authEvents = options.authEvents ?? createAuthEvents();
   const conversationEvents = options.conversationEvents ?? createConversationEvents();
   const messageEvents = options.messageEvents ?? createMessageEvents();
+  const readEvents = options.readEvents ?? createReadEvents();
   const allowedHosts = [new URL(allowedOrigin).host, ...(options.extraHosts ?? [])].map((h) => normalizeHost(h) ?? '');
 
   const app = Fastify({ logger: false, genReqId: () => randomUUID(), bodyLimit: 64 * 1024 });
@@ -113,6 +124,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   app.decorate('authEvents', authEvents);
   app.decorate('conversationEvents', conversationEvents);
   app.decorate('messageEvents', messageEvents);
+  app.decorate('readEvents', readEvents);
   registerLogging(app, logger, clock);
   registerRequestGuards(app, { allowedOrigin, allowedHosts });
   registerResponseHeaders(app);
@@ -132,6 +144,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     const membersStore = options.membersStore;
     const conversationsStore = options.conversationsStore;
     const messagesStore = options.messagesStore;
+    const syncStore = options.syncStore;
     app.register(async (scope) => {
       // 더미 해시를 준비 단계에서 선계산해 첫 로그인의 미존재 계정 응답 시간이 튀지 않게 한다(NC-17).
       await primeDummyHash();
@@ -144,6 +157,9 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
         if (messagesStore !== undefined) {
           const messages = createMessagesService({ store: messagesStore, conversations, events: messageEvents, clock });
           registerMessageRoutes(scope, { auth, conversations, messages });
+          if (syncStore !== undefined) {
+            registerSyncRoutes(scope, { auth, conversations, sync: createSyncService({ store: syncStore, events: readEvents, clock }) });
+          }
         }
       }
     });

@@ -2,3 +2,6 @@
 export { createPgMessagesStore } from './repo.js';
 export { createMessageEvents, type MessageEvents } from './events.js';
 export type { MessagesStore } from './store.js';
+export { MESSAGE_COLUMNS, toRecord, type MessageRow } from './repo.js';
+export { toView } from './routes.js';
+export type { MessageRecord } from './store.js';

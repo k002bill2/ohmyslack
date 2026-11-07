@@ -5,6 +5,7 @@ import { createPgAuthStore } from './modules/auth/index.js';
 import { createPgConversationsStore } from './modules/conversations/index.js';
 import { createPgMembersStore } from './modules/members/index.js';
 import { createPgMessagesStore } from './modules/messages/index.js';
+import { createPgSyncStore } from './modules/sync/index.js';
 
 /** 프로세스 진입점. 바인드 검사는 리스너를 열기 전에 수행한다(NC-05). */
 function required(name: string): string {
@@ -20,5 +21,6 @@ const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: cre
   membersStore: createPgMembersStore(pool),
   conversationsStore: createPgConversationsStore(pool),
   messagesStore: createPgMessagesStore(pool),
+  syncStore: createPgSyncStore(pool),
 });
 await app.listen({ host, port });
