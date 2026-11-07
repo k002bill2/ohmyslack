@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import ts from 'typescript';
 import { parseFlags, type RunContext } from './lib/cli.ts';
 
 /** DEV_DESIGN §5-1 `check:fr-coverage`: PRD P0 FR ↔ 6-2 지정 테스트 매핑을 진행/판정 모드로 검사한다. */
@@ -9,7 +10,9 @@ const SCAN_ROOTS = ['apps/server/test', 'apps/web/test', 'e2e', 'perf', 'tools/t
 const QA_FIELDS = ['실행자', '일시', '기기', '접속 경로', '절차', '기대 결과', '실제 결과', '판정', '증거'] as const;
 const FR_ID = /^FR-[A-Z]+-\d+$/;
 const QA_ID = /QA-[A-Z0-9]+(?:-[A-Z0-9]+)*/;
-const QUOTES = new Set(["'", '"', '`']);
+const MODIFIERS = new Set(['skip', 'todo', 'only']);
+/** 6-2 지정 파일이 vitest가 수집하는 TS 소스인지. 아니면(예: `.sh`) 수동 증거로 판정한다. */
+const VITEST_SOURCE = /\.tsx?$/;
 
 export interface DesignRow {
   readonly fr: string;
@@ -111,19 +114,41 @@ function listSources(dir: string): string[] {
   });
 }
 
-/** `it(`/`test(` 선언(수식자 포함)의 제목 위치만 센다. 주석·fixture 문자열은 제외.
- * 이름이 따옴표로 정확히 감싸진 위치마다 직전의 `.skip(`/`.todo(`/`.only(`를 기록한다. */
-const DECLARATION = /\b(?:it|test)(?:\.(skip|todo|only))?\s*\(\s*$/;
+interface Declaration {
+  readonly title: string;
+  readonly modifier: string | undefined;
+}
 
-function findOccurrences(text: string, file: string, name: string): Occurrence[] {
-  const found: Occurrence[] = [];
-  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
-    const open = text[at - 1] ?? '';
-    if (!QUOTES.has(open) || text[at + name.length] !== open) continue;
-    const decl = DECLARATION.exec(text.slice(Math.max(0, at - 40), at - 1));
-    if (decl === null) continue;
-    found.push({ file, modifier: decl[1] });
+/** `it`/`test`와 `.skip/.todo/.only/.each` 변형 호출식이면 수식자(skip·todo·only 중 첫째)를 돌려준다. */
+function declarationCallee(expr: ts.Expression): { modifier: string | undefined } | undefined {
+  let node: ts.Expression = expr;
+  let modifier: string | undefined;
+  for (;;) {
+    if (ts.isCallExpression(node)) node = node.expression; // it.each(table)(...)
+    else if (ts.isPropertyAccessExpression(node)) {
+      if (MODIFIERS.has(node.name.text)) modifier = node.name.text;
+      else if (node.name.text !== 'each') return undefined;
+      node = node.expression;
+    } else break;
   }
+  return ts.isIdentifier(node) && (node.text === 'it' || node.text === 'test') ? { modifier } : undefined;
+}
+
+/** AST에서 첫 인자가 문자열·치환 없는 템플릿 리터럴인 it/test 선언만 모은다. 주석·일반 문자열은 세지 않는다. */
+export function findDeclarations(text: string, file: string): Declaration[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
+  const found: Declaration[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const first = node.arguments[0];
+      const callee = declarationCallee(node.expression);
+      if (callee !== undefined && first !== undefined && ts.isStringLiteralLike(first)) {
+        found.push({ title: first.text, modifier: callee.modifier });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
   return found;
 }
 
@@ -131,8 +156,9 @@ function scanSources(root: string, names: readonly string[]): Map<string, Occurr
   const result = new Map<string, Occurrence[]>(names.map((n) => [n, []]));
   const files = SCAN_ROOTS.flatMap((r) => listSources(join(root, r)));
   for (const file of files) {
-    const text = readFileSync(file, 'utf8');
-    for (const name of names) result.get(name)?.push(...findOccurrences(text, file, name));
+    for (const d of findDeclarations(readFileSync(file, 'utf8'), file)) {
+      result.get(d.title)?.push({ file, modifier: d.modifier });
+    }
   }
   return result;
 }
@@ -185,7 +211,7 @@ interface Evaluation {
 }
 
 function evaluateRow(row: DesignRow, occ: readonly Occurrence[], assertions: readonly Assertion[], gate: boolean, ev: Evaluation): void {
-  if (occ.length === 0) {
+  if (occ.length === 0 || !VITEST_SOURCE.test(row.file)) {
     ev.missing.push(row);
     return;
   }
@@ -222,8 +248,16 @@ function checkQa(root: string, id: string): string[] {
   return errors;
 }
 
+/** vitest 대상이 아닌 지정 파일(예: 드릴 `.sh`): 파일 존재 + 같은 행 수동 QA PASS(checkQa)로 판정한다. */
+function manualOnly(root: string, row: DesignRow): string[] {
+  const errors: string[] = [];
+  if (!existsSync(join(root, row.file))) errors.push(`${row.fr}: 지정 파일 없음 ${row.file}`);
+  if (row.manual === undefined) errors.push(`${row.fr}: 수동 증거 지정 없음`);
+  return errors;
+}
+
 function gateChecks(root: string, rows: readonly DesignRow[], assertions: readonly Assertion[], ev: Evaluation): string[] {
-  const errors = ev.missing.map((r) => `${r.fr}: 지정 테스트 미발견`);
+  const errors = ev.missing.flatMap((r) => (VITEST_SOURCE.test(r.file) ? [`${r.fr}: 지정 테스트 미발견`] : manualOnly(root, r)));
   errors.push(...checkAux(root, rows, assertions));
   const qaIds = rows.flatMap((r) => (r.manual === undefined ? [] : [r.manual]));
   for (const id of [...qaIds, 'QA-BOOT-01']) errors.push(...checkQa(root, id));
