@@ -117,7 +117,7 @@
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--danger-solid) 12%, var(--bg-app));
+  background: color-mix(in srgb, var(--danger-solid) 8%, var(--bg-app));
 }
 .auth-card > [role='alert']::before,
 .auth-card .error-state > p::before {

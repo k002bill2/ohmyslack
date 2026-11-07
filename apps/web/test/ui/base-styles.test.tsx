@@ -113,3 +113,21 @@ describe('폰트는 SW precache 대상이 아니다', () => {
     expect(entries.map((e) => e.url)).toEqual(['/index.html']);
   });
 });
+
+describe('auth.css 오류 알림 면(시안 03 showError, W-11c)', () => {
+  const css = src('features/auth/auth.css');
+  /** srgb color-mix(p% a, b) — 채널별 선형 보간. */
+  const mix = (a: string, b: string, p: number): string => {
+    const ch = (h: string) => [1, 3, 5].map((i) => Number.parseInt(h.slice(i, i + 2), 16));
+    const [ca, cb] = [ch(a), ch(b)];
+    return `#${ca.map((v, i) => Math.round(v * p + (cb[i] ?? 0) * (1 - p)).toString(16).padStart(2, '0')).join('')}`;
+  };
+
+  it.each(['light', 'dark'] as const)('%s: danger-solid를 bg-app에 섞은 면 위 --danger-text 4.5:1 이상', (scheme) => {
+    const m = /color-mix\(in srgb, var\(--danger-solid\) (\d+)%, var\(--bg-app\)\)/.exec(css);
+    expect(m).not.toBeNull();
+    const c = tokens.colors[scheme] as Readonly<Record<string, { readonly value: string } | undefined>>;
+    const surface = mix(c['--danger-solid']?.value ?? '', c['--bg-app']?.value ?? '', Number(m?.[1]) / 100);
+    expect(contrast(c['--danger-text']?.value ?? '', surface)).toBeGreaterThanOrEqual(4.5);
+  });
+});
