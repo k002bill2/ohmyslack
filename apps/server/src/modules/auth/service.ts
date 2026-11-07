@@ -47,6 +47,8 @@ export interface AuthService {
   /** 검증을 마친 활성 계정에 새 세션을 발급한다(초대 수락). 기존 세션은 먼저 폐기한다. */
   issueSession(user: UserRecord, previousToken?: string): Promise<IssuedSession>;
   authenticate(token: string | undefined): Promise<Authenticated | undefined>;
+  /** authenticate와 같은 판정이지만 세션을 연장하지 않는다(WS 트래픽, TRD §5-1 S7). */
+  peek(token: string | undefined): Promise<Authenticated | undefined>;
   logout(auth: Authenticated): Promise<void>;
   /** 로그인 직전 요청에 실려 온 기존 세션을 폐기한다(세션 고정·회전, NC-07). */
   revokeByToken(token: string | undefined): Promise<void>;
@@ -135,6 +137,17 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     return { token, user, session };
   }
 
+  const peek = async (token: string | undefined): Promise<Authenticated | undefined> => {
+    if (token === undefined || token === '') return undefined;
+    const session = await store.findSessionByTokenHash(hashToken(token));
+    const at = now();
+    if (session === undefined || session.revokedAt !== null || session.expiresAt <= at) return undefined;
+    if (at.getTime() >= session.createdAt.getTime() + SESSION_ABSOLUTE_MS) return undefined;
+    const user = await store.findUserById(session.userId);
+    if (user === undefined || user.status !== 'active') return undefined;
+    return { user, token, session };
+  };
+
   return {
     async login(email, secret, previousToken) {
       const user = await serial(() => verifyAttempt(email, secret));
@@ -145,17 +158,16 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
     issueSession,
 
+    peek,
+
     async authenticate(token) {
-      if (token === undefined || token === '') return undefined;
-      const session = await store.findSessionByTokenHash(hashToken(token));
+      const found = await peek(token);
+      if (found === undefined) return undefined;
+      const { session, user } = found;
       const at = now();
-      if (session === undefined || session.revokedAt !== null || session.expiresAt <= at) return undefined;
-      if (at.getTime() >= session.createdAt.getTime() + SESSION_ABSOLUTE_MS) return undefined;
-      const user = await store.findUserById(session.userId);
-      if (user === undefined || user.status !== 'active') return undefined;
       const expiresAt = slidingExpiry(session.createdAt, at);
       await store.touchSession(session.id, at, expiresAt);
-      return { user, token, session: { ...session, lastSeenAt: at, expiresAt } };
+      return { user, token: found.token, session: { ...session, lastSeenAt: at, expiresAt } };
     },
 
     async logout(auth) {
