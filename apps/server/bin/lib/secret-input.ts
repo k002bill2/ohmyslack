@@ -44,11 +44,14 @@ function readTtyLine(input: SecretInput, output: Writable, prompt: string): Prom
 
 /** 파이프 입력: 첫 줄만 쓰고 줄 끝 \n 또는 \r\n 하나만 뗀다(trim·정규화하지 않는다). */
 async function readPipedLine(input: Readable): Promise<string> {
-  let text = '';
+  // 청크별로 디코딩하면 경계에서 갈린 다중 바이트 문자가 U+FFFD로 바뀌므로 바이트를 모아 한 번만 디코딩한다.
+  const chunks: Buffer[] = [];
   for await (const chunk of input) {
-    text += typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8');
-    if (text.includes('\n')) break;
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk as Uint8Array);
+    chunks.push(bytes);
+    if (bytes.includes(0x0a)) break;
   }
+  const text = Buffer.concat(chunks).toString('utf8');
   const end = text.indexOf('\n');
   const line = end === -1 ? text : text.slice(0, end);
   return line.endsWith('\r') ? line.slice(0, -1) : line;
