@@ -434,18 +434,18 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | # | 현재 | 이벤트 | 다음 | 비고 |
 |---|---|---|---|---|
 | C1 | (앱 시작·로그인 직후) | 인증 확인 | 따라잡기 중 | T §4 복귀 순서와 같음 |
-| C2 | 따라잡기 중 | catch-up watermark 도달 + 목록 snapshot + `conversation.subscribed` ACK | 연결됨 | 보류한 배지·구분선·굵게 일괄 적용. checkpoint 전진은 이 시점만(T §4) |
+| C2 | 따라잡기 중 | catch-up watermark 도달 + 목록 snapshot + (구독할 현재 대화가 있으면) `conversation.subscribed` ACK. 현재 대화가 없으면(대화 0개·미선택) REST catch-up + 목록 snapshot만으로 완료 | 연결됨 | 보류한 배지·구분선·굵게 일괄 적용. checkpoint 전진은 이 시점만(T §4) |
 | C3 | 따라잡기 중 | `GET /api/sync` 410 | 따라잡기 중(유지) | snapshot 절차(T §3) |
-| C4 | 연결됨 | WS close, `onLine === true` | 다시 연결 중… | 백오프 재시도. 간격·상한은 정본 없음 → §8 Q-12 |
+| C4 | 연결됨·따라잡기 중 | WS close, `onLine === true` | 다시 연결 중… | 백오프 재시도. 따라잡기 중에 닫혔으면 재연결 후 catch-up을 처음부터 재개. 간격·상한은 정본 없음 → §8 Q-12 |
 | C5 | 다시 연결 중… | WS 재연결 성공 | 따라잡기 중 | 재연결 직후 반드시 catch-up |
 | C6 | 연결됨·다시 연결 중…·따라잡기 중 | `offline` 이벤트(`onLine === false`) 또는 HTTP 네트워크 오류 연속 2회 | 연결이 끊겼습니다 | — |
-| C7 | 연결이 끊겼습니다 | `online` 이벤트 또는 HTTP 2xx 1회 | 다시 연결 중… → (WS 성공) 따라잡기 중 | 끊김에서 바로 연결됨으로 가지 않음(stale 금지, T NFR-07) |
+| C7 | 연결이 끊겼습니다 | `online` 이벤트 또는 HTTP 2xx 1회 | WS가 이미 open이면 곧바로 따라잡기 중 / WS가 닫혀 있으면 다시 연결 중… → (WS 성공) 따라잡기 중 | 끊김에서 바로 연결됨으로 가지 않음(stale 금지, T NFR-07) |
 | C8 | 아무 상태 | `visibilitychange` → visible(전경 복귀) | 따라잡기 중 | WS가 살아 있어도 catch-up(DD R-03) |
 | C9 | 아무 상태 | 어떤 요청이든 401, 또는 WS 인증 종료 | (화면 종료) `/login` | 메모리 비움, 「세션이 종료되었습니다. 다시 로그인해 주세요.」 |
 | C10 | 아무 상태 | WS `sync.required` 수신 | 따라잡기 중 | T §4 이벤트 |
 
 - 「따라잡기 중」에서 catch-up 요청 자체가 네트워크 오류로 끝나면 C6 규칙(연속 2회)을 적용한다. 서버 불가 시 최신으로 표시하지 않는다(P FR-SYNC-07).
-- C7의 "HTTP 2xx 1회"로 끊김을 벗어나는 조건은 정본에 명시가 없다(D는 진입 조건만 정함). 해석으로 둔다 → §8 I-7.
+- C2의 "현재 대화 없음" 분기, C4의 따라잡기 중 WS close, C7의 WS open 분기는 Codex 리뷰(1라운드) 지적을 반영한 해석이다. C7의 "HTTP 2xx 1회"로 끊김을 벗어나는 조건은 정본에 명시가 없다(D는 진입 조건만 정함). 해석으로 둔다 → §8 I-7.
 
 ### 5-3. ⚖️-D2 — UI 배너 조건과 TRD heartbeat의 관계
 
