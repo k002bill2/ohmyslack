@@ -22,6 +22,20 @@ async function stored(conversationId: string, userId: string): Promise<number | 
 }
 
 describe('읽음 병합', () => {
+  it('재참여 뒤 joined_seq보다 낮은 스레드 읽음은 joined_seq로 올려 저장·응답한다', async () => {
+    const a = await as(ctx.app, 'a');
+    const l = await as(ctx.app, 'l');
+    const general = await createChannel(ctx.app, a, 'general');
+    await req(ctx.app, 'POST', `/api/conversations/${general}/join`, l);
+    const root = await send(ctx.app, l, general, { body: 'root' });
+    const r1 = await send(ctx.app, a, general, { body: 'r1', thread_root_id: root.id });
+    await req(ctx.app, 'DELETE', `/api/conversations/${general}/membership`, l);
+    const r2 = await send(ctx.app, a, general, { body: 'r2', thread_root_id: root.id });
+    await req(ctx.app, 'POST', `/api/conversations/${general}/join`, l);
+    const res = await markRead(ctx.app, l, general, r1.seq, root.id);
+    expect(res.last_read_seq).toBe(r2.seq);
+  });
+
   it('FR-SYNC-06 오래된 읽음 위치가 늦게 도착해도 커서가 후퇴하지 않고 다른 대화·다른 스레드·실제 최대 seq 초과 위치는 400이며 최대 유효 위치로 수렴한다', async () => {
     const a = await as(ctx.app, 'a');
     const mac = await as(ctx.app, 'b');

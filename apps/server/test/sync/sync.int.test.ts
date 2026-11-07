@@ -52,6 +52,15 @@ describe('전역 sync', () => {
     // 다음 동기화는 watermark 뒤부터 새 변경을 읽는다.
     const next = await syncPage(ctx.app, b, `after=${watermark}`);
     expect(next.changes.map((c) => c.message.body)).toEqual(['나중']);
+    // 답글 생성·삭제만 있었던 구간도 원문의 현재 root_reply_count를 함께 싣는다.
+    const cursor = next.through_cursor;
+    const r1 = await send(ctx.app, a, general, { body: '답1', thread_root_id: m1.id });
+    await send(ctx.app, a, general, { body: '답2', thread_root_id: m1.id });
+    await req(ctx.app, 'DELETE', `/api/messages/${r1.id}`, a);
+    const replyPage = await syncPage(ctx.app, b, `after=${cursor}`);
+    const rootChange = replyPage.changes.find((c) => c.message.id === m1.id);
+    expect(rootChange?.message.root_reply_count).toBe(1);
+    expect(rootChange?.change_id).toBe(replyPage.through_cursor);
   });
 
   it('입력 범위 400·보존 경계 이전 cursor 410·비활성 401', async () => {
