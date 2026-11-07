@@ -5,6 +5,7 @@ import { SESSION_COOKIE } from '../../src/modules/auth/routes.js';
 import { createPgConversationsStore } from '../../src/modules/conversations/index.js';
 import { createPgMembersStore } from '../../src/modules/members/index.js';
 import { createPgMessagesStore } from '../../src/modules/messages/index.js';
+import { createPgSyncStore } from '../../src/modules/sync/index.js';
 import { addUser, signIn, type Session } from '../auth/members-int-harness.js';
 import { migratedSchema } from '../auth/bootstrap-harness.js';
 import { HOST, ORIGIN, testApp } from '../support/auth-app.js';
@@ -35,6 +36,7 @@ export async function setupConvInt(): Promise<ConvIntContext> {
     membersStore: createPgMembersStore(schema.pool),
     conversationsStore: createPgConversationsStore(schema.pool),
     messagesStore: createPgMessagesStore(schema.pool),
+    syncStore: createPgSyncStore(schema.pool),
   });
   const ended: [string, string][] = [];
   app.conversationEvents.onMembershipEnded((cid, uid) => ended.push([cid, uid]));

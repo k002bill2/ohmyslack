@@ -66,7 +66,7 @@ async function listConversations(deps: ConversationRouteDeps, request: FastifyRe
   const rows = fetched.slice(0, limit);
   return {
     next_cursor: fetched.length > limit ? (rows.at(-1)?.id ?? null) : null,
-    // TODO(W-08·W-09): unread·mention·스레드 집계를 같은 목록 쿼리에서 채운다(대화별 추가 호출 금지 계약).
+    // unread·mention·스레드 집계는 같은 목록 쿼리에서 채운다(대화별 추가 호출 금지 계약).
     conversations: rows.map((r) => ({
       id: r.id,
       kind: r.kind,
@@ -74,10 +74,16 @@ async function listConversations(deps: ConversationRouteDeps, request: FastifyRe
       peer_user_id: r.peerUserId,
       last_seq: r.lastSeq,
       last_read_seq: r.lastReadSeq,
-      unread_count: 0,
-      mention_count: 0,
-      unread_thread_count: 0,
-      unread_threads: [],
+      unread_count: r.unreadCount,
+      mention_count: r.mentionCount,
+      unread_thread_count: r.unreadThreads.length,
+      unread_threads: r.unreadThreads.map((t) => ({
+        root_message_id: t.rootMessageId,
+        last_read_seq: t.lastReadSeq,
+        last_reply_seq: t.lastReplySeq,
+        unread_reply_count: t.unreadReplyCount,
+        mention_count: t.mentionCount,
+      })),
     })),
   };
 }

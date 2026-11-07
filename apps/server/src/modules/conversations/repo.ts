@@ -5,7 +5,16 @@ import type {
   ConversationsStore,
   CreateChannelResult,
   OpenDmResult,
+  UnreadThread,
 } from './store.js';
+
+interface UnreadThreadRow {
+  root_message_id: string;
+  last_read_seq: number | string;
+  last_reply_seq: number | string;
+  unread_reply_count: number | string;
+  mention_count: number | string;
+}
 
 /** conversations 저장소의 pg 구현. 모든 SQL은 파라미터 바인딩만 쓴다(NC-25). */
 
@@ -34,13 +43,47 @@ const UPSERT_READ_STATE_SQL = `INSERT INTO conversation_read_state (conversation
   ON CONFLICT (conversation_id, user_id) DO UPDATE
     SET last_read_seq = GREATEST(conversation_read_state.last_read_seq, EXCLUDED.last_read_seq), updated_at = EXCLUDED.updated_at`;
 
-const LIST_FOR_USER_SQL = `SELECT c.id, c.kind, c.name, c.last_seq::text AS last_seq,
-    COALESCE(r.last_read_seq, m.joined_seq)::text AS last_read_seq,
+/**
+ * 목록 + 집계를 **한 문장**으로(대화 수에 비례한 추가 쿼리 금지, TRD §3:99). 자기 메시지·삭제 tombstone은 unread·mention에서 뺀다.
+ * - unread_count: 본문 cursor 뒤의 top-level 원문만.
+ * - 스레드 cursor: thread_read_state가 없으면 joined_seq(TRD §2). 이전 멤버십의 낮은 값도 joined_seq 아래로 내려가지 않는다.
+ * - unread_threads: thread_unread_targets 대상 중 읽지 않은 답글이 있는 root만.
+ * - mention_count: 미열람 원문(본문 cursor)·답글(스레드 cursor)의 본인 대상 mention.
+ */
+const LIST_FOR_USER_SQL = `SELECT c.id, c.kind, c.name, c.last_seq::text AS last_seq, rd.seq::text AS last_read_seq,
     (SELECT o.user_id FROM conversation_members o
-      WHERE c.kind = 'dm' AND o.conversation_id = c.id AND o.user_id <> $1 LIMIT 1) AS peer_user_id
+      WHERE c.kind = 'dm' AND o.conversation_id = c.id AND o.user_id <> $1 LIMIT 1) AS peer_user_id,
+    (SELECT count(*) FROM messages x
+      WHERE x.conversation_id = c.id AND x.thread_root_id IS NULL AND x.seq > rd.seq
+        AND x.author_id <> $1 AND x.deleted_at IS NULL)::text AS unread_count,
+    (SELECT count(*) FROM message_mentions mm JOIN messages x ON x.id = mm.message_id
+      WHERE mm.user_id = $1 AND x.conversation_id = c.id AND x.author_id <> $1 AND x.deleted_at IS NULL
+        AND x.seq > CASE WHEN x.thread_root_id IS NULL THEN rd.seq ELSE GREATEST(m.joined_seq,
+          COALESCE((SELECT t.last_read_seq FROM thread_read_state t WHERE t.root_message_id = x.thread_root_id AND t.user_id = $1), 0)) END
+    )::text AS mention_count,
+    (SELECT COALESCE(json_agg(json_build_object(
+        'root_message_id', s.root_message_id, 'last_read_seq', s.read_seq, 'last_reply_seq', s.last_reply_seq,
+        'unread_reply_count', s.unread_reply_count, 'mention_count', s.mention_count) ORDER BY s.root_seq), '[]'::json)
+      FROM (
+        SELECT q.root_message_id, root.seq AS root_seq, tr.read_seq,
+          (SELECT COALESCE(max(x.seq), 0) FROM messages x
+            WHERE x.conversation_id = c.id AND x.thread_root_id = q.root_message_id AND x.deleted_at IS NULL) AS last_reply_seq,
+          (SELECT count(*) FROM messages x
+            WHERE x.conversation_id = c.id AND x.thread_root_id = q.root_message_id AND x.seq > tr.read_seq
+              AND x.author_id <> $1 AND x.deleted_at IS NULL) AS unread_reply_count,
+          (SELECT count(*) FROM messages x JOIN message_mentions mm ON mm.message_id = x.id AND mm.user_id = $1
+            WHERE x.conversation_id = c.id AND x.thread_root_id = q.root_message_id AND x.seq > tr.read_seq
+              AND x.author_id <> $1 AND x.deleted_at IS NULL) AS mention_count
+        FROM thread_unread_targets q
+        JOIN messages root ON root.id = q.root_message_id AND root.conversation_id = c.id
+        LEFT JOIN thread_read_state trs ON trs.root_message_id = q.root_message_id AND trs.user_id = $1
+        CROSS JOIN LATERAL (SELECT GREATEST(m.joined_seq, COALESCE(trs.last_read_seq, 0)) AS read_seq) tr
+        WHERE q.user_id = $1
+      ) s WHERE s.unread_reply_count > 0) AS unread_threads
   FROM conversation_members m
   JOIN conversations c ON c.id = m.conversation_id
   LEFT JOIN conversation_read_state r ON r.conversation_id = c.id AND r.user_id = m.user_id
+  CROSS JOIN LATERAL (SELECT COALESCE(r.last_read_seq, m.joined_seq) AS seq) rd
   WHERE m.user_id = $1 AND m.left_at IS NULL AND ($2::uuid IS NULL OR c.id > $2::uuid)
   ORDER BY c.id LIMIT $3`;
 
@@ -143,6 +186,9 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
         last_seq: string;
         last_read_seq: string;
         peer_user_id: string | null;
+        unread_count: string;
+        mention_count: string;
+        unread_threads: UnreadThreadRow[];
       }>(LIST_FOR_USER_SQL, [userId, after ?? null, limit]);
       return res.rows.map(
         (r): ConversationRow => ({
@@ -152,6 +198,17 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
           peerUserId: r.peer_user_id,
           lastSeq: Number(r.last_seq),
           lastReadSeq: Number(r.last_read_seq),
+          unreadCount: Number(r.unread_count),
+          mentionCount: Number(r.mention_count),
+          unreadThreads: r.unread_threads.map(
+            (t): UnreadThread => ({
+              rootMessageId: t.root_message_id,
+              lastReadSeq: Number(t.last_read_seq),
+              lastReplySeq: Number(t.last_reply_seq),
+              unreadReplyCount: Number(t.unread_reply_count),
+              mentionCount: Number(t.mention_count),
+            }),
+          ),
         }),
       );
     },

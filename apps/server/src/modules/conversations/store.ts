@@ -35,6 +35,18 @@ export interface ConversationRow {
   readonly peerUserId: string | null;
   readonly lastSeq: number;
   readonly lastReadSeq: number;
+  /** 읽지 않은 top-level 원문(자기·삭제 제외). */
+  readonly unreadCount: number;
+  readonly mentionCount: number;
+  readonly unreadThreads: readonly UnreadThread[];
+}
+
+export interface UnreadThread {
+  readonly rootMessageId: string;
+  readonly lastReadSeq: number;
+  readonly lastReplySeq: number;
+  readonly unreadReplyCount: number;
+  readonly mentionCount: number;
 }
 
 export interface MemberRow {
