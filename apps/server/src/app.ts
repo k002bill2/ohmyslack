@@ -9,6 +9,10 @@ import { createLoginLimiter, type LoginLimiter } from './modules/auth/login-limi
 import { registerAuthRoutes } from './modules/auth/routes.js';
 import { createAuthService, primeDummyHash } from './modules/auth/service.js';
 import type { AuthStore } from './modules/auth/store.js';
+import { createConversationEvents, type ConversationEvents } from './modules/conversations/events.js';
+import { registerConversationRoutes } from './modules/conversations/routes.js';
+import { createConversationsService } from './modules/conversations/service.js';
+import type { ConversationsStore } from './modules/conversations/store.js';
 import { registerMemberRoutes } from './modules/members/routes.js';
 import type { MembersStore } from './modules/members/store.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
@@ -22,6 +26,9 @@ export interface AppOptions {
   readonly authStore?: AuthStore;
   /** 초대·멤버·비활성화 저장소. authStore와 함께 주어질 때만 해당 라우트를 등록한다. */
   readonly membersStore?: MembersStore;
+  /** 대화 공간 저장소. authStore와 함께 주어질 때만 대화 라우트를 등록한다. */
+  readonly conversationsStore?: ConversationsStore;
+  readonly conversationEvents?: ConversationEvents;
   readonly clock?: () => number;
   readonly limiter?: LoginLimiter;
   readonly authEvents?: AuthEvents;
@@ -33,6 +40,8 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'extraHosts',
   'authStore',
   'membersStore',
+  'conversationsStore',
+  'conversationEvents',
   'clock',
   'limiter',
   'authEvents',
@@ -43,6 +52,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     readonly accessRoutes: readonly RegisteredRoute[];
     readonly authEvents: AuthEvents;
+    readonly conversationEvents: ConversationEvents;
   }
 }
 
@@ -83,12 +93,14 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   const clock = options.clock ?? Date.now;
   const logger = options.logger ?? createOpsLogger();
   const authEvents = options.authEvents ?? createAuthEvents();
+  const conversationEvents = options.conversationEvents ?? createConversationEvents();
   const allowedHosts = [new URL(allowedOrigin).host, ...(options.extraHosts ?? [])].map((h) => normalizeHost(h) ?? '');
 
   const app = Fastify({ logger: false, genReqId: () => randomUUID(), bodyLimit: 64 * 1024 });
   const routes = registerAccessRegistry(app);
   app.decorate('accessRoutes', routes);
   app.decorate('authEvents', authEvents);
+  app.decorate('conversationEvents', conversationEvents);
   registerLogging(app, logger, clock);
   registerRequestGuards(app, { allowedOrigin, allowedHosts });
   registerResponseHeaders(app);
@@ -106,12 +118,17 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     const store = options.authStore;
     const limiter = options.limiter ?? createLoginLimiter(clock);
     const membersStore = options.membersStore;
+    const conversationsStore = options.conversationsStore;
     app.register(async (scope) => {
       // 더미 해시를 준비 단계에서 선계산해 첫 로그인의 미존재 계정 응답 시간이 튀지 않게 한다(NC-17).
       await primeDummyHash();
       const auth = createAuthService({ store, limiter, events: authEvents, clock });
       registerAuthRoutes(scope, auth);
       if (membersStore !== undefined) registerMemberRoutes(scope, { auth, store: membersStore, events: authEvents, clock });
+      if (conversationsStore !== undefined) {
+        const conversations = createConversationsService({ store: conversationsStore, events: conversationEvents, clock });
+        registerConversationRoutes(scope, { auth, conversations });
+      }
     });
   }
   return app;
