@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, DateSeparator, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
+import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
@@ -61,6 +61,20 @@ function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
 }
 
+/** 메시지 객체(불변)별 판정 캐시 — 렌더마다 모든 본문을 다시 파싱하지 않게(F-1). */
+const mentionCache = new WeakMap<Message, { readonly name: string; readonly hit: boolean }>();
+
+/**
+ * 「나를 멘션」 판정: 클라이언트 모델에 mention_user_ids가 없어(data 계층은 이 레인 밖) 본문의 `@내 이름` 토큰으로 본다(W-11d REPORT).
+ */
+function mentionsName(m: Message, name: string): boolean {
+  const cached = mentionCache.get(m);
+  if (cached?.name === name) return cached.hit;
+  const hit = bodyMentionsName(m.body, name);
+  mentionCache.set(m, { name, hit });
+  return hit;
+}
+
 /** CMP-05 ConversationHeader(골격) + CMP-06 MessageList + CMP-11 Composer. */
 function ConversationPane(props: {
   readonly space: Space;
@@ -82,9 +96,15 @@ function ConversationPane(props: {
   readonly onCloseThread?: () => void;
   /** catch-up 중 — 「여기부터 새 메시지」 위치 계산 보류(UI_STATES §2-4). */
   readonly holding: boolean;
+  /** 본문 `@이름` 토큰 근거(대화 멤버 이름)와 내 표시 이름(「나를 멘션」 판정). */
+  readonly mentionNames?: readonly string[];
+  readonly selfName?: string;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding);
+  const { mentionNames, selfName } = props;
+  const selfId = props.itemActions?.selfId;
+  const mentionsSelf = (m: Message) => selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName);
   const memberCount = space.kind === 'channel' ? (membership?.mentions?.candidates.length ?? 0) : 0;
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
@@ -147,6 +167,8 @@ function ConversationPane(props: {
                 {...props.itemActions}
                 threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
                 timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
+                mentionsSelf={mentionsSelf(m)}
+                {...(mentionNames === undefined ? {} : { mentionNames })}
               />
             </Fragment>
           ))}
@@ -328,6 +350,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     });
   };
   const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true);
+  // 로딩 중 훅이 매번 새 []를 돌려줘도 같은 undefined가 되게 — memo(MessageItem)·MessageBody useMemo를 깨지 않는다.
+  const mentionNames = useMemo(
+    () => (mentionCandidates === undefined || mentionCandidates.length === 0 ? undefined : mentionCandidates.map((c) => c.displayName)),
+    [mentionCandidates],
+  );
   const membership: MembershipProps | undefined =
     space === undefined || !dataSource.joinChannel
       ? undefined
@@ -405,6 +432,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
       holding={snap.connection === 'catching-up'}
+      {...(mentionNames === undefined ? {} : { mentionNames })}
+      {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
   );
   const thread = threadOpen && space && root && (

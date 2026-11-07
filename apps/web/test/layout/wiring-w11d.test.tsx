@@ -136,6 +136,37 @@ describe('헤더·스레드 요약', () => {
   });
 });
 
+describe('멘션 배선(시안 01)', () => {
+  const members = [
+    { id: 'me', displayName: '나영' },
+    { id: 'u2', displayName: '김철수' },
+  ];
+  const account = { id: 'me', displayName: '나영', role: 'member' as const };
+  it('본문 `@멤버` → teal 토큰, `@내 이름` → 「나를 멘션」 강조. 내가 쓴 메시지·이름 불일치는 아님', async () => {
+    const { ds } = source(
+      {
+        spaces: [space()],
+        messages: [
+          msg('a', 1, DAY2, { authorId: 'u2', body: '@나영 확인 부탁 @김철수' }),
+          msg('b', 2, DAY2, { authorId: 'me', body: '@나영 메모' }),
+          msg('c', 3, DAY2, { authorId: 'u2', body: '@나영님 @없는사람' }),
+        ],
+        connection: 'connected',
+        account,
+      },
+      { joinChannel: () => Promise.resolve({ ok: true, value: 'c1' }), listConversationMembers: () => Promise.resolve({ ok: true, value: members }) },
+    );
+    await enter(ds);
+    await screen.findByText('채널 · 멤버 2');
+    const item = (id: string) => document.querySelector(`[data-message-id="${id}"]`) as HTMLElement;
+    expect([...item('a').querySelectorAll('.msg-mention')].map((el) => el.textContent)).toEqual(['@나영', '@김철수']);
+    expect(item('a').classList.contains('msg-mentioned')).toBe(true);
+    expect(item('b').classList.contains('msg-mentioned')).toBe(false);
+    expect(item('c').classList.contains('msg-mentioned')).toBe(false);
+    expect(item('c').querySelectorAll('.msg-mention')).toHaveLength(0);
+  });
+});
+
 describe('compact 설치 안내 카드(시안 04)', () => {
   const ios = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)';
   const showList = (ua: string, standalone: boolean) => {

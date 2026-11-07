@@ -2,6 +2,7 @@
 import './conversation.css';
 
 export { MessageBody } from './MessageBody.js';
+export { bodyMentionsName } from './render.js';
 export { DateSeparator, NewMessagesDivider, dateSeparatorText, dayKey, type DateSeparatorProps } from './Dividers.js';
 export { CONVERSATION_DESIGN_COPY } from './copy.js';
 export { Composer, type ComposerProps, type MentionKey } from './Composer.js';

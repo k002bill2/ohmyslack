@@ -42,6 +42,8 @@ export interface MessageItemProps {
   readonly timePlacement?: 'inline' | 'below';
   /** 나를 멘션한 메시지면 강조 블록 + 「나를 멘션」 라벨(시안 01). 판정은 호출자(목록)가 한다. */
   readonly mentionsSelf?: boolean;
+  /** 본문 `@이름` 토큰 근거(대화 멤버 표시 이름, W-11d). 호출자가 안정 참조로 넘긴다. */
+  readonly mentionNames?: readonly string[];
 }
 
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -69,11 +71,11 @@ function MessageTime({ message, placement }: { readonly message: MessageItemData
 }
 
 /** 본문 자리: 삭제 자리표시자(자리 유지) / 본문 + 「(수정됨)」(UI_STATES §2-5). */
-function MessageContent({ message }: { readonly message: MessageItemData }) {
+function MessageContent({ message, mentionNames }: { readonly message: MessageItemData; readonly mentionNames?: readonly string[] | undefined }) {
   if (message.deleted === true) return <p className="msg-deleted">{MESSAGE_ACTION_COPY.deleted}</p>;
   return (
     <>
-      <MessageBody body={message.body} />
+      <MessageBody body={message.body} {...(mentionNames === undefined ? {} : { mentionNames })} />
       {message.editedAt !== undefined && (
         <span className="msg-edited" title={message.editedAt}>
           {MESSAGE_ACTION_COPY.edited}
@@ -127,7 +129,7 @@ function MessageItemView(props: MessageItemProps) {
           }}
         />
       ) : (
-        <MessageContent message={message} />
+        <MessageContent message={message} mentionNames={props.mentionNames} />
       )}
       {placement === 'below' && <MessageTime message={message} placement="below" />}
       {/* CMP-14: 원문 아래 별도 줄(액션 줄과 분리, UI_STATES §2-7). */}
