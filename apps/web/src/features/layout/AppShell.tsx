@@ -27,6 +27,8 @@ function ConversationPane(props: {
   readonly onBack: () => void;
   readonly onReply: (id: string) => void;
   readonly onSend: (body: string) => void;
+  readonly onRetry: (clientMessageId: string) => void;
+  readonly onDiscard: (clientMessageId: string) => void;
 }) {
   const { space, roots, breakpoint } = props;
   return (
@@ -44,7 +46,7 @@ function ConversationPane(props: {
       ) : (
         <ul className="message-list">
           {roots.map((m) => (
-            <MessageItem key={m.id} message={m} onReply={props.onReply} />
+            <MessageItem key={m.id} message={m} onReply={props.onReply} onRetry={props.onRetry} onDiscard={props.onDiscard} />
           ))}
         </ul>
       )}
@@ -120,6 +122,9 @@ export function AppShell({ dataSource, drafts: injectedDrafts }: AppShellProps) 
   };
 
   const closeThread = () => dispatch({ type: 'close-thread' });
+  // 전송 FSM 재사용(W-10a): 다시 시도는 같은 client_message_id로 1회 재전송, 삭제는 대기 항목 제거.
+  const retry = (clientMessageId: string) => dataSource.retry?.(clientMessageId);
+  const discard = (clientMessageId: string) => dataSource.discard?.(clientMessageId);
   const sidebar = (
     <Sidebar
       spaces={snap.spaces}
@@ -138,6 +143,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts }: AppShellProps) 
       onBack={() => dispatch({ type: 'back' })}
       onReply={(id) => dispatch({ type: 'open-thread', rootId: id })}
       onSend={(body) => dataSource.send({ conversationId: space.id }, body)}
+      onRetry={retry}
+      onDiscard={discard}
     />
   );
   const thread = space && root && (
@@ -149,6 +156,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts }: AppShellProps) 
       onSend={(body) => dataSource.send({ conversationId: space.id, rootId: root.id }, body)}
       announce={setAnnouncement}
       drafts={drafts}
+      onRetry={retry}
+      onDiscard={discard}
     />
   );
   const compactScreen = thread || pane || sidebar;
