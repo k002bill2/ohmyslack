@@ -1,5 +1,5 @@
 /** Codex r1 P2 회귀: 멘션 구간 추적·초안 복원·나가기 즉시 반영·다른 기기 재참여. */
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Composer, createDraftStore } from '../../src/features/conversation';
 import { mentionIdsIn } from '../../src/features/conversation/mention.js';
