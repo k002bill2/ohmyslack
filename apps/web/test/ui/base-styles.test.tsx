@@ -6,7 +6,21 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { PUBLIC_SHELL, buildPrecacheEntries } from '../../vite.config.js';
-import { mediaQueries } from '../../src/ui/tokens.js';
+import { mediaQueries, tokens } from '../../src/ui/tokens.js';
+
+/** WCAG 2.x 대비(tools/check-design-tokens.ts와 같은 식 — 패키지 경계 밖이라 import하지 않는다). */
+function luminance(hex: string): number {
+  const n = Number.parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+}
+function contrast(a: string, b: string): number {
+  const [la, lb] = [luminance(a), luminance(b)];
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
 
 const src = (rel: string) => readFileSync(fileURLToPath(new URL(`../../src/${rel}`, import.meta.url)), 'utf8');
 
@@ -61,6 +75,28 @@ describe('auth.css', () => {
     expect(css.match(/min-height: 44px/g)).toHaveLength(2);
     expect(css).toMatch(/\[role='alert'\][^{]*\{[^}]*color: var\(--danger-text\)/);
     expect(css).toMatch(/\.auth-card a \{[^}]*color: var\(--accent-text\)/);
+  });
+});
+
+describe('auth.css 글자 대비(§7-1 1.4.3, 두 스킴)', () => {
+  const css = src('features/auth/auth.css');
+  const ratio = (scheme: 'light' | 'dark', fg: string, bg: string): number => {
+    const colors: Readonly<Record<string, { readonly value: string } | undefined>> = tokens.colors[scheme];
+    const a = colors[fg]?.value;
+    const b = colors[bg]?.value;
+    if (a === undefined || b === undefined) throw new Error(`${scheme} ${fg}/${bg} 토큰 없음`);
+    return contrast(a, b);
+  };
+
+  it('제출 버튼은 accent-bg 면 위 accent-text 글자다', () => {
+    expect(css).toMatch(/button\[type='submit'\] \{[^}]*background: var\(--accent-bg\);\s*color: var\(--accent-text\)/);
+  });
+
+  it.each(['light', 'dark'] as const)('%s: 카드·입력(bg-elevated)·버튼 위 글자 4.5:1 이상', (scheme) => {
+    for (const fg of ['--text', '--text-muted', '--danger-text', '--accent-text']) {
+      expect(ratio(scheme, fg, '--bg-elevated')).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(ratio(scheme, '--accent-text', '--accent-bg')).toBeGreaterThanOrEqual(4.5);
   });
 });
 

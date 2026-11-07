@@ -45,7 +45,7 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-app);
+  background: var(--bg-elevated);
   color: var(--text);
   font: inherit;
   font-size: var(--text-md);
@@ -61,11 +61,12 @@
   font-size: var(--text-md);
   cursor: pointer;
 }
+/* accent 위 글자 역할 토큰이 없어(§3-3) accent-solid 면 대신 accent-bg 면 + accent-text 글자(두 스킴 4.5:1 이상, 테스트 고정). */
 .auth-card button[type='submit'] {
   margin-top: var(--space-4);
   border: 1px solid var(--accent-solid);
-  background: var(--accent-solid);
-  color: var(--bg-app);
+  background: var(--accent-bg);
+  color: var(--accent-text);
 }
 .auth-card button[type='button'] {
   border: 1px solid var(--border);
