@@ -1,0 +1,112 @@
+/*
+ * 로그인 전 화면(SCR-01 로그인·SCR-02 초대 수락, CMP-19). 토큰 변수만 쓴다(§3-2·§3-5).
+ * 입력·버튼 최소 높이 44px는 §7-1 히트 영역. compact 경계는 `tokens.ts` mediaQueries.compact와 같아야 한다(테스트 고정).
+ */
+.auth-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--space-6) var(--space-4);
+  box-sizing: border-box;
+}
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 400px;
+  box-sizing: border-box;
+  padding: var(--space-8) var(--space-6);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+  line-height: var(--leading-body);
+}
+.auth-card h1 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+}
+.auth-card p {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.auth-card label {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+}
+.auth-card input {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+}
+.auth-card input[aria-invalid='true'] {
+  border-color: var(--danger-solid);
+}
+.auth-card button {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+/* accent 위 글자 역할 토큰이 없어(§3-3) accent-solid 면 대신 accent-bg 면 + accent-text 글자(두 스킴 4.5:1 이상, 테스트 고정). */
+.auth-card button[type='submit'] {
+  margin-top: var(--space-4);
+  border: 1px solid var(--accent-solid);
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+.auth-card button[type='button'] {
+  border: 1px solid var(--border);
+  background: var(--bg-app);
+  color: var(--text);
+}
+.auth-card button:disabled {
+  border-color: var(--border-subtle);
+  background: var(--bg-active);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+.auth-card [role='status'] {
+  color: var(--text);
+}
+.auth-card [role='alert'],
+.auth-card [role='alert'] p {
+  color: var(--danger-text);
+}
+.auth-card .error-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.auth-card a {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+  color: var(--accent-text);
+}
+@media (width <= 640px) {
+  .auth-screen {
+    align-items: flex-start;
+    padding: 0;
+  }
+  .auth-card {
+    max-width: none;
+    padding: var(--space-8) var(--space-4);
+    background: var(--bg-app);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

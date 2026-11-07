@@ -26,8 +26,8 @@ export function tokensCssPlugin(): Plugin {
 /** 빌드 훅 안에서만 계산한다(jsdom 테스트가 이 모듈을 import할 때 import.meta.url이 file:이 아님). */
 const fromHere = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const SW_PLACEHOLDER = /(["'`])__OMS_PRECACHE_MANIFEST__\1/;
-/** 해시 없는 셸 파일(public/). 아이콘 원본 SVG(source·alt-source·maskable-source)는 제외. */
-const PUBLIC_SHELL = [
+/** 해시 없는 셸 파일(public/). 아이콘 원본 SVG(source·alt-source·maskable-source)·`fonts/`(해시 없는 2MB 폰트)는 제외. */
+export const PUBLIC_SHELL = [
   'manifest.webmanifest',
   'favicon.ico',
   'icons/favicon.svg',

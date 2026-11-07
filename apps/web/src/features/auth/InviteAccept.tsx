@@ -56,19 +56,21 @@ function classify(status: number, code: string | undefined): InviteError | 'unus
 /** G-13: 정본 문구 + 보조 안내 + 「로그인」 링크. */
 function Unusable({ onGoLogin }: { readonly onGoLogin?: (() => void) | undefined }) {
   return (
-    <div>
-      <p role="alert">{INVITE_UNUSABLE_TEXT}</p>
-      <p>{INVITE_COPY.unusableHint}</p>
-      <a
-        href={LOGIN_PATH}
-        onClick={(e) => {
-          if (onGoLogin === undefined) return;
-          e.preventDefault();
-          onGoLogin();
-        }}
-      >
-        {INVITE_COPY.loginLink}
-      </a>
+    <div className="auth-screen">
+      <div className="auth-card">
+        <p role="alert">{INVITE_UNUSABLE_TEXT}</p>
+        <p>{INVITE_COPY.unusableHint}</p>
+        <a
+          href={LOGIN_PATH}
+          onClick={(e) => {
+            if (onGoLogin === undefined) return;
+            e.preventDefault();
+            onGoLogin();
+          }}
+        >
+          {INVITE_COPY.loginLink}
+        </a>
+      </div>
     </div>
   );
 }
@@ -128,43 +130,45 @@ export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, display
   const retry = () => void attempt();
 
   return (
-    <form onSubmit={submit}>
-      <h1>{INVITE_COPY.title}</h1>
-      <p>{INVITE_COPY.intro}</p>
-      <label htmlFor={emailId}>이메일</label>
-      <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
-      <label htmlFor={passwordId}>비밀번호</label>
-      <input
-        id={passwordId}
-        type="password"
-        autoComplete="new-password"
-        required
-        aria-describedby={passwordHintId}
-        aria-invalid={error === 'password' ? true : undefined}
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      <p id={passwordHintId}>{INVITE_COPY.passwordHint}</p>
-      {displayNameLabel !== undefined && (
-        <>
-          <label htmlFor={displayNameId}>{displayNameLabel}</label>
-          <input
-            id={displayNameId}
-            type="text"
-            autoComplete="nickname"
-            aria-describedby={displayNameHintId}
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-          />
-          <p id={displayNameHintId}>{INVITE_COPY.displayNameHint}</p>
-        </>
-      )}
-      {error === 'limited' && <p role="alert">{RATE_LIMITED_TEXT}</p>}
-      {error === 'password' && <p role="alert">{INVITE_COPY.passwordPolicy}</p>}
-      {error === 'invalid' && <p role="alert">{INVITE_COPY.invalidRequest}</p>}
-      {error === 'network' && <ErrorState message={INVITE_COPY.network} onRetry={retry} retryDisabled={pending} />}
-      {error === 'server' && <ErrorState message={INVITE_COPY.server} onRetry={retry} retryDisabled={pending} />}
-      <button type="submit" disabled={pending}>수락</button>
-    </form>
+    <div className="auth-screen">
+      <form className="auth-card" onSubmit={submit}>
+        <h1>{INVITE_COPY.title}</h1>
+        <p>{INVITE_COPY.intro}</p>
+        <label htmlFor={emailId}>이메일</label>
+        <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <label htmlFor={passwordId}>비밀번호</label>
+        <input
+          id={passwordId}
+          type="password"
+          autoComplete="new-password"
+          required
+          aria-describedby={passwordHintId}
+          aria-invalid={error === 'password' ? true : undefined}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <p id={passwordHintId}>{INVITE_COPY.passwordHint}</p>
+        {displayNameLabel !== undefined && (
+          <>
+            <label htmlFor={displayNameId}>{displayNameLabel}</label>
+            <input
+              id={displayNameId}
+              type="text"
+              autoComplete="nickname"
+              aria-describedby={displayNameHintId}
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+            <p id={displayNameHintId}>{INVITE_COPY.displayNameHint}</p>
+          </>
+        )}
+        {error === 'limited' && <p role="alert">{RATE_LIMITED_TEXT}</p>}
+        {error === 'password' && <p role="alert">{INVITE_COPY.passwordPolicy}</p>}
+        {error === 'invalid' && <p role="alert">{INVITE_COPY.invalidRequest}</p>}
+        {error === 'network' && <ErrorState message={INVITE_COPY.network} onRetry={retry} retryDisabled={pending} />}
+        {error === 'server' && <ErrorState message={INVITE_COPY.server} onRetry={retry} retryDisabled={pending} />}
+        <button type="submit" disabled={pending}>수락</button>
+      </form>
+    </div>
   );
 }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { LiveApp, browserSource } from './LiveApp.js';
 import { registerServiceWorker } from './features/pwa';
 import 'virtual:tokens.css';
+import './ui/base.css';
 
 const container = document.getElementById('root');
 if (container === null) {
