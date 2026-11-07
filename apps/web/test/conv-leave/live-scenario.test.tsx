@@ -228,3 +228,4 @@ describe('대화 목록 재조회 트리거(서버 이벤트 없이 새 대화 �
     expect(within(nav()).getByRole('button', { name: 'B' })).toBeTruthy();
   });
 });
+

@@ -135,7 +135,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
 
   const space = snap.spaces.find((s) => s.id === state.conversationId);
   const root = snap.messages.find((m) => m.id === state.threadRootId && m.conversationId === state.conversationId);
-  const threadOpen = space !== undefined && root !== undefined;
+  // 나간 채널은 스레드도 닫힌 것으로 본다 — 답글 작성기로 나간 채널에 보내지 않게(Codex r1 P2).
+  const threadOpen = space !== undefined && root !== undefined && space.left !== true;
   const collapsed = isSidebarCollapsed(viewport, threadOpen);
   const bp = viewport.breakpoint;
 
@@ -308,7 +309,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(membership === undefined ? {} : { membership })}
     />
   );
-  const thread = space && root && (
+  const thread = threadOpen && space && root && (
     <ThreadPanel
       variant={bp}
       root={root}

@@ -125,7 +125,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   /** 목록 + 나간 채널(목록에 다시 나타나면 목록이 이긴다). */
   const withLeft = (list: readonly Space[]): readonly Space[] => {
     const ids = new Set(list.map((sp) => sp.id));
-    return [...list, ...[...leftChannels.values()].filter((sp) => !ids.has(sp.id))];
+    // 다른 탭·기기에서 다시 참여해 서버 목록에 돌아온 채널은 나가기 기억에서도 지운다(Codex r1 P2).
+    if ([...leftChannels.keys()].some((id) => ids.has(id))) {
+      leftChannels = new Map([...leftChannels].filter(([id]) => !ids.has(id)));
+    }
+    return [...list, ...leftChannels.values()];
   };
   let detach = () => undefined as void;
 
@@ -558,6 +562,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
           acks.delete(conversationId);
           current = null;
         }
+        // 목록 재조회가 실패해도 나간 상태는 바로 보인다(Codex r1 P2).
+        spaces = withLeft(spaces.filter((sp) => sp.id !== conversationId));
+        emit();
         await refreshThen(conversationId);
         return null;
       }),

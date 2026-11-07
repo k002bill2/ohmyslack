@@ -7,7 +7,7 @@ import {
   decideKey,
 } from './ime.js';
 import type { DraftStore } from './drafts.js';
-import { filterCandidates, insertMention, mentionIdsIn, mentionQuery, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
+import { MENTION_DRAFT_SUFFIX, filterCandidates, insertMention, mentionIdsIn, mentionQuery, parseSelections, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
 import { COMPOSER_COPY, MENTION_EMPTY_TEXT, overText, remainingText } from '../../ui/copy.js';
 
 export type MentionKey = 'Enter' | 'Tab' | 'Escape' | 'ArrowUp' | 'ArrowDown';
@@ -51,7 +51,17 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
   const [text, setText] = useState(() => draft?.store.get(draft.key) ?? '');
   const [picker, setPicker] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
-  const [selected, setSelected] = useState<readonly MentionSelection[]>([]);
+  // 선택한 멘션도 초안과 함께 보존·복원한다(Codex r1 P2).
+  const mentionKey = draft === undefined ? undefined : `${draft.key}${MENTION_DRAFT_SUFFIX}`;
+  const [selected, setSelectedState] = useState<readonly MentionSelection[]>(() =>
+    mentionKey === undefined ? [] : parseSelections(draft?.store.get(mentionKey)),
+  );
+  const setSelected = (next: readonly MentionSelection[]) => {
+    setSelectedState(next);
+    if (draft === undefined || mentionKey === undefined) return;
+    if (next.length === 0) draft.store.delete(mentionKey);
+    else draft.store.set(mentionKey, JSON.stringify(next));
+  };
   const area = useRef<HTMLTextAreaElement>(null);
   const caretAfter = useRef<number | null>(null);
   const listId = useId();
@@ -97,7 +107,7 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
     const next = insertMention(text, picker, candidate.displayName);
     updateText(next.text);
     caretAfter.current = next.caret;
-    setSelected((prev) => [...prev, { id: candidate.id, displayName: candidate.displayName }]);
+    setSelected([...selected, { id: candidate.id, displayName: candidate.displayName }]);
     setPicker(null);
   };
 

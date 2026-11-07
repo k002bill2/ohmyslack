@@ -52,8 +52,41 @@ export function insertMention(text: string, q: MentionQuery, name: string): { re
   return { text: head + text.slice(q.start + 1 + q.query.length), caret: head.length };
 }
 
-/** 본문에 `@이름`이 남아 있는 선택만 ID로(중복 제거, 상한). */
+/** `@이름` 뒤가 공백·끝인 출현 횟수(`@Bob`이 `@Bobby`에 걸리지 않게). */
+function countMentions(text: string, name: string): number {
+  let count = 0;
+  for (let i = text.indexOf(`@${name}`); i >= 0; i = text.indexOf(`@${name}`, i + 1)) {
+    const after = text.charAt(i + name.length + 1);
+    if (after === '' || /\s/u.test(after)) count += 1;
+  }
+  return count;
+}
+
+/**
+ * 본문에 남은 멘션만 ID로. 같은 이름의 선택이 여럿이면 본문 출현 횟수만큼만(나중 선택 우선) 남긴다(Codex r1 P2). 중복 ID 제거·상한.
+ */
 export function mentionIdsIn(text: string, selected: readonly MentionSelection[]): readonly string[] {
-  const ids = selected.filter((s) => text.includes(`@${s.displayName}`)).map((s) => s.id);
-  return [...new Set(ids)].slice(0, MENTION_CANDIDATE_LIMIT);
+  const left = new Map<string, number>();
+  const kept: string[] = [];
+  for (const s of [...selected].reverse()) {
+    const remaining = left.get(s.displayName) ?? countMentions(text, s.displayName);
+    if (remaining <= 0) continue;
+    left.set(s.displayName, remaining - 1);
+    kept.push(s.id);
+  }
+  return [...new Set(kept.reverse())].slice(0, MENTION_CANDIDATE_LIMIT);
+}
+
+/** 초안과 함께 보존할 선택 목록 직렬화(DraftStore는 문자열만 담는다). */
+export const MENTION_DRAFT_SUFFIX = '\u0000mentions';
+export function parseSelections(raw: string | undefined): readonly MentionSelection[] {
+  if (raw === undefined) return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value)
+      ? value.filter((v): v is MentionSelection => typeof v?.id === 'string' && typeof v?.displayName === 'string')
+      : [];
+  } catch {
+    return [];
+  }
 }
