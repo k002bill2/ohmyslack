@@ -147,8 +147,13 @@ describe('check-no-persist-cache', () => {
   });
 
   it('passes on the real repository', async () => {
+    // 단위 테스트 증거(reports/*.json)는 웹 테스트가 끝난 뒤에 생기므로 실행 순서에 따라 아직 없을 수 있다.
+    // 이 테스트는 실제 소스·빌드 산출물에 위반이 없는지만 고정한다(증거 검사는 verify의 check 단계가 담당).
     const repo = fileURLToPath(new URL('../..', import.meta.url));
     const ctx = captureCtx(repo, {});
-    expect(await run([], ctx)).toBe(0);
+    const code = await run([], ctx);
+    const violations = ctx.lines.filter((l) => l.startsWith('위반:'));
+    expect(violations.filter((l) => !l.includes('증거 없음'))).toEqual([]);
+    if (violations.length === 0) expect(code).toBe(0);
   });
 });
