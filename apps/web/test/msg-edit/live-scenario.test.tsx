@@ -46,7 +46,12 @@ function mount(server: FakeServer, history: MemoryHistory) {
 /** 서버 상태(원문 1건 + 답글) — 각 경로가 같은 상태를 돌려준다. */
 function scenarioServer() {
   const server = new FakeServer();
-  let root = message(1, { id: MINE, author_id: ME, client_message_id: CMID, body: '안녕' });
+  let root: ReturnType<typeof message> & { body: string | null; edited_at: string | null; deleted_at: string | null } = message(1, {
+    id: MINE,
+    author_id: ME,
+    client_message_id: CMID,
+    body: '안녕',
+  });
   const replies = [message(2, { thread_root_id: MINE, root_reply_count: null }), message(3, { thread_root_id: MINE, root_reply_count: null })];
   let shownReplies: typeof replies = [];
   let change = 10;
@@ -59,7 +64,7 @@ function scenarioServer() {
     return { status: 200, body: { message: root, seq: 1, change_id: (change += 1), mention_user_ids: [] } };
   });
   server.on(`DELETE /api/messages/${MINE}`, () => {
-    root = { ...root, body: null as unknown as string, deleted_at: '2026-11-07T00:05:00Z' };
+    root = { ...root, body: null, deleted_at: '2026-11-07T00:05:00Z' };
     return { status: 200, body: { message_id: MINE, seq: 1, deleted_at: root.deleted_at, change_id: (change += 1) } };
   });
   server.on('GET /api/sync/snapshot', () => ({
