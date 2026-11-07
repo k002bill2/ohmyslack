@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,10 @@ const N1 = 'FR-TST-01 alpha works';
 const N2 = 'FR-TST-02 beta works';
 const HEADER = '| FR | 지정 테스트 이름 | 계층·파일 | 실행 | 필수 보조 증거 | 수동 |';
 const AUX = 'apps/web/test/aux/aux.test.tsx';
+const SEC_HEADER = '| ID | 지정 테스트 이름 | 계층·파일 | 실행 | 수동 |';
+const SEC_IDS = Array.from({ length: 12 }, (_, i) => `TR-SEC-${String(i + 1).padStart(2, '0')}`);
+const refRow = (id: string, fr = 'FR-TST-01'): string => `| ${id} | → ${fr} | — | — | — |`;
+const defaultSecRows = SEC_IDS.map((id) => refRow(id));
 const QA_FIELDS = [
   '실행자: tester',
   '일시(KST): 2026-11-07 10:00',
@@ -29,6 +33,7 @@ interface Fixture {
   readonly sources?: Readonly<Record<string, string>>;
   readonly reports?: readonly unknown[];
   readonly qa?: Readonly<Record<string, string>>;
+  readonly secRows?: readonly string[];
 }
 
 const defaultRows = [
@@ -53,8 +58,9 @@ function build(f: Fixture = {}): string {
   ];
   write(root, 'docs/02-prd/PRD.md', `# PRD\n\n${prd.join('\n')}\n`);
   const table = [f.header ?? HEADER, '|---|---|---|---|---|---|', ...(f.rows ?? defaultRows)];
+  const sec = [SEC_HEADER, '|---|---|---|---|---|', ...(f.secRows ?? defaultSecRows)];
   write(root, 'docs/04-dev-design/DEV_DESIGN.md',
-    `### 6-1. x\n\n### 6-2. 매핑\n\n${table.join('\n')}\n\n| ID | x |\n|---|---|\n| BOOT-01 | y |\n### 6-3. y\n`);
+    `### 6-1. x\n\n### 6-2. 매핑\n\n${table.join('\n')}\n\n| ID | x |\n|---|---|\n| BOOT-01 | y |\n### 6-3. y\n\n${sec.join('\n')}\n\n### 6-4. z\n`);
   for (const [rel, content] of Object.entries(f.sources ?? {})) write(root, rel, content);
   (f.reports ?? []).forEach((r, i) => write(root, `reports/r${i}.json`, JSON.stringify(r)));
   for (const [id, content] of Object.entries(f.qa ?? {})) write(root, `qa/manual/${id}.md`, content);
@@ -181,6 +187,7 @@ describe('check-fr-coverage', () => {
     it('progress exits 0 with 미구현 33', async () => {
       const r = await exec(repoRoot, '--mode=progress', '--reports', emptyReports);
       expect(r.text).toContain('미구현 33');
+      expect(r.text).toContain('TR-SEC 지정 3개 / 미구현 3개');
       expect(r.code).toBe(0);
     });
 
@@ -305,5 +312,110 @@ describe('check-fr-coverage regressions (Codex round 3)', () => {
     const res = await exec(shFixture(baseQa), '--mode=progress');
     expect(res.text).toContain('  - FR-TST-02');
     expect(res.code).toBe(0);
+  });
+});
+
+describe('check-fr-coverage TR-SEC 6-3 (NC-01)', () => {
+  const S2 = 'TR-SEC-02 secret stays hashed';
+  const SFILE = 'apps/server/test/auth/secret-storage.int.test.ts';
+  const selfRow = `| TR-SEC-02 | \`${S2}\` | 통합 \`${SFILE}\` | PR | — |`;
+  const secRows = SEC_IDS.map((id) => (id === 'TR-SEC-02' ? selfRow : refRow(id)));
+  const qa = { 'QA-FR-TST-01': QA_FIELDS, 'QA-BOOT-01': QA_FIELDS };
+
+  function secFixture(withSelf: boolean, extraRows?: readonly string[]): string {
+    const root = build({
+      secRows: extraRows ?? secRows,
+      sources: {
+        'apps/server/test/a.int.test.ts': `it('${N1}', () => {});`,
+        'perf/b.perf.ts': `test('${N2}', () => {});`,
+        [AUX]: `it('aux', () => {});`,
+        ...(withSelf ? { [SFILE]: `it('${S2}', () => {});` } : {}),
+      },
+      qa,
+    });
+    const reports = [
+      report(root, 'apps/server/test/a.int.test.ts', [N1]),
+      report(root, 'perf/b.perf.ts', [N2]),
+      report(root, AUX, ['aux']),
+      ...(withSelf ? [report(root, SFILE, [S2])] : []),
+    ];
+    reports.forEach((r, i) => write(root, `reports/r${i}.json`, JSON.stringify(r)));
+    return root;
+  }
+
+  it('gate fails when a 6-3 self-designated test is not found', async () => {
+    const res = await exec(secFixture(false), '--mode=gate');
+    expect(res.text).toContain('TR-SEC-02: 지정 테스트 미발견');
+    expect(res.code).toBe(1);
+  });
+
+  it('gate passes when the 6-3 self-designated test is found and passed', async () => {
+    const res = await exec(secFixture(true), '--mode=gate');
+    expect(res.text).toContain('TR-SEC 지정 1개 / 미구현 0개');
+    expect(res.code).toBe(0);
+  });
+
+  it('progress reports TR-SEC 미구현 on a separate line and still passes', async () => {
+    const res = await exec(build({ secRows }), '--mode=progress');
+    expect(res.text).toContain('P0 FR 2개 / 구현 0 / 미구현 2');
+    expect(res.text).toContain('TR-SEC 지정 1개 / 미구현 1개');
+    expect(res.text).toContain('  - TR-SEC-02');
+    expect(res.code).toBe(0);
+  });
+
+  it('progress fails a 6-3 self-designated test that failed in reports', async () => {
+    const root = build({ secRows, sources: { [SFILE]: `it('${S2}', () => {});` } });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, SFILE, [S2], 'failed')));
+    const res = await exec(root, '--mode=progress');
+    expect(res.text).toContain('TR-SEC-02: 지정 테스트 실행 결과 실패');
+    expect(res.code).toBe(1);
+  });
+
+  it('reference rows follow the referenced FR verdict', async () => {
+    const rows = SEC_IDS.map((id) => (id === 'TR-SEC-02' ? selfRow : id === 'TR-SEC-03' ? refRow(id, 'FR-TST-01, FR-TST-02') : refRow(id)));
+    const pass = await exec(secFixture(true, rows), '--mode=gate');
+    expect(pass.text).toContain('TR-SEC 참조 11개 / 참조 FR 미구현 0개');
+    expect(pass.code).toBe(0);
+    const root = secFixture(true, rows);
+    write(root, 'reports/r1.json', JSON.stringify(report(root, 'perf/b.perf.ts', [N2], 'failed')));
+    const fail = await exec(root, '--mode=gate');
+    expect(fail.text).toContain('TR-SEC-03: 참조 FR-TST-02 미충족');
+    expect(fail.code).toBe(1);
+    const prog = await exec(build({ secRows: rows }), '--mode=progress');
+    expect(prog.text).toContain('TR-SEC 참조 11개 / 참조 FR 미구현 11개');
+    expect(prog.code).toBe(0);
+  });
+
+  it('scanner error when a TR-SEC ID is missing, duplicated or unknown', async () => {
+    const missing = await exec(build({ secRows: defaultSecRows.slice(0, 11) }), '--mode=progress');
+    expect(missing.text).toContain('스캐너 오류');
+    expect(missing.text).toContain('TR-SEC-12');
+    expect(missing.code).toBe(1);
+    const dup = [...defaultSecRows.slice(0, 11), refRow('TR-SEC-11')];
+    expect((await exec(build({ secRows: dup }), '--mode=progress')).code).toBe(1);
+    const extra = [...defaultSecRows, refRow('TR-SEC-13')];
+    expect((await exec(build({ secRows: extra }), '--mode=progress')).code).toBe(1);
+  });
+
+  it('scanner error when a reference row points to an FR not in 6-2', async () => {
+    const rows = SEC_IDS.map((id) => refRow(id, id === 'TR-SEC-05' ? 'FR-TST-07' : 'FR-TST-01'));
+    const res = await exec(build({ secRows: rows }), '--mode=progress');
+    expect(res.text).toContain('스캐너 오류');
+    expect(res.text).toContain('FR-TST-07');
+    expect(res.code).toBe(1);
+  });
+
+  it('scanner error on a malformed 6-3 header or missing 6-3 table', async () => {
+    const root = build();
+    const path = join(root, 'docs/04-dev-design/DEV_DESIGN.md');
+    writeFileSync(path, readFileSync(path, 'utf8').replace(SEC_HEADER, '| TR-SEC | 판정 테스트 |'));
+    expect((await exec(root, '--mode=progress')).code).toBe(1);
+  });
+
+  it('fails when a 6-3 self name duplicates a 6-2 designated name', async () => {
+    const rows = SEC_IDS.map((id) => (id === 'TR-SEC-02' ? `| TR-SEC-02 | \`${N1}\` | 통합 \`${SFILE}\` | PR | — |` : refRow(id)));
+    const res = await exec(build({ secRows: rows }), '--mode=progress');
+    expect(res.text).toContain('중복');
+    expect(res.code).toBe(1);
   });
 });

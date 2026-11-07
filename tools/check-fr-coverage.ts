@@ -3,9 +3,12 @@ import { join, resolve } from 'node:path';
 import ts from 'typescript';
 import { parseFlags, type RunContext } from './lib/cli.ts';
 
-/** DEV_DESIGN §5-1 `check:fr-coverage`: PRD P0 FR ↔ 6-2 지정 테스트 매핑을 진행/판정 모드로 검사한다. */
+/** DEV_DESIGN §5-1 `check:fr-coverage`: PRD P0 FR ↔ 6-2 지정 테스트, TRD TR-SEC ↔ 6-3 매핑을 진행/판정 모드로 검사한다. */
 
 const EXPECTED_HEADER = ['FR', '지정 테스트 이름', '계층·파일', '실행', '필수 보조 증거', '수동'] as const;
+const SEC_HEADER = ['ID', '지정 테스트 이름', '계층·파일', '실행', '수동'] as const;
+/** TRD §5-1 TR-SEC 표(R3.2 추가 11·12 포함)의 ID 집합. 6-3은 이 집합과 정확히 같아야 한다. */
+const SEC_IDS: readonly string[] = Array.from({ length: 12 }, (_, i) => `TR-SEC-${String(i + 1).padStart(2, '0')}`);
 const SCAN_ROOTS = ['apps/server/test', 'apps/web/test', 'e2e', 'perf', 'tools/test'] as const;
 const QA_FIELDS = ['실행자', '일시', '기기', '접속 경로', '절차', '기대 결과', '실제 결과', '판정', '증거'] as const;
 const FR_ID = /^FR-[A-Z]+-\d+$/;
@@ -15,6 +18,7 @@ const MODIFIERS = new Set(['skip', 'todo', 'only']);
 const VITEST_SOURCE = /\.tsx?$/;
 
 export interface DesignRow {
+  /** 행 ID: 6-2는 `FR-XXX-nn`, 6-3 자체 지정 행은 `TR-SEC-nn`. */
   readonly fr: string;
   readonly name: string;
   readonly file: string;
@@ -83,25 +87,70 @@ function toRow(line: string): DesignRow {
   return { fr, name, file: backticks(fileCell)[0] ?? '', run: runCell, aux, manual };
 }
 
-export function parseDesign(text: string): DesignRow[] {
+/** `### <절>.` 절의 첫 표에서 머리를 검사하고 본문 행 줄을 돌려준다. */
+function tableLines(text: string, section: string, expected: readonly string[]): string[] {
   const lines = text.split('\n');
-  const start = lines.findIndex((l) => l.startsWith('### 6-2.'));
-  if (start < 0) throw new Error('DEV_DESIGN 6-2 절을 찾지 못함');
+  const start = lines.findIndex((l) => l.startsWith(`### ${section}.`));
+  if (start < 0) throw new Error(`DEV_DESIGN ${section} 절을 찾지 못함`);
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((l) => l.startsWith('### '));
-  const section = end < 0 ? rest : rest.slice(0, end);
-  const headerAt = section.findIndex((l) => l.trim().startsWith('|'));
-  const header = headerAt < 0 ? [] : splitCells(section[headerAt] ?? '');
-  if (header.join('|') !== EXPECTED_HEADER.join('|')) {
-    throw new Error(`6-2 표 머리 형식 불일치: ${header.join(' | ')}`);
+  const body = end < 0 ? rest : rest.slice(0, end);
+  const headerAt = body.findIndex((l) => l.trim().startsWith('|'));
+  const header = headerAt < 0 ? [] : splitCells(body[headerAt] ?? '');
+  if (header.join('|') !== expected.join('|')) {
+    throw new Error(`${section} 표 머리 형식 불일치: ${header.join(' | ')}`);
   }
-  const rows: DesignRow[] = [];
-  for (const line of section.slice(headerAt + 2)) {
-    if (!line.trim().startsWith('|')) break;
-    rows.push(toRow(line));
-  }
-  if (rows.length === 0) throw new Error('6-2 표에 행이 없음');
+  const after = body.slice(headerAt + 2);
+  const stop = after.findIndex((l) => !l.trim().startsWith('|'));
+  const rows = stop < 0 ? after : after.slice(0, stop);
+  if (rows.length === 0) throw new Error(`${section} 표에 행이 없음`);
   return rows;
+}
+
+export function parseDesign(text: string): DesignRow[] {
+  return tableLines(text, '6-2', EXPECTED_HEADER).map(toRow);
+}
+
+/** 6-3 참조 행: 지정 테스트 칸이 `→ FR-…`이며 판정은 참조한 FR을 따른다. */
+export interface SecReference {
+  readonly id: string;
+  readonly frs: readonly string[];
+}
+
+export interface SecTable {
+  readonly self: readonly DesignRow[];
+  readonly refs: readonly SecReference[];
+}
+
+function toSecRow(line: string): DesignRow | SecReference {
+  const cells = splitCells(line);
+  const [id = '', nameCell = '', fileCell = '', runCell = '', manualCell = ''] = cells;
+  if (cells.length !== 5 || !/^TR-SEC-\d{2}$/.test(id)) throw new Error(`6-3 행 형식 불일치: ${line.slice(0, 60)}`);
+  if (nameCell.startsWith('→')) {
+    const frs = [...nameCell.matchAll(/FR-[A-Z]+-\d+/g)].map((m) => m[0]);
+    if (frs.length === 0) throw new Error(`6-3 참조 행에 FR ID 없음: ${id}`);
+    return { id, frs };
+  }
+  const name = backticks(nameCell)[0];
+  if (name === undefined) throw new Error(`6-3 행 형식 불일치: ${line.slice(0, 60)}`);
+  const manual = manualCell === '—' ? undefined : QA_ID.exec(manualCell)?.[0];
+  return { fr: id, name, file: backticks(fileCell)[0] ?? '', run: runCell, aux: [], manual };
+}
+
+/** 6-3 표를 읽고 TR-SEC ID 집합(01–12)의 완전성과 참조 FR의 6-2 존재를 확인한다. 어긋나면 스캐너 오류. */
+export function parseSecurity(text: string, frIds: ReadonlySet<string>): SecTable {
+  const parsed = tableLines(text, '6-3', SEC_HEADER).map(toSecRow);
+  const ids = parsed.map((r) => ('frs' in r ? r.id : r.fr));
+  const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
+  const absent = SEC_IDS.filter((id) => !ids.includes(id));
+  const extra = ids.filter((id) => !SEC_IDS.includes(id));
+  if (dup.length + absent.length + extra.length > 0) {
+    throw new Error(`6-3 TR-SEC ID 집합 불일치: 누락 [${absent.join(', ')}] 중복 [${dup.join(', ')}] 초과 [${extra.join(', ')}]`);
+  }
+  const refs = parsed.filter((r): r is SecReference => 'frs' in r);
+  const unknown = refs.flatMap((r) => r.frs.filter((fr) => !frIds.has(fr)).map((fr) => `${r.id}→${fr}`));
+  if (unknown.length > 0) throw new Error(`6-3 참조 FR이 6-2에 없음: ${unknown.join(', ')}`);
+  return { self: parsed.filter((r): r is DesignRow => !('frs' in r)), refs };
 }
 
 function listSources(dir: string): string[] {
@@ -197,7 +246,7 @@ function setDiff(prd: ReadonlySet<string>, rows: readonly DesignRow[]): string[]
 function duplicateNames(rows: readonly DesignRow[]): string[] {
   const seen = new Set<string>();
   return rows.flatMap((r) => {
-    if (seen.has(r.name)) return [`6-2 지정 테스트 이름 중복: ${r.fr}`];
+    if (seen.has(r.name)) return [`지정 테스트 이름 중복(6-2·6-3): ${r.fr}`];
     seen.add(r.name);
     return [];
   });
@@ -207,7 +256,8 @@ interface Evaluation {
   readonly errors: string[];
   readonly warnings: string[];
   readonly missing: DesignRow[];
-  readonly found: number;
+  /** 오류가 하나라도 난 행 ID. 6-3 참조 행은 참조한 FR이 여기에 있으면 미충족이다. */
+  readonly failed: Set<string>;
 }
 
 function evaluateRow(row: DesignRow, occ: readonly Occurrence[], assertions: readonly Assertion[], gate: boolean, ev: Evaluation): void {
@@ -227,15 +277,13 @@ function evaluateRow(row: DesignRow, occ: readonly Occurrence[], assertions: rea
   }
 }
 
-function checkAux(root: string, rows: readonly DesignRow[], assertions: readonly Assertion[]): string[] {
-  return rows.flatMap((row) =>
-    row.aux.flatMap((rel) => {
-      if (!existsSync(join(root, rel))) return [`${row.fr}: 보조 증거 파일 없음 ${rel}`];
-      const own = assertions.filter((a) => a.file.endsWith(`/${rel}`));
-      if (own.length === 0 || own.some((a) => a.status !== 'passed')) return [`${row.fr}: 보조 증거 미통과 ${rel}`];
-      return [];
-    }),
-  );
+function checkAux(root: string, row: DesignRow, assertions: readonly Assertion[]): string[] {
+  return row.aux.flatMap((rel) => {
+    if (!existsSync(join(root, rel))) return [`${row.fr}: 보조 증거 파일 없음 ${rel}`];
+    const own = assertions.filter((a) => a.file.endsWith(`/${rel}`));
+    if (own.length === 0 || own.some((a) => a.status !== 'passed')) return [`${row.fr}: 보조 증거 미통과 ${rel}`];
+    return [];
+  });
 }
 
 function checkQa(root: string, id: string): string[] {
@@ -256,35 +304,58 @@ function manualOnly(root: string, row: DesignRow): string[] {
   return errors;
 }
 
-function gateChecks(root: string, rows: readonly DesignRow[], assertions: readonly Assertion[], ev: Evaluation): string[] {
-  const errors = ev.missing.flatMap((r) => (VITEST_SOURCE.test(r.file) ? [`${r.fr}: 지정 테스트 미발견`] : manualOnly(root, r)));
-  errors.push(...checkAux(root, rows, assertions));
-  const qaIds = rows.flatMap((r) => (r.manual === undefined ? [] : [r.manual]));
-  for (const id of [...qaIds, 'QA-BOOT-01']) errors.push(...checkQa(root, id));
+/** 판정 모드 전용 행 검사: 미발견·수동 전용 파일, 필수 보조 증거, 수동 QA. */
+function gateRowChecks(root: string, row: DesignRow, assertions: readonly Assertion[], missing: boolean): string[] {
+  const errors = !missing ? [] : VITEST_SOURCE.test(row.file) ? [`${row.fr}: 지정 테스트 미발견`] : manualOnly(root, row);
+  errors.push(...checkAux(root, row, assertions));
+  if (row.manual !== undefined) errors.push(...checkQa(root, row.manual));
   return errors;
 }
 
-function report(ctx: RunContext, ev: Evaluation, total: number): void {
+function refErrors(refs: readonly SecReference[], failed: ReadonlySet<string>): string[] {
+  return refs.flatMap((r) => r.frs.filter((fr) => failed.has(fr)).map((fr) => `${r.id}: 참조 ${fr} 미충족`));
+}
+
+function listMissing(ctx: RunContext, label: string, rows: readonly DesignRow[]): void {
+  if (rows.length === 0) return;
+  ctx.out(`${label}${rows.length}개:`);
+  for (const r of rows) ctx.out(`  - ${r.fr}`);
+}
+
+function report(ctx: RunContext, ev: Evaluation, total: number, sec: SecTable): void {
   for (const w of ev.warnings) ctx.out(`경고: ${w}`);
-  if (ev.missing.length > 0) {
-    ctx.out(`미구현 ${ev.missing.length}개:`);
-    for (const r of ev.missing) ctx.out(`  - ${r.fr}`);
-  }
-  ctx.out(`P0 FR ${total}개 / 구현 ${ev.found} / 미구현 ${ev.missing.length}`);
+  const secIds = new Set(sec.self.map((r) => r.fr));
+  const frMissing = ev.missing.filter((r) => !secIds.has(r.fr));
+  const secMissing = ev.missing.filter((r) => secIds.has(r.fr));
+  listMissing(ctx, '미구현 ', frMissing);
+  ctx.out(`P0 FR ${total}개 / 구현 ${total - frMissing.length} / 미구현 ${frMissing.length}`);
+  listMissing(ctx, 'TR-SEC 미구현 ', secMissing);
+  ctx.out(`TR-SEC 지정 ${sec.self.length}개 / 미구현 ${secMissing.length}개`);
+  const missingFr = new Set(frMissing.map((r) => r.fr));
+  const refMissing = sec.refs.filter((r) => r.frs.some((fr) => missingFr.has(fr))).length;
+  ctx.out(`TR-SEC 참조 ${sec.refs.length}개 / 참조 FR 미구현 ${refMissing}개`);
   for (const e of ev.errors) ctx.err(`실패: ${e}`);
 }
 
 function check(root: string, flags: Readonly<Record<string, string>>, gate: boolean, ctx: RunContext): number {
   const prd = parsePrd(readFileSync(resolve(root, flags['prd'] ?? 'docs/02-prd/PRD.md'), 'utf8'));
-  const rows = parseDesign(readFileSync(resolve(root, flags['design'] ?? 'docs/04-dev-design/DEV_DESIGN.md'), 'utf8'));
+  const design = readFileSync(resolve(root, flags['design'] ?? 'docs/04-dev-design/DEV_DESIGN.md'), 'utf8');
+  const rows = parseDesign(design);
+  const sec = parseSecurity(design, new Set(rows.map((r) => r.fr)));
+  const all = [...rows, ...sec.self];
   const assertions = loadReports(resolve(root, flags['reports'] ?? 'reports'));
-  const occurrences = scanSources(root, rows.map((r) => r.name));
-  const ev: Evaluation = { errors: [...setDiff(prd, rows), ...duplicateNames(rows)], warnings: [], missing: [], found: 0 };
-  for (const row of rows) evaluateRow(row, occurrences.get(row.name) ?? [], assertions, gate, ev);
-  const final: Evaluation = { ...ev, found: rows.length - ev.missing.length };
-  if (gate) final.errors.push(...gateChecks(root, rows, assertions, final));
-  report(ctx, final, rows.length);
-  return final.errors.length > 0 ? 1 : 0;
+  const occurrences = scanSources(root, all.map((r) => r.name));
+  const ev: Evaluation = { errors: [...setDiff(prd, rows), ...duplicateNames(all)], warnings: [], missing: [], failed: new Set() };
+  for (const row of all) {
+    const before = ev.errors.length;
+    evaluateRow(row, occurrences.get(row.name) ?? [], assertions, gate, ev);
+    if (gate) ev.errors.push(...gateRowChecks(root, row, assertions, ev.missing.includes(row)));
+    if (ev.errors.length > before) ev.failed.add(row.fr);
+  }
+  ev.errors.push(...refErrors(sec.refs, ev.failed));
+  if (gate) ev.errors.push(...checkQa(root, 'QA-BOOT-01'));
+  report(ctx, ev, rows.length, sec);
+  return ev.errors.length > 0 ? 1 : 0;
 }
 
 export async function run(argv: readonly string[], ctx: RunContext): Promise<number> {
