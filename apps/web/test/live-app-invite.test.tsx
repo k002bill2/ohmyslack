@@ -96,6 +96,22 @@ describe('LiveApp 초대 수락', () => {
     expect(sources).toHaveLength(0);
   });
 
+  it('Codex r3: 입력 오류 400(password_policy)은 초대 무효가 아니다 — 폼 유지, invite_invalid만 사용 불가', async () => {
+    const server = new FakeServer();
+    let code = 'password_policy';
+    server.on('POST /api/invites/accept', () => ({ status: 400, body: { error: { code, request_id: 'r' } } }));
+    mount(server, `#t=${TOKEN}`);
+    await settle();
+    fill();
+    await settle();
+    expect(screen.queryByText(INVITE_UNUSABLE_TEXT)).toBeNull();
+    expect(screen.getByRole('button', { name: '수락' })).toBeTruthy();
+    code = 'invite_invalid';
+    fireEvent.submit(screen.getByRole('button', { name: '수락' }).closest('form') as HTMLFormElement);
+    await settle();
+    expect(screen.getByText(INVITE_UNUSABLE_TEXT)).toBeTruthy();
+  });
+
   it('초대 해시가 없으면 기존처럼 세션 확인부터 시작한다', async () => {
     const server = new FakeServer();
     const { sources, cleared } = mount(server, '');

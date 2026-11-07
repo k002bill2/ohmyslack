@@ -65,4 +65,13 @@ describe('Codex r2 회귀', () => {
     expect(ds.getSnapshot().messages.filter((m) => m.body === 'hi')).toHaveLength(1);
     expect(ds.getSnapshot().messages.some((m) => m.pending !== undefined)).toBe(false);
   });
+
+  it('Codex r3: 본문 이력은 원문 전용(roots_only=true)으로 조회한다', async () => {
+    const { server, ds, storage } = setup();
+    writeCheckpoint(ME, 5, storage);
+    ds.open?.(CONV);
+    await ds.resume();
+    await flush();
+    expect(server.log).toContain(`GET /api/conversations/${CONV}/messages?limit=100&roots_only=true`);
+  });
 });

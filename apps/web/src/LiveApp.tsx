@@ -28,6 +28,17 @@ export interface LiveAppProps {
  */
 const DISPLAY_NAME_LABEL = '표시 이름';
 
+/** 서버 오류 본문 `{ error: { code } }`의 code. 본문이 없거나 형식이 다르면 undefined. */
+async function errorCode(res: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await res.json();
+    const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === 'string' ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const browserReadHash = () => location.hash;
 const browserClearHash = () => history.replaceState(null, '', location.pathname + location.search);
 
@@ -96,7 +107,9 @@ export function LiveApp({ fetch, createSource, session: injected, readHash = bro
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
       });
-      return res.ok ? { ok: true } : { ok: false, status: res.status };
+      if (res.ok) return { ok: true };
+      const code = await errorCode(res);
+      return code === undefined ? { ok: false, status: res.status } : { ok: false, status: res.status, code };
     },
     [fetch],
   );

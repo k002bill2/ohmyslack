@@ -368,7 +368,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const loadHistory = async (conversationId: string) => {
     try {
       const res = await api.get<{ messages: SnapshotResponse['messages'] }>(
-        `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=${HISTORY_LIMIT}`,
+        `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=${HISTORY_LIMIT}&roots_only=true`,
       );
       if (ended) return;
       for (const m of res.messages) fold = foldMessage(fold, 0, m, author);

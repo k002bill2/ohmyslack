@@ -1,7 +1,8 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { RATE_LIMITED_TEXT } from './LoginForm.js';
 
-export type InviteResult = { readonly ok: true } | { readonly ok: false; readonly status: number };
+/** `code`: 서버 오류 본문의 `error.code`(있으면). 400 중 `invite_invalid`만 초대 무효다(Codex r3). */
+export type InviteResult = { readonly ok: true } | { readonly ok: false; readonly status: number; readonly code?: string };
 
 export interface InviteAcceptRequest {
   readonly token: string;
@@ -31,7 +32,9 @@ export function parseInviteHash(hash: string): string | null {
 }
 
 /** 429를 제외한 4xx는 만료·사용됨·폐기·무효를 구분하지 않고 사용 불가로 본다(D §6-2). */
-function isUnusable(status: number): boolean {
+function isUnusable(status: number, code: string | undefined): boolean {
+  // 입력 오류(password_policy·invalid_request 등 400)는 폼을 유지해 고칠 수 있게 한다(Codex r3 P2).
+  if (status === 400 && code !== undefined && code !== 'invite_invalid') return false;
   return status >= 400 && status < 500 && status !== 429;
 }
 
@@ -72,7 +75,7 @@ export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, display
         return;
       }
       if (result.status === 429) setLimited(true);
-      else if (isUnusable(result.status)) setUnusable(true);
+      else if (isUnusable(result.status, result.code)) setUnusable(true);
       // 5xx: 정본 문구 없음 — 폼 유지, 같은 토큰으로 재시도 가능.
     } catch {
       // 네트워크 오류(I-5): 정본 문구 없음 — 폼 유지, 메모리의 토큰으로 재시도.
