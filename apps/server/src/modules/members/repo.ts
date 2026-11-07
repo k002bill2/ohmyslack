@@ -98,7 +98,8 @@ export function createPgMembersStore(pool: pg.Pool): MembersStore {
              ON CONFLICT (email_norm) DO NOTHING RETURNING id`,
             [member.id, member.emailNorm, member.displayName, member.passwordHash],
           );
-          if ((user.rowCount ?? 0) === 0) return rejected;
+          // 이메일 충돌: 같은 오류를 주되 token 소모(used_at)는 COMMIT 한다 — token 하나로 이메일 존재를 반복 조회하지 못하게(NC-20, F-3).
+          if ((user.rowCount ?? 0) === 0) return { commit: true, value: { ok: false } };
           const joined = await client.query(
             `INSERT INTO workspace_members (workspace_id, user_id, role)
              SELECT id, $1, 'member' FROM workspaces ORDER BY created_at, id LIMIT 1`,
