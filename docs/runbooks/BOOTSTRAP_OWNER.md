@@ -7,7 +7,14 @@
 
 1. Node 26 경로: `export PATH=$HOME/.nvm/versions/node/v26.13.0/bin:$PATH`
 2. 저장소 루트에서 `pnpm install --frozen-lockfile`
-3. 마이그레이션이 적용된 DB인지 확인합니다(`schema_migrations`에 `0001_initial_schema.sql`).
+3. 마이그레이션이 적용된 DB인지 확인합니다(`schema_migrations`에 `0001_initial_schema.sql`). 4번으로 `DATABASE_URL`을 로드한 셸에서:
+   ```sh
+   pnpm --filter @ohmyslack/server migrate --dry-run   # 적용 예정 파일 목록만(DB 쓰기 없음, schema_migrations 조회만)
+   pnpm --filter @ohmyslack/server migrate             # 미적용 파일 적용. 파일 1개 = 트랜잭션 1개
+   ```
+   - 호스트가 루프백(`127.0.0.1`·`localhost`·`::1`)이 아니거나 쿼리에 `host`·`hostaddr`가 있으면 아무것도 하지 않고 종료 코드 2. `DATABASE_URL`이 없어도 2.
+   - 성공: 새로 적용한 파일 이름이 한 줄씩, 마지막 줄 `MIGRATE OK applied=<새로 적용 수> total=<전체 적용 수>`(dry-run은 `MIGRATE DRY-RUN pending=<예정 수> total=<기적용 수>`). 재실행은 `applied=0`.
+   - 실패: stderr 마지막 줄 `MIGRATE FAILED <code>`(SQLSTATE·연결 오류 코드·`migration_error`), 종료 코드 1. 출력에는 접속 문자열·사용자명·비밀번호가 없습니다.
 4. 접속 문자열은 **사람이 셸에서 직접** 로드합니다. 운영 `.env`의 `DATABASE_URL`은 에이전트가 열거나 출력하지 않습니다.
    ```sh
    set -a; . ./.env; set +a     # 운영: 사람만. 합성 환경 리허설은 합성 DB를 가리키는 별도 파일을 씁니다.

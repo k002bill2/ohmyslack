@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/apps/server/src/main.js",
     "bootstrap-owner": "tsx bin/bootstrap-owner.ts",
-    "reset-password": "tsx bin/reset-password.ts"
+    "reset-password": "tsx bin/reset-password.ts",
+    "migrate": "tsx bin/migrate.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.5",
