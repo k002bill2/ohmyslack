@@ -88,5 +88,15 @@ export function createPgAuthStore(pool: pg.Pool): AuthStore {
       );
       return res.rows.map(toSession);
     },
+    async filterLiveSessionIds(ids, now, createdAfter) {
+      if (ids.length === 0) return [];
+      const res = await pool.query<{ id: string }>(
+        `SELECT s.id FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.id = ANY($1::uuid[]) AND s.revoked_at IS NULL AND s.expires_at > $2 AND s.created_at > $3
+           AND u.status = 'active'`,
+        [ids, now, createdAfter],
+      );
+      return res.rows.map((r) => r.id);
+    },
   };
 }

@@ -24,13 +24,13 @@ describe('createPgMembersStore', () => {
     expect(ACCEPT_INVITE_SQL).toMatch(/used_at IS NULL AND revoked_at IS NULL AND expires_at > \$2/);
   });
 
-  it('수락: invite 없음 → ROLLBACK, 이메일 충돌 → ROLLBACK, 성공 → COMMIT', async () => {
+  it('수락: invite 없음 → ROLLBACK, 이메일 충돌 → token 소모 COMMIT(W-15 F-3), 성공 → COMMIT', async () => {
     const none = fakePool((sql) => (sql.startsWith('UPDATE invites') ? ok([]) : ok()));
     expect(await createPgMembersStore(none.pool).acceptInvite('h', new Date(), member)).toEqual({ ok: false });
     expect(none.log.at(-1)).toBe('ROLLBACK');
     const dup = fakePool((sql) => (sql.startsWith('INSERT INTO users') ? ok([]) : ok()));
     expect(await createPgMembersStore(dup.pool).acceptInvite('h', new Date(), member)).toEqual({ ok: false });
-    expect(dup.log.at(-1)).toBe('ROLLBACK');
+    expect(dup.log.at(-1)).toBe('COMMIT');
     const noWs = fakePool((sql) => (sql.startsWith('INSERT INTO workspace_members') ? ok([]) : ok()));
     expect(await createPgMembersStore(noWs.pool).acceptInvite('h', new Date(), member)).toEqual({ ok: false });
     const good = fakePool(() => ok());

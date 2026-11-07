@@ -46,6 +46,12 @@ interface Connection {
 /** setTimeout 최대 지연(약 24.8일). 그보다 먼 만료는 중간에 깨어나 다시 계산한다. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
+/**
+ * 프로세스 밖 세션 폐기(reset-password CLI·수동 SQL·복원·DB 직접 비활성화)를 잡는 sweep 주기(F-2, NC-21, TRD §5-1 S4·S7).
+ * 최악 지연 ≈ 주기 + 쿼리 2회 시간이므로 5초 보장을 위해 4초로 둔다.
+ */
+export const SESSION_SWEEP_MS = 4000;
+
 export interface Hub {
   attach(socket: HubSocket, auth: { userId: string; sessionId: string; token: string; expiresAt: Date }): Connection;
   subscribe(conn: Connection, conversationId: string, afterCursor: number): void;
@@ -87,6 +93,16 @@ function replayFrame(changeId: number, m: MessageRecord): WsServerFrame {
 export function createHub(deps: HubDeps): Hub {
   const { auth, conversations, syncStore, clock } = deps;
   const conns = new Set<Connection>();
+  /** 대기 중인 다음 sweep(실행 중에는 undefined). 연결이 0이면 멈춘다. */
+  let sweepTimer: ReturnType<typeof setTimeout> | undefined;
+  let sweeping = false;
+  let disposed = false;
+
+  const stopSweepIfIdle = (): void => {
+    if (conns.size > 0 || sweepTimer === undefined) return;
+    clearTimeout(sweepTimer);
+    sweepTimer = undefined;
+  };
 
   const send = (conn: Connection, frame: WsServerFrame): void => {
     if (!conn.closed) conn.socket.send(JSON.stringify(frame));
@@ -97,7 +113,38 @@ export function createHub(deps: HubDeps): Hub {
     conn.closed = true;
     conns.delete(conn);
     if (conn.expiryTimer !== undefined) clearTimeout(conn.expiryTimer);
+    stopSweepIfIdle();
     conn.socket.close(code, reason);
+  };
+
+  /**
+   * 열린 연결의 세션을 한 쿼리(세션 ID 배열, 비연장)로 다시 확인하고 무효면 1008로 닫는다. 조회 실패는 일시 장애로 보고
+   * 아무것도 닫지 않는다 — 다음 주기에 다시 확인한다(전송 경로는 여전히 연결별 peek로 막힌다).
+   */
+  const sweep = async (): Promise<void> => {
+    const targets = [...conns];
+    if (targets.length === 0 || auth.liveSessionIds === undefined) return;
+    let alive: ReadonlySet<string>;
+    try {
+      alive = await auth.liveSessionIds(targets.map((c) => c.sessionId));
+    } catch {
+      return;
+    }
+    for (const conn of targets) if (!alive.has(conn.sessionId)) close(conn, WS_CLOSE_POLICY, 'session_ended');
+  };
+
+  /** 다음 sweep을 예약한다. 일괄 조회가 없거나 연결이 0이거나 이미 예약·실행 중이면 아무것도 하지 않는다. */
+  const scheduleSweep = (): void => {
+    if (disposed || sweeping || sweepTimer !== undefined || conns.size === 0 || auth.liveSessionIds === undefined) return;
+    sweepTimer = setTimeout(() => {
+      sweepTimer = undefined;
+      sweeping = true;
+      void sweep().finally(() => {
+        sweeping = false;
+        scheduleSweep();
+      });
+    }, SESSION_SWEEP_MS);
+    sweepTimer.unref?.();
   };
 
   const enqueue = (conn: Connection, task: () => Promise<void>): void => {
@@ -243,6 +290,7 @@ export function createHub(deps: HubDeps): Hub {
       };
       conns.add(conn);
       scheduleExpiry(conn, info.expiresAt);
+      scheduleSweep();
       // handshake peek와 attach 사이에 폐기·비활성화 이벤트가 지나갔을 수 있다: 붙은 직후 한 번 더 확인한다(S7 5초).
       enqueue(conn, async () => {
         await sessionAlive(conn);
@@ -289,11 +337,15 @@ export function createHub(deps: HubDeps): Hub {
       conn.closed = true;
       conns.delete(conn);
       if (conn.expiryTimer !== undefined) clearTimeout(conn.expiryTimer);
+      stopSweepIfIdle();
     },
     size: () => conns.size,
     dispose() {
+      disposed = true;
       for (const off of unsubscribers) off();
       for (const conn of [...conns]) close(conn, 1001, 'server_shutdown');
+      if (sweepTimer !== undefined) clearTimeout(sweepTimer);
+      sweepTimer = undefined;
     },
   };
 }

@@ -47,6 +47,15 @@
 
 각 항목 줄 형식: `<항목>: 원본 N행 / 복원 N행 / 일치 <해시 앞 12자>`. 하나라도 다르면 `불일치`로 표시하고 마지막 줄이 `DRILL FAILED <불일치 항목>`, 종료 코드 1입니다.
 
+### 3-1. 운영 복원 대조 항목 (S12, 드릴 자동 대조 7/7과 별개)
+
+운영 복원(7절, 별도 승인)을 마친 뒤 8절 단계를 실행하고 아래를 확인해야 서비스를 재개할 수 있습니다. 합성 드릴(`DRILL OK 7/7`)은 서비스를 재개하지 않으므로 이 항목을 자동 대조하지 않습니다.
+
+| 항목 | 기대값 | 정본 |
+|---|---|---|
+| `live_sessions` | 복원 스키마에서 `revoked_at IS NULL`인 세션 0행 | TRD §5-1 S12, TM-BAK-02 |
+| `unused_invites` | `used_at IS NULL AND revoked_at IS NULL`인 초대 0행 | TRD §5-1 S12, TM-BAK-02 |
+
 ## 4. 결과 해석
 
 | 마지막 줄 | 의미 | 조치 |
@@ -71,3 +80,29 @@
 ## 7. 운영 백업에 적용할 때(이 문서로 승인되지 않음)
 
 운영 백업(`backup.sh` 산출물) 복원 대조는 별도 승인이 필요합니다: ① 복원 대상 임시 DB 생성·삭제 권한(⚖️-4) ② 실데이터가 드릴 출력·임시 DB에 남는 범위(TM-BAK-04) ③ 덤프 파일 보존·삭제 정책(TM-BAK-01, PRD ⚖️-3) ④ 운영 DB 접근 계정. 승인 전에는 합성 데이터 드릴만 실행합니다.
+
+## 8. 운영 복원 후 서비스 재개 전 (TRD §5-1 S12, 승인된 운영 복원에서만)
+
+복원된 DB에는 백업 시점의 세션·초대가 살아 있습니다. 서비스를 다시 열기 **전에** 모두 무효화합니다. 이 단계를 마치기 전에는 서버를 시작하지 않습니다.
+
+1. 서버가 멈춰 있는지 확인합니다(복원 대상 DB에 붙은 앱 프로세스 0개).
+2. 운영 앱이 쓰는 role(마이그레이션을 적용한 스키마 소유 role)로 접속합니다. superuser·다른 프로젝트 role은 쓰지 않습니다. 접속 정보는 셸에서 직접 로드하고 출력하지 않습니다.
+3. 아래 SQL을 실행합니다. `<schema>`는 복원한 스키마 이름(기본 `public`)으로 **명시**합니다. `search_path`에 기대지 않습니다.
+
+   ```sql
+   BEGIN;
+   SELECT current_user, current_database();  -- 운영 앱 role·운영 DB인지 눈으로 확인
+   UPDATE "<schema>".sessions SET revoked_at = now() WHERE revoked_at IS NULL;
+   UPDATE "<schema>".invites SET revoked_at = now() WHERE used_at IS NULL AND revoked_at IS NULL;
+   -- 실행 확인: 두 값 모두 0이어야 COMMIT 합니다. 0이 아니면 ROLLBACK 후 원인을 기록합니다.
+   SELECT
+     (SELECT count(*) FROM "<schema>".sessions WHERE revoked_at IS NULL) AS live_sessions,
+     (SELECT count(*) FROM "<schema>".invites WHERE used_at IS NULL AND revoked_at IS NULL) AS unused_invites;
+   COMMIT;
+   ```
+
+4. COMMIT 뒤 같은 확인 쿼리를 한 번 더 실행해 `live_sessions = 0`, `unused_invites = 0`을 기록합니다(3-1절 대조 항목).
+5. 서버를 시작합니다. 사용자는 모두 다시 로그인해야 하며, 필요한 초대는 owner가 새로 발급합니다.
+6. 비활성화 목록을 다시 적용하는 방식은 PRD ⚖️-3이 결정되면 이 절에 추가합니다(SECURITY_REVIEW_P1 F-6 3번).
+
+참고: 서버가 이미 떠 있는 상태에서 세션을 폐기해도 열린 WS는 hub sweep(4초 주기)으로 5초 안에 닫힙니다. 그래도 S12는 **재개 전** 실행을 원칙으로 합니다.

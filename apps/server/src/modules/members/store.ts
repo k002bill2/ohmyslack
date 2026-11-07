@@ -34,7 +34,7 @@ export interface MembersStore {
   isInviteUsable(tokenHash: string, now: Date): Promise<boolean>;
   /**
    * 초대 원자적 1회 교환 + member 계정 생성(한 트랜잭션). 만료·사용·폐기·없는 token, 이미 있는 이메일은
-   * 모두 `{ok:false}`이고 DB를 바꾸지 않는다.
+   * 모두 `{ok:false}`다. 앞의 넷은 DB를 바꾸지 않고, 이미 있는 이메일은 token만 소모(used_at)한다(NC-20, F-3).
    */
   acceptInvite(tokenHash: string, now: Date, member: NewMember): Promise<AcceptResult>;
   listActiveMembers(): Promise<readonly MemberSummary[]>;

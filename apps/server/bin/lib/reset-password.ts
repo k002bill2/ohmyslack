@@ -5,8 +5,8 @@ import { CliRefusal, inTransaction, parseOptions, readPolicyPassword, runCommand
 /** 로컬 자격 증명 복구(정본: TRD §5-1 S4). 같은 트랜잭션에서 해시 교체 + 그 계정 세션 전부 revoke. */
 export interface ResetPasswordHooks {
   /**
-   * COMMIT 뒤 호출되는 세션 revoke 이벤트 훅 자리. 열린 WS를 5초 안에 닫는 일은 W-09(realtime) 범위이며,
-   * 이 명령은 별도 프로세스라 W-09가 DB 기반 신호(예: NOTIFY)로 연결해야 한다.
+   * COMMIT 뒤 호출되는 선택 훅(같은 프로세스 안에서 쓸 때). 실행 중인 서버의 열린 WS는 이 훅 없이도
+   * realtime hub의 주기 sweep(4초, 세션 일괄 재확인)이 5초 안에 닫는다(NC-21, F-2).
    */
   readonly onSessionsRevoked?: (userId: string, revokedCount: number) => void | Promise<void>;
 }
