@@ -49,7 +49,7 @@ export const ALLOWED_SOURCES: readonly string[] = [
 const ASSET_EXT = /\.(png|jpg|svg|ico|webp|woff|woff2|mp3|wav|ogg)$/i;
 const AUDIO_EXT = /\.(mp3|wav|ogg)$/i;
 // `.claude`: 에이전트 도구가 만드는 미추적 worktree 사본(저장소 산출물 아님)
-const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'dist', 'reports', 'coverage', 'dev']);
+const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'dist', 'dist-measure', 'reports', 'coverage', 'dev']);
 const TOKENS_REL = 'apps/web/src/ui/tokens.ts';
 const MANIFEST_REL = 'apps/web/public/manifest.webmanifest';
 
