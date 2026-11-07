@@ -24,7 +24,8 @@ if ('ServiceWorkerGlobalScope' in globalThis) {
     open: async (name) => {
       const cache = await caches.open(name);
       return {
-        addAll: (urls) => cache.addAll([...urls]),
+        // HTTP 캐시에 남은 이전 셸(index.html 등)이 새 버전 캐시에 섞이지 않게 재검증 없이 새로 받는다(Codex P2).
+        addAll: (urls) => cache.addAll(urls.map((url) => new Request(url, { cache: 'reload' }))),
         match: (request) => cache.match(request as unknown as Request | string),
       };
     },
