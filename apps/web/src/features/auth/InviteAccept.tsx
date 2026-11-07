@@ -1,4 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
+import { INVITE_COPY, LOGIN_PATH } from '../../ui/copy.js';
+import { ErrorState } from '../../ui/ErrorState.js';
 import { RATE_LIMITED_TEXT } from './LoginForm.js';
 
 /** `code`: 서버 오류 본문의 `error.code`(있으면). 400 중 `invite_invalid`만 초대 무효다(Codex r3). */
@@ -20,7 +22,12 @@ export interface InviteAcceptProps {
   readonly onSuccess: () => void;
   /** 정본 라벨이 없어 부모가 주입한다. 없으면 표시 이름 입력을 렌더하지 않고 display_name도 보내지 않는다. */
   readonly displayNameLabel?: string;
+  /** G-13 「로그인」 링크 클릭(있으면 기본 이동 대신 호출 — 앱 안에서 로그인 화면으로 전환). */
+  readonly onGoLogin?: () => void;
 }
+
+/** 폼을 유지하는 실패(G-09–G-12, 429). */
+type InviteError = 'limited' | 'password' | 'invalid' | 'network' | 'server';
 
 export const INVITE_UNUSABLE_TEXT = '이 초대 링크는 더 이상 사용할 수 없습니다';
 
@@ -38,20 +45,50 @@ function isUnusable(status: number, code: string | undefined): boolean {
   return status >= 400 && status < 500 && status !== 429;
 }
 
+function classify(status: number, code: string | undefined): InviteError | 'unusable' {
+  if (status === 429) return 'limited';
+  if (status === 400 && code === 'password_policy') return 'password';
+  if (status === 400 && code !== undefined && code !== 'invite_invalid') return 'invalid';
+  if (status >= 500) return 'server';
+  return isUnusable(status, code) ? 'unusable' : 'server';
+}
+
+/** G-13: 정본 문구 + 보조 안내 + 「로그인」 링크. */
+function Unusable({ onGoLogin }: { readonly onGoLogin?: (() => void) | undefined }) {
+  return (
+    <div>
+      <p role="alert">{INVITE_UNUSABLE_TEXT}</p>
+      <p>{INVITE_COPY.unusableHint}</p>
+      <a
+        href={LOGIN_PATH}
+        onClick={(e) => {
+          if (onGoLogin === undefined) return;
+          e.preventDefault();
+          onGoLogin();
+        }}
+      >
+        {INVITE_COPY.loginLink}
+      </a>
+    </div>
+  );
+}
+
 /**
  * CMP-19 초대 수락(D §4-2, UI_STATES §2-9). 토큰은 컴포넌트 메모리에만 두고 DOM·저장소·로그에 쓰지 않는다.
  */
-export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, displayNameLabel }: InviteAcceptProps) {
+export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, displayNameLabel, onGoLogin }: InviteAcceptProps) {
   // 마운트 시 1회만 읽는다. 해시는 effect에서 즉시 지운다.
   const [token] = useState<string | null>(() => parseInviteHash(readHash()));
   const emailId = useId();
   const passwordId = useId();
   const displayNameId = useId();
+  const passwordHintId = useId();
+  const displayNameHintId = useId();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [pending, setPending] = useState(false);
-  const [limited, setLimited] = useState(false);
+  const [error, setError] = useState<InviteError | null>(null);
   const [unusable, setUnusable] = useState(token === null);
 
   useEffect(() => {
@@ -59,13 +96,12 @@ export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, display
     // 마운트 1회 — clearHash 정체성 변화로 다시 부르지 않는다.
   }, []);
 
-  if (unusable || token === null) return <p role="alert">{INVITE_UNUSABLE_TEXT}</p>;
+  if (unusable || token === null) return <Unusable onGoLogin={onGoLogin} />;
 
-  const submit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
-    e.preventDefault();
+  const attempt = async (): Promise<void> => {
     if (pending) return;
     setPending(true);
-    setLimited(false);
+    setError(null);
     const base = { token, email, password };
     const req: InviteAcceptRequest = displayNameLabel === undefined ? base : { ...base, display_name: displayName };
     try {
@@ -74,18 +110,27 @@ export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, display
         onSuccess();
         return;
       }
-      if (result.status === 429) setLimited(true);
-      else if (isUnusable(result.status, result.code)) setUnusable(true);
-      // 5xx: 정본 문구 없음 — 폼 유지, 같은 토큰으로 재시도 가능.
+      const kind = classify(result.status, result.code);
+      if (kind === 'unusable') setUnusable(true);
+      else setError(kind);
     } catch {
-      // 네트워크 오류(I-5): 정본 문구 없음 — 폼 유지, 메모리의 토큰으로 재시도.
+      // 네트워크 오류(I-5): 폼 유지, 메모리의 토큰으로 재시도(G-11).
+      setError('network');
     } finally {
       setPending(false);
     }
   };
 
+  const submit = (e: FormEvent<HTMLFormElement>): void => {
+    e.preventDefault();
+    void attempt();
+  };
+  const retry = () => void attempt();
+
   return (
-    <form onSubmit={(e) => void submit(e)}>
+    <form onSubmit={submit}>
+      <h1>{INVITE_COPY.title}</h1>
+      <p>{INVITE_COPY.intro}</p>
       <label htmlFor={emailId}>이메일</label>
       <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
       <label htmlFor={passwordId}>비밀번호</label>
@@ -94,16 +139,31 @@ export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, display
         type="password"
         autoComplete="new-password"
         required
+        aria-describedby={passwordHintId}
+        aria-invalid={error === 'password' ? true : undefined}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
+      <p id={passwordHintId}>{INVITE_COPY.passwordHint}</p>
       {displayNameLabel !== undefined && (
         <>
           <label htmlFor={displayNameId}>{displayNameLabel}</label>
-          <input id={displayNameId} type="text" autoComplete="nickname" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <input
+            id={displayNameId}
+            type="text"
+            autoComplete="nickname"
+            aria-describedby={displayNameHintId}
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+          <p id={displayNameHintId}>{INVITE_COPY.displayNameHint}</p>
         </>
       )}
-      {limited && <p role="alert">{RATE_LIMITED_TEXT}</p>}
+      {error === 'limited' && <p role="alert">{RATE_LIMITED_TEXT}</p>}
+      {error === 'password' && <p role="alert">{INVITE_COPY.passwordPolicy}</p>}
+      {error === 'invalid' && <p role="alert">{INVITE_COPY.invalidRequest}</p>}
+      {error === 'network' && <ErrorState message={INVITE_COPY.network} onRetry={retry} retryDisabled={pending} />}
+      {error === 'server' && <ErrorState message={INVITE_COPY.server} onRetry={retry} retryDisabled={pending} />}
       <button type="submit" disabled={pending}>수락</button>
     </form>
   );

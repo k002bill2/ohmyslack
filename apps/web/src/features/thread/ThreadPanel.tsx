@@ -1,4 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { COMPOSER_COPY, THREAD_EMPTY_TEXT } from '../../ui/copy.js';
 import { Composer, MessageItem, type DraftStore, type MessageItemData } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
@@ -107,7 +108,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
         <MessageItem message={root} {...actions} />
       </ul>
       {replies.length === 0 ? (
-        <p className="thread-empty">첫 답글</p>
+        <p className="thread-empty">{THREAD_EMPTY_TEXT}</p>
       ) : (
         <ul className="thread-replies">
           {replies.map((r) => (
@@ -117,7 +118,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
       )}
       <Composer
         key={root.id}
-        label="답글"
+        label={COMPOSER_COPY.replyLabel}
+        placeholder={COMPOSER_COPY.replyPlaceholder}
         onSend={onSend}
         {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
       />

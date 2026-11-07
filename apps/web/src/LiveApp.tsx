@@ -5,6 +5,7 @@ import type { SocketLike } from './data/realtime.js';
 import { InviteAccept, LoginForm, parseInviteHash, type InviteAcceptRequest, type InviteResult, type LoginResult } from './features/auth';
 import { AppShell } from './features/layout';
 import { createSessionBus, type SessionBus } from './features/sync';
+import { INVITE_COPY, LOGIN_PATH } from './ui/copy.js';
 
 type Phase =
   | { readonly kind: 'invite' }
@@ -20,13 +21,15 @@ export interface LiveAppProps {
   /** 초대 링크 해시 읽기·제거(기본: `location.hash`, `history.replaceState`). 테스트 주입용. */
   readonly readHash?: () => string;
   readonly clearHash?: () => void;
+  /** 주소를 바꾼다(기본: `history.replaceState`). G-13 「로그인」 링크로 `/login`에 갈 때 쓴다. */
+  readonly replacePath?: (path: string) => void;
 }
 
 /**
- * 표시 이름 입력 라벨 — 정본 문구 없음(auth/index.ts 참조). 서버 계약(`inviteAcceptRequestSchema`)이
- * `display_name`을 필수로 요구하므로 운영 루트는 입력을 렌더해야 한다(Codex r2 P1 배선, REPORT에 기록).
+ * 표시 이름 입력 라벨(G-07). 서버 계약(`inviteAcceptRequestSchema`)이 `display_name`을 필수로 요구하므로
+ * 운영 루트는 입력을 렌더한다(Codex r2 P1 배선).
  */
-const DISPLAY_NAME_LABEL = '표시 이름';
+const DISPLAY_NAME_LABEL = INVITE_COPY.displayNameLabel;
 
 /** 서버 오류 본문 `{ error: { code } }`의 code. 본문이 없거나 형식이 다르면 undefined. */
 async function errorCode(res: Response): Promise<string | undefined> {
@@ -41,13 +44,21 @@ async function errorCode(res: Response): Promise<string | undefined> {
 
 const browserReadHash = () => location.hash;
 const browserClearHash = () => history.replaceState(null, '', location.pathname + location.search);
+const browserReplacePath = (path: string) => history.replaceState(null, '', path);
 
 /**
  * 운영 앱 루트(W-10c): 세션 확인 → 로그인(CMP-19) → HttpDataSource(REST + WS).
  * 세션 종료(401·로그아웃)면 DataSource를 버리고 로그인으로 돌아간다 — 401이면 「세션이 종료되었습니다」(S11).
  * 첫 진입의 세션 확인은 DataSource의 복귀 절차(`GET /api/me`)가 겸한다: 401이면 세션 종료 신호로 로그인 화면.
  */
-export function LiveApp({ fetch, createSource, session: injected, readHash = browserReadHash, clearHash = browserClearHash }: LiveAppProps) {
+export function LiveApp({
+  fetch,
+  createSource,
+  session: injected,
+  readHash = browserReadHash,
+  clearHash = browserClearHash,
+  replacePath = browserReplacePath,
+}: LiveAppProps) {
   const [session] = useState(() => injected ?? createSessionBus());
   // 초대 링크(`#t=<token>`)면 세션 확인 없이 수락 폼부터 — 토큰 자체는 InviteAccept 메모리에만 둔다(D §4-2).
   const [invited] = useState(() => parseInviteHash(readHash()) !== null);
@@ -114,10 +125,23 @@ export function LiveApp({ fetch, createSource, session: injected, readHash = bro
     [fetch],
   );
 
+  // G-13: 「로그인」 링크 — 새로 고침 없이 로그인 화면으로(주소는 `/login`).
+  const goLogin = () => {
+    replacePath(LOGIN_PATH);
+    setPhase({ kind: 'signed-out', sessionEnded: false });
+  };
+
   if (phase.kind === 'signed-in') return <AppShell dataSource={phase.source} />;
   if (phase.kind === 'invite') {
     return (
-      <InviteAccept readHash={readHash} clearHash={clearHash} onAccept={accept} onSuccess={connect} displayNameLabel={DISPLAY_NAME_LABEL} />
+      <InviteAccept
+        readHash={readHash}
+        clearHash={clearHash}
+        onAccept={accept}
+        onSuccess={connect}
+        displayNameLabel={DISPLAY_NAME_LABEL}
+        onGoLogin={goLogin}
+      />
     );
   }
   if (phase.kind === 'checking') return null;

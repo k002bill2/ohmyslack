@@ -53,7 +53,12 @@ describe('FR-CLIENT-03 PWA manifest', () => {
   it('FR-CLIENT-03 manifest가 standalone·start_url·scope와 정본 아이콘 세트를 갖고 일반 웹 접근과 설치 안내가 동작한다', async () => {
     // manifest 필드(TRD §6, 디자인 §9-3)
     expect(manifest).toMatchObject({ start_url: '/', scope: '/', display: 'standalone', lang: 'ko' });
-    expect(manifest.name).toBe('Workspace');
+    // G-17(UI_STATES §9): 임시 앱 이름 「메신저」 — name·short_name·<title>·apple meta.
+    expect(manifest.name).toBe('메신저');
+    expect(manifest.short_name).toBe('메신저');
+    expect(html).toContain('<title>메신저</title>');
+    expect(html).toContain('<meta name="apple-mobile-web-app-title" content="메신저" />');
+    expect(JSON.stringify(manifest) + html).not.toMatch(/Workspace|워크스페이스/);
     expect(manifest.short_name.length).toBeLessThanOrEqual(12);
     for (const name of [manifest.name, manifest.short_name]) expect(name).not.toMatch(/slack/i);
     expect(manifest.background_color).toBe(radixScales.light.slate[0]);
@@ -111,14 +116,25 @@ describe('FR-CLIENT-03 PWA manifest', () => {
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(result.current.mode).not.toBe('prompt');
 
-    // 정본 문구가 없으면 렌더하지 않는다(UI_STATES §8 Q-1). 문구가 주어지면 버튼이 프롬프트를 연다.
+    // G-14·G-15(UI_STATES §9): 기본 문구로 버튼·iOS 안내를 렌더한다. 문구 항목이 없으면 그 분기는 렌더하지 않는다.
     const onInstall = vi.fn();
-    const empty = render(createElement(InstallHint, { mode: 'prompt', onInstall }));
+    const canon = render(createElement(InstallHint, { mode: 'prompt', onInstall }));
+    canon.getByRole('button', { name: '앱으로 설치' }).click();
+    expect(onInstall).toHaveBeenCalledTimes(1);
+    canon.unmount();
+    const canonIos = render(createElement(InstallHint, { mode: 'ios', onInstall }));
+    expect(canonIos.container.textContent).toBe('Safari의 공유 메뉴에서 「홈 화면에 추가」를 누르면 앱처럼 쓸 수 있습니다.');
+    canonIos.unmount();
+    // G-16 macOS 분기는 보류 — 'unsupported'는 렌더 없음.
+    const none = render(createElement(InstallHint, { mode: 'unsupported', onInstall }));
+    expect(none.container.innerHTML).toBe('');
+    none.unmount();
+    const empty = render(createElement(InstallHint, { mode: 'prompt', onInstall, copy: {} }));
     expect(empty.container.innerHTML).toBe('');
     empty.unmount();
     const withCopy = render(createElement(InstallHint, { mode: 'prompt', onInstall, copy: { button: 'B' } }));
     withCopy.getByRole('button', { name: 'B' }).click();
-    expect(onInstall).toHaveBeenCalledTimes(1);
+    expect(onInstall).toHaveBeenCalledTimes(2);
     withCopy.unmount();
     const ios = render(createElement(InstallHint, { mode: 'ios', onInstall, copy: { ios: 'I' } }));
     expect(ios.getByText('I')).toBeTruthy();

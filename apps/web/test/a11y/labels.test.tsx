@@ -33,12 +33,13 @@ describe('FR-CLIENT-07 접근성', () => {
     expect(within(nav).getByRole('img', { name: '새 답글 있는 스레드 1개' })).toBeTruthy();
     await user.click(within(nav).getByRole('button', { name: 'general' }));
     expect(within(nav).getByRole('button', { name: 'general' }).getAttribute('aria-current')).toBe('page');
-    expect(screen.getByRole('textbox', { name: 'general' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '#general에 메시지 작성' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '전송' })).toBeTruthy();
     expect(screen.getAllByRole('listitem', { name: '홍길동, 오후 3:12' }).length).toBeGreaterThan(0);
 
     // 전송 실패·연결 상태를 색 외 텍스트로.
-    expect(screen.getByRole('alert').textContent).toContain('전송 실패 · 다시 시도');
+    expect(screen.getByRole('alert').textContent).toContain('전송 실패');
+    expect(screen.getByRole('button', { name: '전송 실패 · 다시 시도' }).textContent).toBe('다시 시도');
     const banner = screen.getByRole('status', { hidden: true });
     expect(banner.textContent).toBe('연결이 끊겼습니다. 지금 보내는 메시지는 저장되지 않습니다. 연결되면 다시 시도하세요.');
     act(() => ds.setConnection('reconnecting'));

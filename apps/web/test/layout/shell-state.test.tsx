@@ -65,7 +65,7 @@ describe('UnreadBadge (CMP-04)', () => {
     const { container } = render(<UnreadBadge count={0} />);
     expect(container.innerHTML).toBe('');
     render(<UnreadBadge count={120} />);
-    expect(screen.getByRole('img', { name: '멘션 120개' }).textContent).toBe('99+');
+    expect(screen.getByRole('img', { name: '멘션 99개 이상' }).textContent).toBe('99+');
   });
 });
 
@@ -78,13 +78,13 @@ describe('ThreadPanel Codex 지적 반영', () => {
     const { rerender } = render(
       <ThreadPanel variant="medium" root={root} replies={[]} onClose={() => (closed += 1)} onSend={() => undefined} announce={() => undefined} />,
     );
-    const box = screen.getByRole('textbox', { name: '답글' });
+    const box = screen.getByRole('textbox', { name: '답글 작성' });
     fireEvent.keyDown(box, { key: 'Escape', keyCode: 229 });
     expect(closed).toBe(0);
     fireEvent.change(box, { target: { value: 'A 초안' } });
     rerender(
       <ThreadPanel variant="medium" root={{ ...root, id: 'm2' }} replies={[]} onClose={() => (closed += 1)} onSend={() => undefined} announce={() => undefined} />,
     );
-    expect((screen.getByRole('textbox', { name: '답글' }) as HTMLTextAreaElement).value).toBe('');
+    expect((screen.getByRole('textbox', { name: '답글 작성' }) as HTMLTextAreaElement).value).toBe('');
   });
 });

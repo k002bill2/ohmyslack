@@ -7,6 +7,8 @@ export type SendStatus = 'sending' | 'confirmed' | 'unknown' | 'failed';
 
 /** 실패 종류: 다시 시도 가능 / 400(상한·빈 본문)·409 → 「다시 작성」(새 client_message_id). */
 export type FailureKind = 'retryable' | 'rewrite';
+/** 「다시 작성」 사유(G-20): 400 입력 불가 / 409 `idempotency_conflict`. */
+export type RewriteReason = 'invalid' | 'conflict';
 
 export interface PendingMessage {
   readonly conversationId: string;
@@ -15,6 +17,7 @@ export interface PendingMessage {
   readonly body: string;
   readonly status: SendStatus;
   readonly failure?: FailureKind | undefined;
+  readonly rewriteReason?: RewriteReason | undefined;
   /** 「전송 중」에 대응 키가 같은 `message.created`를 받았다는 표식(전이 6). */
   readonly serverEventSeen: boolean;
   readonly messageId?: string;
@@ -71,7 +74,10 @@ export function transition(item: PendingMessage, event: SendEvent): PendingMessa
         ? { ...item, status: 'confirmed', failure: undefined, messageId: event.messageId }
         : item;
     case 'http-error':
-      return item.status === 'sending' ? { ...item, status: 'failed', failure: failureFor(event.status) } : item;
+      if (item.status !== 'sending') return item;
+      return failureFor(event.status) === 'rewrite'
+        ? { ...item, status: 'failed', failure: 'rewrite', rewriteReason: event.status === 409 ? 'conflict' : 'invalid' }
+        : { ...item, status: 'failed', failure: 'retryable' };
     case 'network-error':
       if (item.status !== 'sending') return item;
       return item.serverEventSeen ? { ...item, status: 'confirmed' } : { ...item, status: 'unknown' };

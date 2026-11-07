@@ -21,7 +21,7 @@ async function openMediumThread() {
     trigger,
     dialog,
     close: within(dialog).getByRole('button', { name: '닫기' }),
-    textbox: within(dialog).getByRole('textbox', { name: '답글' }),
+    textbox: within(dialog).getByRole('textbox', { name: '답글 작성' }),
   };
 }
 

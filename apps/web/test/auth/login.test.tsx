@@ -5,7 +5,16 @@ import { LoginForm, type LoginResult } from '../../src/features/auth/index.js';
 
 afterEach(cleanup);
 
-const ALLOWED = ['이메일', '비밀번호', '로그인', '세션이 종료되었습니다. 다시 로그인해 주세요.', '잠시 후 다시 시도해 주세요'];
+// UI_STATES §9 채택(COPY_GAPS G-01–G-05) 정본 문구를 허용 목록에 추가했다.
+const CREDENTIALS = '로그인할 수 없습니다. 이메일과 비밀번호를 확인해 주세요.';
+const NETWORK = '서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.';
+const SERVER = '서버에 문제가 생겨 로그인하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+const INVALID = '입력 형식을 처리할 수 없습니다. 이메일 주소를 확인해 주세요.';
+const INTRO = '초대받은 계정의 이메일과 비밀번호를 입력해 주세요.';
+const ALLOWED = [
+  '이메일', '비밀번호', '로그인', '세션이 종료되었습니다. 다시 로그인해 주세요.', '잠시 후 다시 시도해 주세요',
+  INTRO, CREDENTIALS, NETWORK, SERVER, INVALID, '다시 시도',
+];
 const EMAIL = 'a@b.c';
 const PASS_INPUT = 'p1';
 
@@ -43,11 +52,12 @@ describe('CMP-19 LoginForm', () => {
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
-  it('자격 증명 오류(401)는 정본 문구가 없으므로 텍스트를 만들지 않고 폼을 유지한다', async () => {
+  it.each([401, 403, 404])('G-01 자격 증명 오류(%i)는 원인을 구분하지 않는 문구를 role=alert로 보이고 폼을 유지한다', async (status) => {
     const user = userEvent.setup();
-    const { container } = render(<LoginForm onLogin={async () => ({ ok: false, status: 401 })} onSuccess={() => {}} />);
+    const { container } = render(<LoginForm onLogin={async () => ({ ok: false, status })} onSuccess={() => {}} />);
     await fill(user);
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('alert').textContent).toBe(CREDENTIALS);
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull();
     expect(stripAllowed(container.textContent ?? '')).toBe('');
     expect(submitButton().disabled).toBe(false);
   });
@@ -59,9 +69,10 @@ describe('CMP-19 LoginForm', () => {
     const user = userEvent.setup();
     render(<LoginForm onLogin={onLogin} onSuccess={() => {}} />);
     await fill(user);
-    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('잠시 후 다시 시도해 주세요');
     await user.click(submitButton());
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('잠시 후 다시 시도해 주세요')).toBeNull();
+    expect(screen.getByRole('alert').textContent).toBe(CREDENTIALS);
   });
 
   it('네트워크 오류(throw)에도 폼을 유지하고 다시 제출할 수 있다', async () => {
@@ -104,5 +115,39 @@ describe('CMP-19 LoginForm', () => {
   it('정본 문구 외 텍스트를 렌더하지 않는다', () => {
     const { container } = render(<LoginForm sessionEnded onLogin={async () => ({ ok: true })} onSuccess={() => {}} />);
     expect(stripAllowed(container.textContent ?? '')).toBe('');
+  });
+});
+
+describe('CMP-19 LoginForm 문구(COPY_GAPS G-02–G-05)', () => {
+  it('G-05 제목 h1 「로그인」과 안내문을 보인다', () => {
+    render(<LoginForm onLogin={async () => ({ ok: true })} onSuccess={() => {}} />);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('로그인');
+    expect(screen.getByText(INTRO)).toBeTruthy();
+  });
+
+  it('G-04 400은 입력 형식 안내만 보이고 「다시 시도」 버튼은 없다', async () => {
+    const user = userEvent.setup();
+    render(<LoginForm onLogin={async () => ({ ok: false, status: 400 })} onSuccess={() => {}} />);
+    await fill(user);
+    expect(screen.getByRole('alert').textContent).toBe(INVALID);
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull();
+  });
+
+  it.each([
+    ['G-02 네트워크 오류', NETWORK, () => Promise.reject(new Error('net'))],
+    ['G-03 5xx', SERVER, () => Promise.resolve({ ok: false, status: 503 } as LoginResult)],
+  ] as const)('%s는 ErrorState 문구 + 「다시 시도」로 같은 입력을 다시 보낸다', async (_name, text, first) => {
+    const onLogin = vi.fn<(e: string, p: string) => Promise<LoginResult>>()
+      .mockImplementationOnce(first)
+      .mockResolvedValueOnce({ ok: true });
+    const onSuccess = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(<LoginForm onLogin={onLogin} onSuccess={onSuccess} />);
+    await fill(user);
+    expect(screen.getByRole('alert').textContent).toBe(`${text}다시 시도`);
+    expect(stripAllowed(container.textContent ?? '')).toBe('');
+    await user.click(screen.getByRole('button', { name: '다시 시도' }));
+    expect(onLogin).toHaveBeenNthCalledWith(2, EMAIL, PASS_INPUT);
+    expect(onSuccess).toHaveBeenCalledTimes(1);
   });
 });
