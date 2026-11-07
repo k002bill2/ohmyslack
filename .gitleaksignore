@@ -1,0 +1,2 @@
+# RFC 6455 §1.3 public example Sec-WebSocket-Key (base64 of "the sample nonce"), not a secret
+edcce8ab356c0a32441d75d3f89063dc6dbed0c2:apps/server/test/realtime/upgrade-reject.int.test.ts:generic-api-key:69
