@@ -57,6 +57,11 @@ export interface Snapshot {
   readonly connection: ConnectionState;
   readonly account?: Account;
   readonly listState?: ListState;
+  /**
+   * 현재 연 대화 중 이력(`open` → 원문 조회) 요청이 끝난 대화 id. 조회 중·미개방이면 null.
+   * 이력 조회가 없는 구현(메모리)은 생략한다 — 생략은 「항상 로드됨」으로 본다(W-11d 구분선 고정 시점, Codex r2 P2).
+   */
+  readonly loadedHistory?: string | null;
 }
 
 /** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */

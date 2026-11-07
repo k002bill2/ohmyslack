@@ -5,7 +5,8 @@
 
 export type Inline =
   | { readonly kind: 'text'; readonly text: string }
-  | { readonly kind: 'link'; readonly text: string; readonly href: string };
+  | { readonly kind: 'link'; readonly text: string; readonly href: string }
+  | { readonly kind: 'mention'; readonly text: string };
 
 export type Line = readonly Inline[];
 
@@ -114,8 +115,14 @@ function nextFenceIndex(lines: readonly string[]): readonly number[] {
   return next;
 }
 
-/** 본문을 문단·코드 블록으로 나눈다. 닫히지 않은 fence는 일반 텍스트로 둔다. */
-export function parseBody(body: string): readonly Block[] {
+/** 본문을 문단·코드 블록으로 나눈다. 닫히지 않은 fence는 일반 텍스트로 둔다. mentionNames가 있으면 text 인라인의 `@이름`을 mention으로 나눈다. */
+export function parseBody(body: string, mentionNames?: readonly string[]): readonly Block[] {
+  const blocks = parseBlocks(body);
+  const index = mentionIndex(mentionNames ?? []);
+  return index.size === 0 ? blocks : blocks.map((block) => withMentions(block, index));
+}
+
+function parseBlocks(body: string): readonly Block[] {
   const lines = body.replace(/\r\n?/g, '\n').split('\n');
   const next = nextFenceIndex(lines);
   const blocks: Block[] = [];
@@ -136,4 +143,77 @@ export function parseBody(body: string): readonly Block[] {
   }
   if (text.length > 0) blocks.push(paragraph(text));
   return blocks;
+}
+
+/**
+ * `@이름` 멘션 토큰(디자인 01/05). 클라이언트 Message에는 mention_user_ids가 없어 알려진 멤버 표시 이름으로만 맞춘다.
+ * 경계: `@` 앞은 줄(인라인) 시작 또는 공백, 이름 뒤는 끝·공백·문장부호(문자·숫자·`_`가 아님). 대소문자 구분 정확 일치, 가장 긴 이름 우선.
+ * 그래서 `@홍길동님`은 뒤가 글자라 멘션이 아니다(조사 붙은 경우를 놓치는 쪽을 택해 `@김철`/`@김철수` 오인을 막는다).
+ * F-1: `@` 위치만 indexOf로 훑고 첫 글자별 후보(길이 내림차순)만 검사하므로 본문 길이에 선형이다.
+ */
+type MentionIndex = ReadonlyMap<string, readonly string[]>;
+
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+const SPACE = /\s/;
+
+function mentionIndex(names: readonly string[]): MentionIndex {
+  const sorted = [...new Set(names)].filter((name) => name !== '').sort((a, b) => b.length - a.length);
+  const index = new Map<string, string[]>();
+  for (const name of sorted) {
+    const key = name.charAt(0);
+    index.set(key, [...(index.get(key) ?? []), name]);
+  }
+  return index;
+}
+
+function matchAt(text: string, at: number, index: MentionIndex): string | undefined {
+  const start = at + 1;
+  for (const name of index.get(text.charAt(start)) ?? []) {
+    if (!text.startsWith(name, start)) continue;
+    const next = text.codePointAt(start + name.length);
+    if (next === undefined || !WORD_CHAR.test(String.fromCodePoint(next))) return name;
+  }
+  return undefined;
+}
+
+/** text 하나를 text/mention 인라인으로 나눈다. lineStart는 이 text가 줄의 첫 인라인인지(링크 바로 뒤 `@`는 경계가 아니다). */
+function splitMentions(text: string, lineStart: boolean, index: MentionIndex): readonly Inline[] {
+  const out: Inline[] = [];
+  let last = 0;
+  let at = text.indexOf('@');
+  while (at !== -1) {
+    const bounded = at === 0 ? lineStart : SPACE.test(text.charAt(at - 1));
+    const name = bounded ? matchAt(text, at, index) : undefined;
+    if (name === undefined) {
+      at = text.indexOf('@', at + 1);
+      continue;
+    }
+    if (at > last) out.push({ kind: 'text', text: text.slice(last, at) });
+    out.push({ kind: 'mention', text: `@${name}` });
+    last = at + 1 + name.length;
+    at = text.indexOf('@', last);
+  }
+  if (last === 0) return [{ kind: 'text', text }];
+  if (last < text.length) out.push({ kind: 'text', text: text.slice(last) });
+  return out;
+}
+
+function withMentions(block: Block, index: MentionIndex): Block {
+  if (block.kind === 'code') return block;
+  const lines = block.lines.map((line) =>
+    line.flatMap((part, i) => (part.kind === 'text' ? splitMentions(part.text, i === 0, index) : [part])),
+  );
+  return { kind: 'paragraph', lines };
+}
+
+/** 본문이 `@name`을 멘션하는지(parseBody와 같은 경계 규칙, 코드 블록·링크 안은 제외). "나를 멘션" 계산용. */
+export function bodyMentionsName(body: string, name: string, allNames: readonly string[] = []): boolean {
+  const target = `@${name}`;
+  // 본문 렌더와 같은 후보 전체로 토큰화 — `@Ann Smith`를 `@Ann`으로 오판하지 않게(최장 일치, Codex r3 P2).
+  const names = allNames.includes(name) ? allNames : [...allNames, name];
+  return parseBody(body, names).some(
+    (block) =>
+      block.kind === 'paragraph' &&
+      block.lines.some((line) => line.some((part) => part.kind === 'mention' && part.text === target)),
+  );
 }

@@ -34,7 +34,11 @@ export function useInstallPrompt(): { readonly mode: InstallMode; readonly insta
     setDeferred(null);
     await deferred.prompt();
   }, [deferred]);
-  const mode = detectInstallMode({ standalone: isStandalone(), canPrompt: deferred !== null, userAgent: navigator.userAgent });
+  const canPrompt = deferred !== null;
+  const userAgent = navigator.userAgent;
+  // 보여 줄 분기(prompt·ios)가 없으면 standalone 판정(matchMedia)이 필요 없다 — 공간 목록마다 쿼리를 만들지 않는다(W-11d).
+  const visible = canPrompt || detectInstallMode({ standalone: false, canPrompt, userAgent }) === 'ios';
+  const mode = visible ? detectInstallMode({ standalone: isStandalone(), canPrompt, userAgent }) : 'unsupported';
   return { mode, install };
 }
 

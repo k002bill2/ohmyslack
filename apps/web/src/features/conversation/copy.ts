@@ -10,4 +10,6 @@ export const CONVERSATION_DESIGN_COPY = {
   /** UI_STATES §2-4 CMP-10. */
   today: '오늘',
   yesterday: '어제',
+  /** 시안 08 / UI_STATES §3 메시지 액션 — compact 액션 시트 제목·접근성 대체 버튼. */
+  messageActions: '메시지 작업',
 } as const;

@@ -5,15 +5,23 @@ import { parseBody, type Block, type Line } from './render.js';
 function LineView({ line }: { readonly line: Line }) {
   return (
     <>
-      {line.map((part, i) =>
-        part.kind === 'link' ? (
-          <a key={i} href={part.href} target="_blank" rel="noopener noreferrer">
-            {part.text}
-          </a>
-        ) : (
-          <Fragment key={i}>{part.text}</Fragment>
-        ),
-      )}
+      {line.map((part, i) => {
+        if (part.kind === 'link') {
+          return (
+            <a key={i} href={part.href} target="_blank" rel="noopener noreferrer">
+              {part.text}
+            </a>
+          );
+        }
+        if (part.kind === 'mention') {
+          return (
+            <span key={i} className="msg-mention">
+              {part.text}
+            </span>
+          );
+        }
+        return <Fragment key={i}>{part.text}</Fragment>;
+      })}
     </>
   );
 }
@@ -39,8 +47,8 @@ function BlockView({ block }: { readonly block: Block }) {
 }
 
 /** 본문이 같으면 다시 파싱하지 않는다(F-1: store 이벤트마다 보이는 모든 메시지를 재파싱하지 않게). */
-export function MessageBody({ body }: { readonly body: string }) {
-  const blocks = useMemo(() => parseBody(body), [body]);
+export function MessageBody({ body, mentionNames }: { readonly body: string; readonly mentionNames?: readonly string[] }) {
+  const blocks = useMemo(() => parseBody(body, mentionNames), [body, mentionNames]);
   return (
     <div className="msg-body">
       {blocks.map((block, i) => (

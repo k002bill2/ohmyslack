@@ -1,0 +1,25 @@
+/* 시안 04 설치 안내 카드: compact 공간 목록 위. 색·간격·반경은 기존 토큰만. */
+.install-card {
+  padding: var(--space-3) var(--space-4) 0;
+  background: var(--bg-elevated);
+}
+.install-card > .install-hint {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+}
+.install-card > button.install-hint {
+  min-height: 44px;
+  color: var(--accent-text);
+  font-weight: 600;
+  cursor: pointer;
+}

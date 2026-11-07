@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, MessageItem, createDraftStore, lastServerSeq, type DraftStore, type MessageItemProps } from '../conversation';
+import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
+import { InstallCard, useInstallPrompt } from '../pwa';
 import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
+import { startsNewDay, useNewMessagesSeq } from './message-dividers.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
@@ -59,6 +61,25 @@ function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
 }
 
+/** 메시지 객체(불변)별 판정 캐시 — 렌더마다 모든 본문을 다시 파싱하지 않게(F-1). */
+const mentionCache = new WeakMap<MessageItemData, { readonly name: string; readonly names: readonly string[] | undefined; readonly hit: boolean }>();
+
+/**
+ * 「나를 멘션」 판정: 클라이언트 모델에 mention_user_ids가 없어(data 계층은 이 레인 밖) 본문의 `@내 이름` 토큰으로 본다(W-11d REPORT).
+ */
+function mentionsName(m: MessageItemData, name: string, names: readonly string[] | undefined): boolean {
+  const cached = mentionCache.get(m);
+  if (cached?.name === name && cached.names === names) return cached.hit;
+  const hit = bodyMentionsName(m.body, name, names);
+  mentionCache.set(m, { name, names, hit });
+  return hit;
+}
+
+/** 「나를 멘션」(MessageItem `mentionsSelf`): 삭제·내가 쓴 메시지는 아니다. 본문 목록과 스레드가 같은 규칙(Codex r2 P2). */
+function mentionsSelfOf(m: MessageItemData, selfName: string | undefined, selfId: string | undefined, names: readonly string[] | undefined): boolean {
+  return selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName, names);
+}
+
 /** CMP-05 ConversationHeader(골격) + CMP-06 MessageList + CMP-11 Composer. */
 function ConversationPane(props: {
   readonly space: Space;
@@ -78,8 +99,20 @@ function ConversationPane(props: {
   readonly onSeen?: (seq: number) => void;
   /** wide에서 스레드가 열려 있으면 헤더 오른쪽 패널 토글(시안 01)로 닫는다. */
   readonly onCloseThread?: () => void;
+  /** catch-up 중 — 「여기부터 새 메시지」 위치 계산 보류(UI_STATES §2-4). */
+  readonly holding: boolean;
+  /** 이 대화의 이력 조회가 끝났는가 — 끝난 뒤에 구분선 위치를 고정한다(Codex r2 P2). */
+  readonly historyReady: boolean;
+  /** 본문 `@이름` 토큰 근거(대화 멤버 이름)와 내 표시 이름(「나를 멘션」 판정). */
+  readonly mentionNames?: readonly string[];
+  readonly selfName?: string;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
+  const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
+  const { mentionNames, selfName } = props;
+  const selfId = props.itemActions?.selfId;
+  const mentionsSelf = (m: Message) => mentionsSelfOf(m, selfName, selfId, mentionNames);
+  const memberCount = space.kind === 'channel' ? (membership?.mentions?.candidates.length ?? 0) : 0;
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
   const onPinScroll = usePinBottom(list, space.id);
@@ -104,7 +137,9 @@ function ConversationPane(props: {
         )}
         <div className="conversation-heading">
           <h1 className="conversation-title">{spaceTitle(space)}</h1>
-          <span className="conversation-meta">{SHELL_COPY.kind[space.kind]}</span>
+          <span className="conversation-meta">
+            {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
+          </span>
         </div>
         {membership && space.kind === 'channel' && !left && membership.onLeave && <LeaveChannelControl onLeave={membership.onLeave} />}
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
@@ -127,17 +162,22 @@ function ConversationPane(props: {
         <p className="message-empty">첫 메시지를 남겨 보세요</p>
       ) : (
         <ul ref={list} className="message-list" onScroll={onListScroll}>
-          {roots.map((m) => (
-            <MessageItem
-              key={m.id}
-              message={m}
-              onReply={props.onReply}
-              onRetry={props.onRetry}
-              onDiscard={props.onDiscard}
-              {...props.itemActions}
-              threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
-              timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
-            />
+          {roots.map((m, i) => (
+            <Fragment key={m.id}>
+              {startsNewDay(roots, i) && <DateSeparator at={m.createdAt} />}
+              {newSeq !== null && m.seq === newSeq && <NewMessagesDivider />}
+              <MessageItem
+                message={m}
+                onReply={props.onReply}
+                onRetry={props.onRetry}
+                onDiscard={props.onDiscard}
+                {...props.itemActions}
+                threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
+                timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
+                mentionsSelf={mentionsSelf(m)}
+                {...(mentionNames === undefined ? {} : { mentionNames })}
+              />
+            </Fragment>
           ))}
         </ul>
       )}
@@ -168,6 +208,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const [drafts] = useState(() => injectedDrafts ?? createDraftStore());
   const snap = useSyncExternalStore(dataSource.subscribe, dataSource.getSnapshot, dataSource.getSnapshot);
   const viewport = useViewport();
+  // 설치 프롬프트는 셸이 계속 붙잡는다 — 카드가 목록 화면에서만 마운트돼도 이벤트를 놓치지 않게(Codex r1 P2).
+  const installPrompt = useInstallPrompt();
   const [state, dispatch] = useReducer(shellReducer, history, initialFrom);
   const [panel, setPanelState] = useState<PanelKind | null>(() => panelFrom(history));
   const [members, setMembers] = useState(() => membersFrom(history));
@@ -202,7 +244,9 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       const id = CSS.escape(prev);
       const target =
         shell.current?.querySelector<HTMLElement>(`[data-reply-for="${id}"]`) ??
-        shell.current?.querySelector<HTMLElement>(`[data-thread-summary-for="${id}"]`);
+        shell.current?.querySelector<HTMLElement>(`[data-thread-summary-for="${id}"]`) ??
+        // compact는 인라인 「답글」이 없다(시안 08 액션 시트) — 원문 항목 자체로(W-11d).
+        shell.current?.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
       target?.focus();
     }
   }, [state.threadRootId]);
@@ -315,6 +359,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     });
   };
   const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true);
+  // 로딩 중 훅이 매번 새 []를 돌려줘도 같은 undefined가 되게 — memo(MessageItem)·MessageBody useMemo를 깨지 않는다.
+  const mentionNames = useMemo(
+    () => (mentionCandidates === undefined || mentionCandidates.length === 0 ? undefined : mentionCandidates.map((c) => c.displayName)),
+    [mentionCandidates],
+  );
   const membership: MembershipProps | undefined =
     space === undefined || !dataSource.joinChannel
       ? undefined
@@ -391,6 +440,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(membership === undefined ? {} : { membership })}
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
+      holding={snap.connection === 'catching-up'}
+      historyReady={snap.loadedHistory === undefined || snap.loadedHistory === space.id}
+      {...(mentionNames === undefined ? {} : { mentionNames })}
+      {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
   );
   const thread = threadOpen && space && root && (
@@ -406,9 +459,18 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onDiscard={discard}
       messageActions={messageActions}
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
+      spaceTitle={spaceTitle(space)}
+      {...(mentionNames === undefined ? {} : { mentionNames })}
+      mentionsSelf={(m) => mentionsSelfOf(m, snap.account?.displayName, snap.account?.id, mentionNames)}
     />
   );
-  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || sidebar;
+  // 시안 04: compact 공간 목록 위 설치 안내 카드(standalone·미지원이면 InstallCard가 렌더하지 않음).
+  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || (
+    <>
+      <InstallCard mode={installPrompt.mode} onInstall={() => void installPrompt.install()} />
+      {sidebar}
+    </>
+  );
 
   return (
     <div

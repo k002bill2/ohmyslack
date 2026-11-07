@@ -111,7 +111,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const storage = deps.storage === undefined ? undefined : deps.storage;
   const isOnline = deps.isOnline ?? (() => navigator.onLine);
   const listeners = new Set<() => void>();
-  let snapshot: Snapshot = Object.freeze({ spaces: [], messages: [], connection: 'catching-up' as ConnectionState });
+  let snapshot: Snapshot = Object.freeze({ spaces: [], messages: [], connection: 'catching-up' as ConnectionState, loadedHistory: null });
   let fold: FoldState = emptyFold;
   let spaces: readonly Space[] = [];
   let summaries: readonly Summary[] = [];
@@ -167,6 +167,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let stopped = false;
   /** 답글 이력을 끝까지(has_more=false) 받은 root — 누락 없는 로드 전에는 스레드 읽음을 보내지 않는다(PRD §7-7, Codex r2 P2). */
   let repliesLoaded: ReadonlySet<string> = new Set();
+  /** 현재 대화의 이력 조회가 끝났으면 그 id(Snapshot.loadedHistory). */
+  let loadedHistory: string | null = null;
   let readFailures = 0;
   /** 오래된 목록 때문에 보류한 스레드 위치 — 목록 재조회 뒤 다시 평가한다(Codex r1 P2-1). */
   let deferredThreadReads: ReadonlyMap<string, { readonly conversationId: string; readonly rootId: string; readonly seq: number }> = new Map();
@@ -266,6 +268,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       messages: [...orderedMessages(fold), ...shown],
       connection,
       listState,
+      loadedHistory,
       ...(account === undefined ? {} : { account }),
     });
     listeners.forEach((l) => l());
@@ -295,6 +298,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     readSent = new Map();
     deferredThreadReads = new Map();
     repliesLoaded = new Set();
+    loadedHistory = null;
     readFailures = 0;
     background = new Set();
     if (readTimer !== null) clearTimer(readTimer);
@@ -772,10 +776,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       );
       if (ended) return;
       for (const m of res.messages) fold = foldView(0, m);
-      emit();
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
     }
+    if (ended) return;
+    // 실패해도 「끝남」으로 알린다 — 화면은 가진 원문으로 계산한다. 그새 다른 대화로 옮겼으면 표시하지 않는다.
+    if (current === conversationId) loadedHistory = conversationId;
+    emit();
   };
 
   /** 스레드 기존 답글: `after_seq`로 오름차순 페이지를 끝까지 읽는다(TRD §3 replies, Codex r2 P1). */
@@ -922,6 +929,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       deferredThreadReads = new Map();
       repliesLoaded = new Set();
       readFailures = 0;
+      loadedHistory = null;
       // 배경 구독 중이었어도 현재 대화는 기존 절차(ACK 구독)로 다시 구독한다(BRIEF ★2 현재 대화 절차 불변).
       if (current !== null && background.has(current)) background = new Set([...background].filter((b) => b !== current));
       if (current === null || conversationId === null) return;

@@ -23,6 +23,10 @@ export interface ThreadPanelProps {
   readonly onSeen?: (seq: number) => void;
   /** 헤더 보조 줄 「채널 · 답글 n」의 채널 이름(시안 01·06). 없으면 「답글 n」만. */
   readonly spaceTitle?: string;
+  /** 본문 `@이름` 토큰 근거(대화 멤버 이름) — 대화 목록과 같은 소스(Codex r2 P2). */
+  readonly mentionNames?: readonly string[];
+  /** 「나를 멘션」 판정 — 대화 목록과 같은 규칙. */
+  readonly mentionsSelf?: (message: MessageItemData) => boolean;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -61,9 +65,16 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
-  const actions = { timePlacement, ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }), ...messageActions };
+  const actions = {
+    timePlacement,
+    ...(onRetry === undefined ? {} : { onRetry }),
+    ...(onDiscard === undefined ? {} : { onDiscard }),
+    ...(mentionNames === undefined ? {} : { mentionNames }),
+    ...messageActions,
+  };
+  const selfMention = (m: MessageItemData) => mentionsSelf?.(m) === true;
   const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
   const lastReply = lastServerSeq(replies);
@@ -133,14 +144,14 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
       </div>
       <ul className="thread-root">
         {/* 원문이 바뀌면 다시 마운트 — 편집·삭제 확인 상태가 다른 메시지로 이어지지 않게(Codex r1 P1). */}
-        <MessageItem key={root.id} message={root} {...actions} />
+        <MessageItem key={root.id} message={root} {...actions} mentionsSelf={selfMention(root)} />
       </ul>
       {replies.length === 0 ? (
         <p className="thread-empty">{THREAD_EMPTY_TEXT}</p>
       ) : (
         <ul className="thread-replies">
           {replies.map((r) => (
-            <MessageItem key={r.id} message={r} {...actions} />
+            <MessageItem key={r.id} message={r} {...actions} mentionsSelf={selfMention(r)} />
           ))}
         </ul>
       )}
