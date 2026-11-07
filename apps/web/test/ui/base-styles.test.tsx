@@ -131,3 +131,13 @@ describe('auth.css 오류 알림 면(시안 03 showError, W-11c)', () => {
     expect(contrast(c['--danger-text']?.value ?? '', surface)).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+describe('auth.css 오류 아이콘 1개(Codex r1 P2)', () => {
+  it('「!」 ::before는 직접 렌더한 p[role=alert]와 ErrorState 안 p에만 — ErrorState 루트(div[role=alert])에는 없다', () => {
+    const css = src('features/auth/auth.css');
+    const selectors = [...css.matchAll(/([^{}]+)\{[^}]*content: '!'/g)].map((m) => m[1] ?? '').join(' ');
+    expect(selectors).toContain(".auth-card > p[role='alert']::before");
+    expect(selectors).toContain('.auth-card .error-state > p::before');
+    expect(selectors).not.toMatch(/\.auth-card > \[role='alert'\]::before/);
+  });
+});

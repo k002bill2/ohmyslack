@@ -119,7 +119,7 @@
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--danger-solid) 8%, var(--bg-app));
 }
-.auth-card > [role='alert']::before,
+.auth-card > p[role='alert']::before,
 .auth-card .error-state > p::before {
   content: '!';
   display: inline-flex;
