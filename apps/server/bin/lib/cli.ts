@@ -18,7 +18,8 @@ export const EXIT_USAGE = 2;
 /** 거부 사유 코드. 메시지는 고정 문구라 입력값을 담지 않는다. */
 export class CliRefusal extends Error {
   override readonly name = 'CliRefusal';
-  constructor(readonly code: string, message: string) {
+  /** 입력 형식 오류(사람이 다시 입력해야 함)면 EXIT_USAGE. 'usage' 코드는 항상 EXIT_USAGE. */
+  constructor(readonly code: string, message: string, readonly usageError = false) {
     super(message);
   }
 }
@@ -81,7 +82,7 @@ export async function runCommand(io: CliIo, label: string, body: () => Promise<s
   } catch (error) {
     if (error instanceof CliRefusal) {
       io.stderr.write(`${label} 실패(${error.code}): ${error.message}. 변경 없음.\n`);
-      return error.code === 'usage' ? EXIT_USAGE : EXIT_REFUSED;
+      return error.code === 'usage' || error.usageError ? EXIT_USAGE : EXIT_REFUSED;
     }
     io.stderr.write(`${label} 실패(db ${sqlState(error) ?? 'unknown'}). 변경 없음.\n`);
     return EXIT_REFUSED;
