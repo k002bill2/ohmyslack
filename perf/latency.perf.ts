@@ -23,6 +23,8 @@ const DEVICES = 2;
 const RATE = Number(process.env['PERF_RATE'] ?? '5');
 const DURATION_S = Number(process.env['PERF_DURATION_S'] ?? '600');
 const DRAIN_MS = 3000;
+/** (b) 측정용: 0보다 크면 관측 계정·서버 주소·채널을 출력하고 이 초만큼 기다린 뒤 부하를 시작한다. */
+const OBSERVER_WAIT_S = Number(process.env['PERF_OBSERVER_WAIT_S'] ?? '0');
 const VERDICT_NOTE = 'FR-SYNC-01 판정은 (b) 표시 지연 p95 ≤ 1000ms다. 이 (a) 프로토콜 지연은 보조 증거이며 (a)만으로 통과를 주장하지 않는다.';
 
 interface Conn {
@@ -86,6 +88,16 @@ async function connect(c: E2eContext): Promise<void> {
     await ws.subscribed(channel);
     conns.push({ ...s, ws });
   }
+}
+
+/** (b) 관측 브라우저용 21번째 계정을 채널에 넣고 접속 정보를 콘솔에만 출력한 뒤 준비 시간을 준다(디스크 기록 없음). */
+async function awaitObserver(c: E2eContext): Promise<void> {
+  if (!(OBSERVER_WAIT_S > 0)) return;
+  const email = 'observer@example.test';
+  await addUser(c.schema, email, 'member');
+  await http(c, 'POST', `/api/conversations/${channel}/join`, await signIn(c.app, email));
+  console.info(`관측 준비: 서버 ${c.baseUrl} · 계정 ${email}(테스트 비밀번호 SECRET) · 채널 ${channel} · ${OBSERVER_WAIT_S}s 후 부하 시작`);
+  await sleep(OBSERVER_WAIT_S * 1000);
 }
 
 /** 서버 전체에서 대기 중(미허가) 잠금 수. R-08(sync_clock 단일 행 경합) 관찰용 표본. */
@@ -171,7 +183,7 @@ function sh(cmd: string, args: readonly string[]): string {
 }
 
 async function environment(c: E2eContext): Promise<Record<string, unknown>> {
-  const pg = await c.schema.pool.query<{ v: string }>('SHOW server_version');
+  const pg = await c.schema.pool.query<{ v: string }>("SELECT current_setting('server_version') AS v");
   const cpu = cpus();
   return {
     node: process.version,
@@ -195,7 +207,8 @@ beforeAll(async () => {
   ctx = await setupE2e();
   env = await environment(ctx);
   await connect(ctx);
-}, 120_000);
+  await awaitObserver(ctx);
+}, 120_000 + OBSERVER_WAIT_S * 1000);
 
 afterAll(async () => {
   for (const c of conns) await c.ws.close();
