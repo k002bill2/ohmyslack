@@ -216,3 +216,94 @@ describe('check-fr-coverage regressions (Codex round 2)', () => {
     expect(res.code).toBe(0);
   });
 });
+
+describe('check-fr-coverage regressions (Codex round 3)', () => {
+  const FILE = 'apps/server/test/a.int.test.ts';
+
+  async function progressWith(src: string): Promise<{ code: number; text: string }> {
+    const root = build({ sources: { [FILE]: src } });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, FILE, [N1])));
+    return exec(root, '--mode=progress');
+  }
+
+  it('ignores a commented-out declaration next to a real one', async () => {
+    const res = await progressWith(`// it('${N1}', () => {});\n/* test('${N1}', () => {}); */\nit('${N1}', () => {});`);
+    expect(res.text).not.toContain('곳에 있음');
+    expect(res.code).toBe(0);
+  });
+
+  it('still fails on two real declarations', async () => {
+    const res = await progressWith(`it('${N1}', () => {});\ntest(\`${N1}\`, () => {});`);
+    expect(res.text).toContain('2곳에 있음');
+    expect(res.code).toBe(1);
+  });
+
+  it('does not count a name inside a template-string fixture', async () => {
+    const res = await progressWith(`const src = \`it('${N1}', () => {});\`;\nit('${N1}', () => {});`);
+    expect(res.text).not.toContain('곳에 있음');
+    expect(res.code).toBe(0);
+  });
+
+  it('records modifiers of each/skip variants via the AST', async () => {
+    const res = await progressWith(`it.skip.each([1])('${N1}', () => {});`);
+    expect(res.text).toContain('skip 상태');
+    expect(res.code).toBe(1);
+  });
+
+  it('parses .ts files in TS mode so generic arrows do not hide declarations', async () => {
+    const res = await progressWith(`const identity = <T>(value: T): T => value;\nit('${N1}', () => identity(1));`);
+    expect(res.text).toContain('구현 1');
+    expect(res.code).toBe(0);
+  });
+
+  const DRILL = 'tools/restore-drill.sh';
+  const shRows = [
+    defaultRows[0] ?? '',
+    `| FR-TST-02 | \`${N2}\` | 드릴 \`${DRILL}\`(합성) | G1 | — | \`QA-FR-TST-02\`: 대조 |`,
+  ];
+
+  function shFixture(qa: Record<string, string>, withDrill = true): string {
+    const root = build({
+      rows: shRows,
+      sources: { [FILE]: `it('${N1}', () => {});`, [AUX]: `it('aux', () => {});`, ...(withDrill ? { [DRILL]: '#!/bin/sh\n' } : {}) },
+      qa,
+    });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, FILE, [N1])));
+    write(root, 'reports/r1.json', JSON.stringify(report(root, AUX, ['aux'])));
+    return root;
+  }
+
+  const baseQa = { 'QA-FR-TST-01': QA_FIELDS, 'QA-BOOT-01': QA_FIELDS };
+
+  it('gate accepts a non-vitest designated file with existing file and PASS QA', async () => {
+    const res = await exec(shFixture({ ...baseQa, 'QA-FR-TST-02': QA_FIELDS }), '--mode=gate');
+    expect(res.text).not.toContain('실패');
+    expect(res.code).toBe(0);
+  });
+
+  it('gate fails a non-vitest designated file without QA', async () => {
+    const res = await exec(shFixture(baseQa), '--mode=gate');
+    expect(res.text).toContain('QA-FR-TST-02');
+    expect(res.code).toBe(1);
+  });
+
+  it('gate fails a non-vitest designated file that does not exist', async () => {
+    const res = await exec(shFixture({ ...baseQa, 'QA-FR-TST-02': QA_FIELDS }, false), '--mode=gate');
+    expect(res.text).toContain(DRILL);
+    expect(res.code).toBe(1);
+  });
+
+  it('gate fails a non-vitest designated file without a manual QA id', async () => {
+    const rows = [shRows[0] ?? '', `| FR-TST-02 | \`${N2}\` | 드릴 \`${DRILL}\` | G1 | — | — |`];
+    const root = build({ rows, sources: { [DRILL]: '#!/bin/sh\n' } });
+    const res = await exec(root, '--mode=gate');
+    expect(res.text).toContain('FR-TST-02: 수동 증거 지정 없음');
+    expect(res.code).toBe(1);
+  });
+
+  it('progress still reports a non-vitest designated file as 미구현', async () => {
+    const res = await exec(shFixture(baseQa), '--mode=progress');
+    expect(res.text).toContain('  - FR-TST-02');
+    expect(res.code).toBe(0);
+  });
+});
