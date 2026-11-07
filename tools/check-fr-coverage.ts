@@ -111,14 +111,18 @@ function listSources(dir: string): string[] {
   });
 }
 
-/** 이름이 따옴표로 정확히 감싸진 위치마다 직전의 `.skip(`/`.todo(`/`.only(`를 기록한다. */
+/** `it(`/`test(` 선언(수식자 포함)의 제목 위치만 센다. 주석·fixture 문자열은 제외.
+ * 이름이 따옴표로 정확히 감싸진 위치마다 직전의 `.skip(`/`.todo(`/`.only(`를 기록한다. */
+const DECLARATION = /\b(?:it|test)(?:\.(skip|todo|only))?\s*\(\s*$/;
+
 function findOccurrences(text: string, file: string, name: string): Occurrence[] {
   const found: Occurrence[] = [];
   for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
     const open = text[at - 1] ?? '';
     if (!QUOTES.has(open) || text[at + name.length] !== open) continue;
-    const modifier = /\.(skip|todo|only)\s*\(\s*$/.exec(text.slice(Math.max(0, at - 40), at - 1))?.[1];
-    found.push({ file, modifier });
+    const decl = DECLARATION.exec(text.slice(Math.max(0, at - 40), at - 1));
+    if (decl === null) continue;
+    found.push({ file, modifier: decl[1] });
   }
   return found;
 }
@@ -150,8 +154,10 @@ function loadReports(dir: string): Assertion[] {
   });
 }
 
-function resultsFor(name: string, assertions: readonly Assertion[]): Assertion[] {
-  return assertions.filter((a) => a.title === name || a.fullName.endsWith(name));
+/** 6-2 행의 파일 경로와 정확한 테스트 제목이 모두 맞는 결과만 실행 증거로 인정한다. */
+function resultsFor(row: DesignRow, assertions: readonly Assertion[]): Assertion[] {
+  const suffix = `/${row.file}`;
+  return assertions.filter((a) => a.title === row.name && a.file.replace(/\\/g, '/').endsWith(suffix));
 }
 
 function setDiff(prd: ReadonlySet<string>, rows: readonly DesignRow[]): string[] {
@@ -185,7 +191,7 @@ function evaluateRow(row: DesignRow, occ: readonly Occurrence[], assertions: rea
   }
   if (occ.length > 1) ev.errors.push(`${row.fr}: 지정 테스트 이름이 ${occ.length}곳에 있음`);
   for (const o of occ) if (o.modifier !== undefined) ev.errors.push(`${row.fr}: 지정 테스트가 ${o.modifier} 상태 (${o.file})`);
-  const results = resultsFor(row.name, assertions);
+  const results = resultsFor(row, assertions);
   if (results.some((a) => a.status !== 'passed')) {
     ev.errors.push(`${row.fr}: 지정 테스트 실행 결과 실패`);
   } else if (results.length === 0) {

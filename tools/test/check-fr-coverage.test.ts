@@ -189,3 +189,30 @@ describe('check-fr-coverage', () => {
     });
   });
 });
+
+describe('check-fr-coverage regressions (Codex round 2)', () => {
+  it('does not accept a same-titled passing test from another file as evidence', async () => {
+    const root = build({ sources: { 'apps/server/test/a.int.test.ts': `it('${N1}', () => {});` } });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, 'apps/server/test/other.int.test.ts', [N1])));
+    const res = await exec(root, '--mode=progress');
+    expect(res.code).toBe(1);
+  });
+
+  it('does not accept a prefixed fullName as evidence', async () => {
+    const root = build({ sources: { 'apps/server/test/a.int.test.ts': `it('${N1}', () => {});` } });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, 'apps/server/test/a.int.test.ts', [`x ${N1}`])));
+    expect((await exec(root, '--mode=progress')).code).toBe(1);
+  });
+
+  it('counts only it/test declarations, not comments or fixture strings', async () => {
+    const root = build({
+      sources: {
+        'apps/server/test/a.int.test.ts': `// see '${N1}'\nconst label = '${N1}';\nit('${N1}', () => {});`,
+      },
+    });
+    write(root, 'reports/r0.json', JSON.stringify(report(root, 'apps/server/test/a.int.test.ts', [N1])));
+    const res = await exec(root, '--mode=progress');
+    expect(res.text).not.toContain('중복');
+    expect(res.code).toBe(0);
+  });
+});

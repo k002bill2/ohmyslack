@@ -32,7 +32,7 @@ function walk(dir: string, accept: (name: string) => boolean): string[] {
   return found;
 }
 
-/** 줄·블록 주석을 공백으로 바꾼다(줄 번호 유지). 문자열 안의 `//`는 주석으로 보지 않는다. */
+/** 줄·블록 주석과 문자열 내용을 공백으로 바꾼다(줄 번호 유지). 문자열 안의 `//`는 주석으로 보지 않는다. */
 export function stripComments(source: string): string {
   let out = '';
   let quote: string | null = null;
@@ -40,11 +40,14 @@ export function stripComments(source: string): string {
     const ch = source[i] ?? '';
     const next = source[i + 1] ?? '';
     if (quote !== null) {
-      out += ch;
+      // 문자열 내용은 공백으로 바꾼다: 안내 문구 속 단어를 저장소 사용으로 오인하지 않는다.
       if (ch === '\\') {
-        out += next;
+        out += '  ';
         i += 1;
-      } else if (ch === quote) quote = null;
+      } else if (ch === quote) {
+        quote = null;
+        out += ch;
+      } else out += ch === '\n' ? '\n' : ' ';
     } else if (ch === '/' && next === '/') {
       while (i < source.length && source[i] !== '\n') i += 1;
       out += '\n';

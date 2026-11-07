@@ -56,6 +56,13 @@ describe('check-no-persist-cache', () => {
     expect((await check(root)).code).toBe(0);
   });
 
+  it('ignores storage words inside string literals (regression: Codex round 2)', async () => {
+    const root = fixture({
+      'apps/web/src/msg.ts': "export const m = 'localStorage is unavailable';\nexport const n = \"indexedDB off\";\n",
+    });
+    expect(await run([], captureCtx(root, {}))).toBe(0);
+  });
+
   it('flags window.localStorage in a regular file with file:line', async () => {
     const root = fixture({ 'apps/web/src/a.ts': 'const x = 1;\nwindow.localStorage.clear();\n' });
     const { code, text } = await check(root);
