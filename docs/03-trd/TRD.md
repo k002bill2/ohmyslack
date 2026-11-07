@@ -88,7 +88,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/conversations/{id}/members` | 활성 참여자 목록. 참여자만 접근 |
 | `GET /api/conversations/{id}/messages?before_seq=&after_seq=&around_seq=&limit=` | 접근 가능한 대화 이력. `roots_only=true`로 본문만, 기본 최대 100건 |
 | `GET /api/messages/{root_id}/replies?before_seq=&after_seq=&limit=` | 1단 답글 목록. root 대화 접근 검사 |
-| `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?}`; 생성 메시지·seq·global `change_id` 반환 |
+| `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?}`; 생성 메시지(`client_message_id` 포함)·seq·global `change_id` 반환 |
 | `PATCH /api/messages/{id}` | 작성자만 수정. 새 `change_id`, 수정된 mention ID 반환 |
 | `DELETE /api/messages/{id}` | 작성자만 tombstone 처리. 과거 본문/mention replay 방지 |
 | `GET /api/sync?after={change_id}&through={change_id?}&limit=` | 계정 전역 catch-up. 첫 페이지에서 watermark `through_cursor` 확정, 후속 페이지에 그대로 전달 |
@@ -112,7 +112,7 @@ Endpoint는 same-origin `/api/ws`입니다. handshake에서 cookie session, 정�
 |---|---|
 | `conversation.subscribe` | client→server: `conversation_id`, `after_cursor`(마지막 완료된 sync checkpoint) |
 | `conversation.subscribed` | server→client: `conversation_id`, `through_cursor` ACK |
-| `message.created` | server→client: `conversation_id`, `change_id`, `message{id,seq,author_id,thread_root_id,body,created_at,mention_user_ids,root_reply_count?}` |
+| `message.created` | server→client: `conversation_id`, `change_id`, `message{id,seq,author_id,client_message_id,thread_root_id,body,created_at,mention_user_ids,root_reply_count?}` |
 | `message.updated` | server→client: `conversation_id`, `change_id`, 현재 message projection 및 `mention_user_ids` |
 | `message.deleted` | server→client: `conversation_id`, `change_id`, `message_id`, `seq`, `deleted_at`; body·mention 없음 |
 | `read.updated` | server→client: `conversation_id`, `thread_root_id?`, `last_read_seq`, `updated_at`; null root은 본문 읽음 |
@@ -206,6 +206,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 |---|---|---|
 | R1 초안 | 2026-11-07 | 확정 결정, PRD, 개발설계서와 맞춘 시스템·DB·HTTP/WS·sync·보안·Tailscale·PWA·NFR 제안 |
 | R3 최종안 | 2026-11-07 | R2 Must-fix 반영, 정본 문서 참조, 커밋순 전역 sync cursor·P0 API·읽음·삭제 replay·수치·DDL 계약 확정 |
+| R3.1 (Jarvis 정합) | 2026-11-07 | 디자인 ⚖️-D1 해소: 전송 응답과 `message.created` projection에 `client_message_id` 추가(저장된 컬럼 노출만, 계약 의미 변경 없음). Node 26.13.0 LTS 확인(nodejs.org dist index, 2026-10-28 배포) — 착수 시 고정값 |
 
 ## 리뷰 반영 기록
 
