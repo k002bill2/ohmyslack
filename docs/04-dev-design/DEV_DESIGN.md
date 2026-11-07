@@ -193,10 +193,11 @@ pnpm audit --prod --audit-level=high
 **`check:design-tokens` (Fable D-7, Should-fix 반영):** 토큰 모듈의 각 토큰에 출처·라이선스 필드가 있는지, 디자인 §2-3의 색 금지 규칙과 §7-1 대비 기준을 만족하는지 계산합니다. 규칙 값은 디자인 정본에서 옮긴 상수를 씁니다.
 
 **`check:fr-coverage` (SOL-V4, Luna-1):**
-- **입력 원천은 둘뿐입니다:** ① `docs/02-prd/PRD.md` FR 표에서 우선순위 열이 `P0`인 `FR-XXX-nn`(PRD §11 정본·변경 관리 계약 1의 5열 형식) ② 이 문서 6-2 표(형식은 6-2 머리에 고정). 별도 매핑 사본(JSON 등)을 두지 않습니다.
-- **공통 실패 조건(두 모드):** 표 파싱 실패·형식 불일치(스캐너 오류), PRD P0 집합 ≠ 6-2 FR 집합, 6-2의 지정 테스트 이름 중복, 같은 지정 테스트 이름이 저장소에 2개 이상, 지정 테스트가 `skip`·`todo`·`only` 상태, 발견된 지정 테스트의 실행 결과가 실패.
-- **진행 모드(`--mode=progress`, PR 게이트):** 아직 없는 지정 테스트는 "미구현 n개"로 보고만 하고 통과시킵니다. G0 빈 골격도 이 모드로 통과합니다.
-- **판정 모드(`--mode=gate`, G1):** 위에 더해 ① 33개 지정 테스트 전부 발견·실행·통과 ② 6-2 "필수 보조 증거" 열의 테스트 전부 통과 ③ "수동" 열이 있는 행은 `qa/manual/QA-<FR>.md`가 5-4 필수 필드를 갖추고 결과 `PASS` ④ `QA-BOOT-01.md` PASS — 하나라도 빠지면 실패합니다.
+- **입력 원천은 셋뿐입니다:** ① `docs/02-prd/PRD.md` FR 표에서 우선순위 열이 `P0`인 `FR-XXX-nn`(PRD §11 정본·변경 관리 계약 1의 5열 형식) ② 이 문서 6-2 표(형식은 6-2 머리에 고정) ③ 이 문서 6-3 TR-SEC 표(형식은 6-3 머리에 고정, THREAT_MODEL NC-01). 별도 매핑 사본(JSON 등)을 두지 않습니다.
+- **6-3 판정:** 참조 행(`→ FR-…`)은 참조한 FR의 판정을 따릅니다(그 FR이 실패하면 해당 TR-SEC 행도 실패로 보고). 자체 지정 행은 6-2 행과 같은 규칙으로 판정합니다(진행 모드 미구현 보고, 판정 모드 발견·실행·통과 필수, "수동" 열 QA PASS). PRD P0 집합 대조는 6-2에만 적용하고, 6-3은 TRD TR-SEC ID 집합(01–12) 완전성을 대조합니다 — 누락·중복·초과 ID나 6-2에 없는 참조 FR은 스캐너 오류입니다.
+- **공통 실패 조건(두 모드):** 표 파싱 실패·형식 불일치(스캐너 오류), PRD P0 집합 ≠ 6-2 FR 집합, 6-2·6-3의 지정 테스트 이름 중복, 같은 지정 테스트 이름이 저장소에 2개 이상, 지정 테스트가 `skip`·`todo`·`only` 상태, 발견된 지정 테스트의 실행 결과가 실패.
+- **진행 모드(`--mode=progress`, PR 게이트):** 아직 없는 지정 테스트는 "미구현 n개"로 보고만 하고 통과시킵니다. TR-SEC 자체 지정 행은 `TR-SEC 지정 n개 / 미구현 m개` 별도 줄로 보고합니다. G0 빈 골격도 이 모드로 통과합니다.
+- **판정 모드(`--mode=gate`, G1):** 위에 더해 ① 33개 지정 테스트와 6-3 자체 지정 테스트 전부 발견·실행·통과 ② 6-2 "필수 보조 증거" 열의 테스트 전부 통과 ③ "수동" 열이 있는 행은 `qa/manual/QA-<FR>.md`가 5-4 필수 필드를 갖추고 결과 `PASS` ④ `QA-BOOT-01.md` PASS — 하나라도 빠지면 실패합니다.
 - 실행 결과는 vitest JSON reporter 출력(`reports/*.json`)에서 테스트 전체 이름으로 대조합니다. 탐색 범위는 2-1의 다섯 경로입니다.
 
 **테스트 DB 안전장치 (Sol Should-fix 1 반영):**
@@ -291,22 +292,26 @@ pnpm audit --prod --audit-level=high
 |---|---|---|---|---|
 | BOOT-01 | `BOOT-01 빈 합성 DB에서 owner 최초 생성은 성공하고 재실행은 기존 계정을 바꾸지 않고 실패하며 owner를 만드는 원격 라우트가 없고 이후 초대 발급과 member 수락이 된다` | 통합 `apps/server/test/ops/bootstrap-owner.int.test.ts`(원격 경로 부재는 2-4 레지스트리로 단언) | PR | `QA-BOOT-01`: 합성 환경에서 `docs/runbooks/BOOTSTRAP_OWNER.md` 1회 실행 증거(PRD:142 순서). 실제 계정 생성은 이 문서가 승인하지 않음 |
 
-### 6-3. TRD TR-SEC → 테스트 (보조 표, R1 약속 이행)
+### 6-3. TRD TR-SEC → 테스트 (보조 표, R1 약속 이행 · NC-01 게이트 편입)
 
-TR-SEC 항목의 정본은 TRD:141–152입니다. 아래는 각 항목을 판정하는 테스트입니다.
+TR-SEC 항목의 정본은 TRD §5 TR-SEC 표(TR-SEC-01–10)와 §5-1 R3.2 추가 행(TR-SEC-11·12)입니다. 아래 표는 `check:fr-coverage` 입력입니다(5-1).
 
-| TR-SEC | 판정 테스트 |
-|---|---|
-| 01 매 요청 세션·membership | FR-CONV-04 접근 매트릭스, FR-AUTH-03 |
-| 02 secret 원문 미저장 | 통합 `apps/server/test/auth/secret-storage.int.test.ts`(비밀번호·세션·초대 표식이 DB 컬럼·로그에 0건) + FR-OPS-03 |
-| 03 CSRF header + Origin | FR-AUTH-06 |
-| 04 revoke·비활성화 WS 전파 | FR-AUTH-02, FR-AUTH-03 |
-| 05 안전한 입력 표시 | FR-MSG-01 |
-| 06 schema·크기 제한 | FR-MSG-01 보조 `limits.int.test.ts` + 통합 `apps/server/test/realtime/frame-limit.int.test.ts`(WS frame 상한 경계) |
-| 07 tailnet 전용 노출 | FR-OPS-01 |
-| 08 본문 지속 캐시 금지 | FR-CLIENT-04 + `check:no-persist-cache` |
-| 09 개인정보 없는 계측 | FR-OPS-03 보조 `metrics-allowlist.unit.test.ts` |
-| 10 백업/복원 경계 | FR-OPS-02 |
+**표 형식 계약:** 5열(ID / 지정 테스트 이름 / 계층·파일 / 실행 / 수동) 순서를 유지하고, 행 ID는 `TR-SEC-01`…`TR-SEC-12`가 빠짐·중복 없이 한 번씩 나옵니다. FR 지정 테스트로 판정하는 행은 "지정 테스트 이름" 칸에 `→ FR-XXX-nn`(참조)만 두고, 그 FR(6-2)의 판정을 따릅니다. 자체 테스트가 필요한 행만 백틱으로 감싼 지정 이름을 두며, 6-2 행과 같은 규칙으로 판정합니다. 바꾸면 `check:fr-coverage` 파서를 같은 PR에서 고칩니다.
+
+| ID | 지정 테스트 이름 | 계층·파일 | 실행 | 수동 |
+|---|---|---|---|---|
+| TR-SEC-01 | → FR-CONV-04, FR-AUTH-03 | 매 요청 세션·membership(접근 매트릭스) | — | — |
+| TR-SEC-02 | `TR-SEC-02 비밀번호·세션·초대 표식 원문이 DB 모든 컬럼과 로그에 0건이다` | 통합 `apps/server/test/auth/secret-storage.int.test.ts`(로그 측면은 FR-OPS-03도 판정) | PR | — |
+| TR-SEC-03 | → FR-AUTH-06 | CSRF header + Origin | — | — |
+| TR-SEC-04 | → FR-AUTH-02, FR-AUTH-03 | revoke·비활성화 WS 전파 | — | — |
+| TR-SEC-05 | → FR-MSG-01 | 안전한 입력 표시 | — | — |
+| TR-SEC-06 | `TR-SEC-06 WS frame은 TRD 상한에서 처리되고 상한+1 바이트는 저장 없이 거절된다` | 통합 `apps/server/test/realtime/frame-limit.int.test.ts`(HTTP 본문 크기 경계는 FR-MSG-01 보조 `limits.int.test.ts`) | PR | — |
+| TR-SEC-07 | → FR-OPS-01 | tailnet 전용 노출 | — | — |
+| TR-SEC-08 | → FR-CLIENT-04 | 본문 지속 캐시 금지(+ 5-1 `check:no-persist-cache`) | — | — |
+| TR-SEC-09 | → FR-OPS-03 | 개인정보 없는 계측(FR-OPS-03 보조 `metrics-allowlist.unit.test.ts`) | — | — |
+| TR-SEC-10 | → FR-OPS-02 | 백업/복원 경계 | — | — |
+| TR-SEC-11 | `TR-SEC-11 세션 쿠키는 HttpOnly·Secure·SameSite=Lax·Path=/이고 Domain 속성이 없으며 운영 설정에서 Secure를 끌 수 없다` | 통합 `apps/server/test/auth/cookie-attrs.int.test.ts`(Set-Cookie 단언, THREAT_MODEL NC-08) | PR | — |
+| TR-SEC-12 | → FR-AUTH-06 | 로그인 제한(TRD §5-1 S1) | — | — |
 
 ### 6-4. FR-MSG-08 이벤트 순서 사례 (지정 테스트가 모두 포함)
 
@@ -394,6 +399,7 @@ PRD:89는 "DB 저장 → 다른 기기 **표시**"를 요구합니다. 수신 �
 |---|---|---|
 | R1 | 2026-11-07 | 최초 작성. PRD v1.1(P0 FR 33개)에 매핑. TRD·디자인 레퍼런스는 미도착이라 가정으로 표시 |
 | R3 최종안 | 2026-11-07 | R2 Must-fix 13건 반영(거절 0). PRD v1.2·TRD R3 기준으로 6-2 전 행 재작성, 전역 커서 흐름, 접근 메타 레지스트리, `check:cleanroom` 종료 코드 분기, `check:fr-coverage` 진행/판정 모드, `check:no-persist-cache` 정의, 필수 보조 증거 열, 독자 에셋 W-04b, BOOT-01, TR-SEC 보조 표, FR-SYNC-01 같은 시계 표시 측정 추가 |
+| R3.2 (NC-01) | 2026-11-07 | THREAT_MODEL NC-01·TRD R3.2 반영: 6-3을 `TR-SEC-01`–`12` 5열 표로 바꾸고(자체 지정 02·06·11, 나머지 `→ FR` 참조), 5-1 `check:fr-coverage` 입력에 6-3 추가 |
 
 ### R3.1 Jarvis 정합 (2026-11-07)
 - §5-1 `pnpm -r test -- --coverage` → `pnpm -r test --coverage` (pnpm 10.30.2는 `--`를 vitest에 넘겨 커버리지가 꺼짐, G0 레인 실측).
