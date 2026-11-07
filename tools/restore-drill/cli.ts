@@ -8,6 +8,8 @@ import { dropSql, readMigrations, renameSql, RESIDUE_SQL, seedSql, snapshotSql }
 
 /** Jarvis 결정 1: 복원 대상은 이 DB 안의 격리 스키마뿐. */
 export const DRILL_DB = 'ohmyslack_test';
+/** Jarvis 결정 1: 접속 계정은 이 role뿐(컨테이너 superuser 등 다른 계정 거부). */
+export const DRILL_ROLE = 'ohmyslack_test';
 /** 컨테이너 안에서 본 PostgreSQL 주소(컨테이너 내부 포트). */
 const CONTAINER_PG = { host: '127.0.0.1', port: '5432' } as const;
 
@@ -27,6 +29,7 @@ export function drillTarget(raw: string | undefined): DrillTarget {
   const user = decodeURIComponent(url.username);
   const password = decodeURIComponent(url.password);
   if (user === '' || /[\r\n]/.test(user + password)) throw new Error('대상 DB 거부: 사용자 이름이 없거나 값에 줄바꿈이 있습니다');
+  if (user !== DRILL_ROLE) throw new Error(`대상 DB 거부: 승인된 접속 계정은 ${DRILL_ROLE} role뿐입니다`);
   return { user, password, database };
 }
 

@@ -12,7 +12,7 @@ import { captureCtx } from './helpers.ts';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const SECRET = 'S3cr3t-drill-pw';
-const TEST_URL = `postgres://drill_user:${SECRET}@127.0.0.1:5432/ohmyslack_test`;
+const TEST_URL = `postgres://ohmyslack_test:${SECRET}@127.0.0.1:5432/ohmyslack_test`;
 
 const CH = 'c-ch';
 const DM = 'c-dm';
@@ -128,12 +128,14 @@ describe('restore-drill sql', () => {
 });
 
 describe('restore-drill target and cli', () => {
-  it('accepts only ohmyslack_test and never echoes the password', () => {
-    expect(drillTarget(TEST_URL)).toEqual({ user: 'drill_user', password: SECRET, database: 'ohmyslack_test' });
+  it('accepts only ohmyslack_test DB and role and never echoes the password', () => {
+    expect(drillTarget(TEST_URL)).toEqual({ user: 'ohmyslack_test', password: SECRET, database: 'ohmyslack_test' });
     for (const bad of [
       `postgres://u:${SECRET}@127.0.0.1:5432/ohmyslack`,
       `postgres://u:${SECRET}@127.0.0.1:5432/other_test`,
       `postgres://u:${SECRET}@10.0.0.5:5432/ohmyslack_test`,
+      `postgres://postgres:${SECRET}@127.0.0.1:5432/ohmyslack_test`,
+      `postgres://other_role:${SECRET}@127.0.0.1:5432/ohmyslack_test`,
       undefined,
     ]) {
       let message = '';
@@ -153,7 +155,7 @@ describe('restore-drill target and cli', () => {
     const ctx = captureCtx(REPO, { TEST_DATABASE_URL: TEST_URL });
     expect(await run(['env-file', path], ctx)).toBe(0);
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(readFileSync(path, 'utf8')).toContain('PGUSER=drill_user');
+    expect(readFileSync(path, 'utf8')).toContain('PGUSER=ohmyslack_test');
     expect(await run(['env-file', path], ctx)).toBe(1);
     expect(ctx.lines.join('\n')).not.toContain(SECRET);
   });
