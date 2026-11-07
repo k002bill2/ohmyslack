@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createHttpDataSource, type HttpDataSource, type HttpDataSourceDeps } from './data/http-source.js';
 import type { FetchLike } from './data/api.js';
 import type { SocketLike } from './data/realtime.js';
-import { LoginForm, type LoginResult } from './features/auth';
+import { InviteAccept, LoginForm, parseInviteHash, type InviteAcceptRequest, type InviteResult, type LoginResult } from './features/auth';
 import { AppShell } from './features/layout';
 import { createSessionBus, type SessionBus } from './features/sync';
 
 type Phase =
+  | { readonly kind: 'invite' }
   | { readonly kind: 'checking' }
   | { readonly kind: 'signed-out'; readonly sessionEnded: boolean }
   | { readonly kind: 'signed-in'; readonly source: HttpDataSource };
@@ -16,16 +17,30 @@ export interface LiveAppProps {
   /** 데이터 소스 생성(테스트에서 가짜 WebSocket 주입). fetch·session은 LiveApp이 채운다. */
   readonly createSource: (deps: Pick<HttpDataSourceDeps, 'fetch' | 'session'>) => HttpDataSource;
   readonly session?: SessionBus;
+  /** 초대 링크 해시 읽기·제거(기본: `location.hash`, `history.replaceState`). 테스트 주입용. */
+  readonly readHash?: () => string;
+  readonly clearHash?: () => void;
 }
+
+/**
+ * 표시 이름 입력 라벨 — 정본 문구 없음(auth/index.ts 참조). 서버 계약(`inviteAcceptRequestSchema`)이
+ * `display_name`을 필수로 요구하므로 운영 루트는 입력을 렌더해야 한다(Codex r2 P1 배선, REPORT에 기록).
+ */
+const DISPLAY_NAME_LABEL = '표시 이름';
+
+const browserReadHash = () => location.hash;
+const browserClearHash = () => history.replaceState(null, '', location.pathname + location.search);
 
 /**
  * 운영 앱 루트(W-10c): 세션 확인 → 로그인(CMP-19) → HttpDataSource(REST + WS).
  * 세션 종료(401·로그아웃)면 DataSource를 버리고 로그인으로 돌아간다 — 401이면 「세션이 종료되었습니다」(S11).
  * 첫 진입의 세션 확인은 DataSource의 복귀 절차(`GET /api/me`)가 겸한다: 401이면 세션 종료 신호로 로그인 화면.
  */
-export function LiveApp({ fetch, createSource, session: injected }: LiveAppProps) {
+export function LiveApp({ fetch, createSource, session: injected, readHash = browserReadHash, clearHash = browserClearHash }: LiveAppProps) {
   const [session] = useState(() => injected ?? createSessionBus());
-  const [phase, setPhase] = useState<Phase>({ kind: 'checking' });
+  // 초대 링크(`#t=<token>`)면 세션 확인 없이 수락 폼부터 — 토큰 자체는 InviteAccept 메모리에만 둔다(D §4-2).
+  const [invited] = useState(() => parseInviteHash(readHash()) !== null);
+  const [phase, setPhase] = useState<Phase>(() => (invited ? { kind: 'invite' } : { kind: 'checking' }));
   /** 한 번이라도 연결됐던 세션인가 — 첫 진입의 401(세션 없음)에는 「세션이 종료되었습니다」를 띄우지 않는다. */
   const hadSession = useRef(false);
 
@@ -49,9 +64,10 @@ export function LiveApp({ fetch, createSource, session: injected }: LiveAppProps
 
   // 첫 연결 소스는 만든 effect가 직접 정리한다 — StrictMode 이중 실행에서 버려진 소스의 WS·리스너가 남지 않는다(Codex r1 P2).
   useEffect(() => {
+    if (invited) return undefined;
     const source = connect();
     return () => source.stop();
-  }, [connect]);
+  }, [connect, invited]);
 
   useEffect(() => {
     if (phase.kind !== 'signed-in') return undefined;
@@ -71,7 +87,26 @@ export function LiveApp({ fetch, createSource, session: injected }: LiveAppProps
     [fetch],
   );
 
+  // 서버는 수락 성공 시 세션 쿠키를 심는다(201) — 이어서 connect()가 복귀 절차를 시작한다.
+  const accept = useCallback(
+    async (req: InviteAcceptRequest): Promise<InviteResult> => {
+      const res = await fetch('/api/invites/accept', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+      });
+      return res.ok ? { ok: true } : { ok: false, status: res.status };
+    },
+    [fetch],
+  );
+
   if (phase.kind === 'signed-in') return <AppShell dataSource={phase.source} />;
+  if (phase.kind === 'invite') {
+    return (
+      <InviteAccept readHash={readHash} clearHash={clearHash} onAccept={accept} onSuccess={connect} displayNameLabel={DISPLAY_NAME_LABEL} />
+    );
+  }
   if (phase.kind === 'checking') return null;
   return <LoginForm sessionEnded={phase.sessionEnded} onLogin={login} onSuccess={connect} />;
 }

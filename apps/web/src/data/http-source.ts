@@ -8,7 +8,9 @@ import type {
   ConversationsResponse,
   MeResponse,
   MembersResponse,
+  MessageView,
   MessageWriteResponse,
+  RepliesResponse,
   SnapshotResponse,
   SyncResponse,
   WsServerFrame,
@@ -244,8 +246,17 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
           };
         });
 
+  /** REST로 받은 내 메시지가 전송 대기(unknown) 항목과 같은 client_message_id면 확정한다(Codex r2 P2). */
+  const confirmOwn = (m: MessageView) => {
+    if (m.author_id !== userId) return;
+    sendController.messageCreated({ conversationId: m.conversation_id, authorId: '', clientMessageId: m.client_message_id }, m.id);
+  };
+
   const foldChanges = (res: SyncResponse) => {
-    for (const c of res.changes) fold = foldMessage(fold, c.change_id, c.message, author);
+    for (const c of res.changes) {
+      fold = foldMessage(fold, c.change_id, c.message, author);
+      confirmOwn(c.message);
+    }
   };
 
   /** 페이지 catch-up. 첫 페이지 watermark(`through_cursor`)를 후속 페이지에 그대로 전달한다(TRD §3). */
@@ -280,7 +291,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     for (const c of await loadList()) {
       const snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
       first ??= snap.snapshot_cursor;
-      for (const m of snap.messages) fold = foldMessage(fold, 0, m, author);
+      for (const m of snap.messages) {
+        fold = foldMessage(fold, 0, m, author);
+        confirmOwn(m);
+      }
     }
     return catchUp(first ?? 0);
   };
@@ -316,9 +330,12 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     await loadList();
     if (gen !== generation) return false;
     emit();
-    if (current !== null) {
+    // 복귀 중 대화가 바뀌었으면 바뀐 대화를 다시 구독한다 — 현재 대화의 ACK 뒤에만 연결됨·checkpoint 전진(Codex r2 P2).
+    for (let target = current; target !== null; target = current) {
       await waitOpen();
-      await subscribe(current, watermark);
+      await subscribe(target, watermark);
+      if (gen !== generation) return false;
+      if (current === target) break;
     }
     if (gen !== generation) return false;
     checkpoint = watermark;
@@ -361,6 +378,26 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     }
   };
 
+  /** 스레드 기존 답글: `after_seq`로 오름차순 페이지를 끝까지 읽는다(TRD §3 replies, Codex r2 P1). */
+  const loadReplies = async (rootId: string) => {
+    const path = `/api/messages/${encodeURIComponent(rootId)}/replies`;
+    try {
+      let after = 0;
+      for (;;) {
+        const res = await api.get<RepliesResponse>(`${path}?after_seq=${after}&limit=${HISTORY_LIMIT}`);
+        if (ended) return;
+        fold = foldMessage(fold, 0, res.root, author);
+        for (const m of res.replies) fold = foldMessage(fold, 0, m, author);
+        emit();
+        const last = res.replies.at(-1);
+        if (!res.has_more || last === undefined) return;
+        after = last.seq;
+      }
+    } catch (e) {
+      if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
+    }
+  };
+
   return {
     getSnapshot: () => snapshot,
     subscribe(listener) {
@@ -379,6 +416,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       if (conversationId === null) return;
       void loadHistory(conversationId);
       if (!resuming && checkpoint !== null) subscribe(conversationId, checkpoint).catch(() => undefined);
+    },
+    openThread(rootId) {
+      if (ended || rootId === null) return;
+      void loadReplies(rootId);
     },
     start() {
       const life = deps.lifecycle;

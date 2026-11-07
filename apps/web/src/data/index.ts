@@ -47,6 +47,8 @@ export interface DataSource {
   send(target: { readonly conversationId: string; readonly rootId?: string }, body: string): void;
   /** 현재 대화가 바뀔 때 호출(구독·이력 로드). 메모리 구현은 없음. */
   open?(conversationId: string | null): void;
+  /** 스레드를 열거나(root id) 닫을 때(null) 호출 — 기존 답글 조회. 메모리 구현은 없음. */
+  openThread?(rootId: string | null): void;
 }
 
 export interface MemoryDataSource extends DataSource {
