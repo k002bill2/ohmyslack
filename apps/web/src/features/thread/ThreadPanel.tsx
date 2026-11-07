@@ -1,5 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { Composer, MessageItem, type MessageItemData } from '../conversation';
+import { Composer, MessageItem, type DraftStore, type MessageItemData } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -11,6 +11,8 @@ export interface ThreadPanelProps {
   readonly onSend: (body: string) => void;
   /** StatusRegion(CMP-16) 안내. */
   readonly announce: (text: string) => void;
+  /** 대상별 초안 저장소(디자인 §7-3 초안 규칙). 키는 스레드 root id. */
+  readonly drafts?: DraftStore;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -22,8 +24,34 @@ function variantProps(variant: ThreadVariant) {
   return {};
 }
 
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]';
+
+/** 지금 Tab으로 갈 수 있는 요소(전송 버튼 disabled가 바뀌므로 매번 조회). */
+function focusables(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.tabIndex >= 0);
+}
+
+/** medium 오버레이 포커스 트랩: 끝에서 Tab → 처음, 처음에서 Shift+Tab → 끝(디자인 §7-3). 처리하면 true. */
+function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
+  const items = focusables(root);
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (first === undefined || last === undefined) return false;
+  const active = document.activeElement;
+  const inside = active instanceof HTMLElement && items.includes(active);
+  if (shiftKey && (!inside || active === first)) {
+    last.focus();
+    return true;
+  }
+  if (!shiftKey && (!inside || active === last)) {
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts }: ThreadPanelProps) {
   const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
 
@@ -32,9 +60,14 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce 
   }, [root.id]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (e.defaultPrevented) return;
     // 디자인 §7-4 순위 1: 조합 중에는 앱이 어떤 키도 처리하지 않는다.
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+    if (e.key === 'Tab' && variant === 'medium' && container.current !== null) {
+      if (trapTab(container.current, e.shiftKey)) e.preventDefault();
+      return;
+    }
+    if (e.key !== 'Escape') return;
     const target = e.target as HTMLElement;
     const typed = target instanceof HTMLTextAreaElement && target.value !== '';
     e.preventDefault();
@@ -78,7 +111,12 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce 
           ))}
         </ul>
       )}
-      <Composer key={root.id} label="답글" onSend={onSend} />
+      <Composer
+        key={root.id}
+        label="답글"
+        onSend={onSend}
+        {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
+      />
     </Tag>
   );
 }

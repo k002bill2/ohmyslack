@@ -6,6 +6,7 @@ import {
   codePointLength,
   decideKey,
 } from './ime.js';
+import type { DraftStore } from './drafts.js';
 
 export type MentionKey = 'Enter' | 'Tab' | 'Escape' | 'ArrowUp' | 'ArrowDown';
 
@@ -17,13 +18,15 @@ export interface ComposerProps {
   /** CMP-12 멘션 후보 열림(`aria-expanded=true`). 열려 있으면 Enter/Tab/Esc/↑/↓를 후보에 넘긴다(§7-4 순위 3). */
   readonly mentionOpen?: boolean;
   readonly onMentionKey?: (key: MentionKey) => void;
+  /** 대상별 초안 보존(디자인 §7-3 초안 규칙). 마운트 시 복원하고 입력마다 저장, 전송으로 비우면 지운다. */
+  readonly draft?: { readonly store: DraftStore; readonly key: string };
 }
 
 const LIMIT_MESSAGE = '4,000자까지 입력할 수 있습니다';
 
 /** CMP-11 Composer — IME 안전 Enter(디자인 §7-4). 키 판정은 `ime.ts`의 순수 함수가 한다. */
-export function Composer({ label, onSend, mentionOpen = false, onMentionKey }: ComposerProps) {
-  const [text, setText] = useState('');
+export function Composer({ label, onSend, mentionOpen = false, onMentionKey, draft }: ComposerProps) {
+  const [text, setText] = useState(() => draft?.store.get(draft.key) ?? '');
   const composing = useRef(false);
   const justComposed = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -35,11 +38,17 @@ export function Composer({ label, onSend, mentionOpen = false, onMentionKey }: C
   };
   useEffect(() => () => clearTimeout(timer.current), []);
 
+  const updateText = (next: string) => {
+    setText(next);
+    draft?.store.set(draft.key, next);
+  };
+
   const send = () => {
     if (!canSend(text)) return;
     onSend(text);
+    draft?.store.delete(draft.key);
     if (composing.current) clearAfterComposition.current = true;
-    else setText('');
+    else updateText('');
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -66,7 +75,7 @@ export function Composer({ label, onSend, mentionOpen = false, onMentionKey }: C
       <textarea
         aria-label={label}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => updateText(e.target.value)}
         onKeyDown={onKeyDown}
         onKeyUp={endJustComposed}
         onCompositionStart={() => {
@@ -80,7 +89,7 @@ export function Composer({ label, onSend, mentionOpen = false, onMentionKey }: C
           timer.current = setTimeout(endJustComposed, JUST_COMPOSED_WINDOW_MS);
           if (clearAfterComposition.current) {
             clearAfterComposition.current = false;
-            setText('');
+            updateText('');
           }
         }}
       />

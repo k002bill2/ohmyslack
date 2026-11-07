@@ -3,6 +3,7 @@ import './conversation.css';
 
 export { MessageBody } from './MessageBody.js';
 export { Composer, type ComposerProps, type MentionKey } from './Composer.js';
+export { createDraftStore, type DraftStore } from './drafts.js';
 export { MessageStatus, type MessageStatusProps } from './MessageStatus.js';
 export { MessageItem, messageLabel, type MessageItemData, type MessageItemProps } from './MessageItem.js';
 export {
