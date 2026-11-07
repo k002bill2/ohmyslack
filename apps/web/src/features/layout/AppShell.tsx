@@ -76,7 +76,7 @@ function ConversationPane(props: {
   const { space, roots, breakpoint, membership } = props;
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
-  const onListScroll = usePinBottom(list, space.id, `${roots.length}:${roots[roots.length - 1]?.id ?? ''}`);
+  const onListScroll = usePinBottom(list, space.id);
   return (
     <main className="conversation-pane" inert={props.inert}>
       <header className="conversation-header">

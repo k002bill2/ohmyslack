@@ -24,6 +24,9 @@
   height: 100dvh;
   overflow: hidden;
   grid-template-rows: auto minmax(0, 1fr);
+  /* viewport-fit=cover 짝(Codex r1 P2): 상단 상태 표시줄·가로 노치. 하단은 작성기·계정 영역이 각자 보정한다. */
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   background: var(--bg-app);
   color: var(--text);
   font-family: var(--font-sans);
@@ -108,6 +111,9 @@
   inset-block: 0;
   inset-inline-end: 0;
   width: var(--thread-overlay-w);
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
   background: var(--bg-sidebar);
   box-shadow: var(--shadow-popover);
 }
@@ -161,6 +167,7 @@ body {
 /* 하단 계정: 표시 이름 말줄임 + 보조 버튼. 「멤버 관리」는 한 줄 전체. */
 .sidebar-account {
   margin-top: auto;
+  padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
   flex-wrap: wrap;
   align-items: center;
   border-top: 1px solid var(--border-subtle);

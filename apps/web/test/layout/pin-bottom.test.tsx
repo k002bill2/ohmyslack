@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/App.js';
 import { isAtBottom, PIN_THRESHOLD_PX } from '../../src/features/layout/pin-bottom.js';
 import { T0, memory } from '../helpers/fixtures.js';
@@ -8,7 +8,7 @@ import { installViewport } from '../helpers/viewport.js';
 
 /** jsdom은 레이아웃이 없다 — 목록 항목 1개 = 100px, 보이는 높이 300px로 스텁하고 scrollTop은 [0, max]로 고정한다. */
 const ITEM = 100;
-const VIEW = 300;
+let VIEW = 300;
 const tops = new WeakMap<Element, number>();
 const descriptors = ['scrollHeight', 'clientHeight', 'scrollTop'].map(
   (k) => [k, Object.getOwnPropertyDescriptor(Element.prototype, k)] as const,
@@ -26,6 +26,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  VIEW = 300;
+  vi.unstubAllGlobals();
   for (const [k, d] of descriptors) {
     if (d === undefined) delete (Element.prototype as unknown as Record<string, unknown>)[k];
     else Object.defineProperty(Element.prototype, k, d);
@@ -73,5 +75,28 @@ describe('CMP-06 하단 고정(UI_STATES §2-4)', () => {
     fireEvent.scroll(list);
     act(() => ds.send({ conversationId: 'c1' }, '또 새 메시지'));
     expect(list.scrollTop).toBe(1200 - VIEW);
+  });
+
+  it('보이는 높이가 줄면(작성기 여러 줄·배너) 맨 아래일 때만 다시 맨 아래로(Codex r1 P2)', async () => {
+    const callbacks: (() => void)[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) { callbacks.push(cb); }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const { list } = await openGeneral();
+    expect(callbacks.length).toBeGreaterThan(0);
+    VIEW = 200;
+    act(() => callbacks.forEach((cb) => cb()));
+    expect(list.scrollTop).toBe(1000 - 200);
+    // 위로 올려 읽는 중이면 높이가 바뀌어도 그대로.
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
+    VIEW = 150;
+    act(() => callbacks.forEach((cb) => cb()));
+    expect(list.scrollTop).toBe(100);
   });
 });
