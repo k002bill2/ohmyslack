@@ -88,6 +88,20 @@ describe('db migrate', () => {
     }
   });
 
+  it('keeps the run schema as search_path even when the URL carries an options parameter', async () => {
+    const original = process.env.TEST_DATABASE_URL ?? '';
+    const withOptions = new URL(original);
+    withOptions.searchParams.set('options', '-c search_path=public');
+    process.env.TEST_DATABASE_URL = withOptions.toString();
+    try {
+      const { pool, name } = await freshSchema();
+      const current = await pool.query<{ schema: string }>('SELECT current_schema() AS schema');
+      expect(current.rows[0]?.schema).toBe(name);
+    } finally {
+      process.env.TEST_DATABASE_URL = original;
+    }
+  });
+
   it('fails when an already-applied migration file is modified', async () => {
     const { pool } = await freshSchema();
     const dir = await mkdtemp(join(tmpdir(), 'ohmyslack-migrations-'));

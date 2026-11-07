@@ -36,12 +36,31 @@ async function withAdmin<T>(url: string, work: (client: pg.Client) => Promise<T>
   }
 }
 
+/** URL의 options 쿼리가 search_path를 덮지 않도록 떼어 내고, 실행 스키마 search_path를 마지막에 둔다. */
+function isolatedConfig(url: string, schema: string): { connectionString: string; options: string } {
+  const parsed = new URL(url);
+  const existing = parsed.searchParams.get('options');
+  parsed.searchParams.delete('options');
+  const options = [existing, `-c search_path=${schema}`].filter((part) => part !== null && part !== '').join(' ');
+  return { connectionString: parsed.toString(), options };
+}
+
+async function dropSchema(url: string, name: string): Promise<void> {
+  await withAdmin(url, (client) => client.query(`DROP SCHEMA IF EXISTS "${name}" CASCADE`));
+}
+
 /** 빈 실행 스키마를 만들고 search_path를 그 스키마로 둔 풀을 돌려준다(마이그레이션은 호출자가 적용). */
 export async function createTestSchema(): Promise<TestSchema> {
   const url = testDatabaseUrl();
   const name = newSchemaName();
   await withAdmin(url, (client) => client.query(`CREATE SCHEMA "${name}"`));
-  const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${name}`, max: 4 });
+  const pool = new pg.Pool({ ...isolatedConfig(url, name), max: 4 });
+  const current = await pool.query<{ schema: string }>('SELECT current_schema() AS schema').catch(() => undefined);
+  if (current?.rows[0]?.schema !== name) {
+    await pool.end();
+    await dropSchema(url, name);
+    throw new Error('테스트 스키마 격리 실패: search_path가 실행 스키마가 아닙니다');
+  }
   let dropped = false;
   return {
     name,
@@ -50,7 +69,7 @@ export async function createTestSchema(): Promise<TestSchema> {
       if (dropped) return;
       dropped = true;
       await pool.end();
-      await withAdmin(url, (client) => client.query(`DROP SCHEMA IF EXISTS "${name}" CASCADE`));
+      await dropSchema(url, name);
     },
   };
 }
