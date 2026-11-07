@@ -10,7 +10,9 @@ export type ShellAction =
   | { readonly type: 'select-space'; readonly conversationId: string }
   | { readonly type: 'open-thread'; readonly rootId: string }
   | { readonly type: 'close-thread' }
-  | { readonly type: 'back' };
+  | { readonly type: 'back' }
+  /** 경로 복원·뒤로가기(`popstate`): `/c/:id`면 그 대화, 아니면 목록(`/`). */
+  | { readonly type: 'route'; readonly conversationId: string | null };
 
 export const initialShellState: ShellState = Object.freeze({ conversationId: null, threadRootId: null });
 
@@ -23,6 +25,10 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       return state.conversationId === null ? state : { ...state, threadRootId: action.rootId };
     case 'close-thread':
       return { ...state, threadRootId: null };
+    case 'route':
+      return state.conversationId === action.conversationId
+        ? state
+        : { conversationId: action.conversationId, threadRootId: null };
     case 'back':
       return state.threadRootId !== null
         ? { ...state, threadRootId: null }

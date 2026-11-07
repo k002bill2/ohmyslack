@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { browserHistory, type RouteHistory } from './app/route.js';
 import { createHttpDataSource, type HttpDataSource, type HttpDataSourceDeps } from './data/http-source.js';
 import type { FetchLike } from './data/api.js';
 import type { SocketLike } from './data/realtime.js';
@@ -23,6 +24,8 @@ export interface LiveAppProps {
   readonly clearHash?: () => void;
   /** 주소를 바꾼다(기본: `history.replaceState`). G-13 「로그인」 링크로 `/login`에 갈 때 쓴다. */
   readonly replacePath?: (path: string) => void;
+  /** 화면 경로(`/c/:id` push·복원·뒤로가기). 기본 `browserHistory`. 테스트는 `createMemoryHistory`. */
+  readonly history?: RouteHistory;
 }
 
 /**
@@ -58,6 +61,7 @@ export function LiveApp({
   readHash = browserReadHash,
   clearHash = browserClearHash,
   replacePath = browserReplacePath,
+  history = browserHistory,
 }: LiveAppProps) {
   const [session] = useState(() => injected ?? createSessionBus());
   // 초대 링크(`#t=<token>`)면 세션 확인 없이 수락 폼부터 — 토큰 자체는 InviteAccept 메모리에만 둔다(D §4-2).
@@ -80,8 +84,10 @@ export function LiveApp({
       session.onEnd((reason) => {
         setPhase({ kind: 'signed-out', sessionEnded: reason === 'unauthorized' && hadSession.current });
         hadSession.current = false;
+        // 로그아웃·401 → 로그인 화면 주소(D §4-2 `/login`). 이전 대화 경로를 남기지 않는다.
+        replacePath(LOGIN_PATH);
       }),
-    [session],
+    [session, replacePath],
   );
 
   // 첫 연결 소스는 만든 effect가 직접 정리한다 — StrictMode 이중 실행에서 버려진 소스의 WS·리스너가 남지 않는다(Codex r1 P2).
@@ -131,7 +137,7 @@ export function LiveApp({
     setPhase({ kind: 'signed-out', sessionEnded: false });
   };
 
-  if (phase.kind === 'signed-in') return <AppShell dataSource={phase.source} />;
+  if (phase.kind === 'signed-in') return <AppShell dataSource={phase.source} history={history} />;
   if (phase.kind === 'invite') {
     return (
       <InviteAccept

@@ -5,7 +5,9 @@
  * checkpoint를 움직이지 않는다. 401 → 화면 본문·checkpoint 삭제 후 세션 종료(S11).
  */
 import type {
+  ConversationRef,
   ConversationsResponse,
+  DiscoverResponse,
   MeResponse,
   MembersResponse,
   MessageView,
@@ -19,7 +21,7 @@ import { createSendController, type PendingMessage, type PostResult } from '../f
 import { adoptAccount, clearCheckpoints, readCheckpoint, writeCheckpoint, type SessionBus, type StorageLike } from '../features/sync';
 import { createApi, HttpStatusError, NetworkError, type FetchLike } from './api.js';
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
-import type { ConnectionState, DataSource, Message, Snapshot, Space } from './index.js';
+import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
 import { createRealtimeClient, type SocketLike } from './realtime.js';
 
 export interface HttpDataSourceDeps {
@@ -98,6 +100,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let reads: ReadonlyMap<string, number> = new Map();
   let pending: readonly PendingMessage[] = [];
   let connection: ConnectionState = 'catching-up';
+  let account: Account | undefined;
+  /** 목록이 한 번이라도 2xx로 왔는가 — 이후 실패는 목록을 유지하고 배너(연결 상태)로만 알린다. */
+  let listState: ListState = 'loading';
   let names: ReadonlyMap<string, string> = new Map();
   let userId: string | null = null;
   let checkpoint: number | null = null;
@@ -131,7 +136,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   const emit = () => {
     const shown = pending.filter((p) => p.status !== 'confirmed').map(pendingAsMessage);
-    snapshot = Object.freeze({ spaces, messages: [...orderedMessages(fold), ...shown], connection });
+    snapshot = Object.freeze({
+      spaces,
+      messages: [...orderedMessages(fold), ...shown],
+      connection,
+      listState,
+      ...(account === undefined ? {} : { account }),
+    });
     listeners.forEach((l) => l());
   };
 
@@ -319,6 +330,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     if (ended) return [];
     summaries = all;
     spaces = all.map((c) => toSpace(c, names, reads));
+    listState = 'ready';
     return all;
   };
 
@@ -375,6 +387,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     api.setCsrf(me.csrf_token);
     userId = me.user.id;
     names = new Map(names).set(me.user.id, me.user.display_name);
+    account = { id: me.user.id, displayName: me.user.display_name, role: me.user.role };
     adoptAccount(userId, storage);
     // 이름이 먼저 있어야 catch-up·snapshot 메시지 작성자와 DM 이름이 UUID·빈 값으로 굳지 않는다(Codex r1 P2).
     await loadMembers();
@@ -424,6 +437,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       return await runResume(gen);
     } catch (e) {
       if (gen !== generation || ended) return false;
+      // 목록을 아직 한 번도 받지 못했으면 사이드바 오류 상태(UI_STATES §2-3 「오류」 + 「다시 시도」).
+      if (listState !== 'ready' && (!(e instanceof NetworkError) || retried)) {
+        listState = 'error';
+        emit();
+      }
       // 서버 불가: 최신으로 표시하지 않는다. 네트워크 오류가 1회뿐이면 한 번 더 시도해 끊김 판정을 확정한다.
       // 재시도는 복귀 절차당 1회 — 중간 HTTP 성공이 실패 횟수를 초기화해도 무한 재호출하지 않는다(Codex r1 P2).
       if (e instanceof NetworkError && !retried) return resume(true);
@@ -467,8 +485,54 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     }
   };
 
+  /** 요청 실패를 ActionResult로. 401은 api가 이미 세션 종료를 처리했다. */
+  const attempt = async <T>(run: () => Promise<T>): Promise<ActionResult<T>> => {
+    try {
+      return { ok: true, value: await run() };
+    } catch (e) {
+      if (e instanceof NetworkError) return { ok: false, status: 'network' };
+      if (e instanceof HttpStatusError) return e.code === undefined ? { ok: false, status: e.status } : { ok: false, status: e.status, code: e.code };
+      throw e;
+    }
+  };
+
+  /** 생성·참여·DM 성공 뒤: 목록 갱신 → 화면 반영. 이동·구독은 호출자의 `open(id)`이 기존 규칙으로 한다. */
+  const refreshThen = async (id: string): Promise<string> => {
+    await loadList();
+    if (!ended) emit();
+    return id;
+  };
+
   return {
     getSnapshot: () => snapshot,
+    createChannel: (name) =>
+      attempt(async () => refreshThen((await api.post<ConversationRef>('/api/conversations', { kind: 'channel', name })).id)),
+    discoverChannels: () =>
+      attempt(async () => {
+        let page = await api.get<DiscoverResponse>('/api/conversations/discover');
+        const all = [...page.channels];
+        while (page.next_cursor !== null) {
+          page = await api.get<DiscoverResponse>(`/api/conversations/discover?after=${encodeURIComponent(page.next_cursor)}`);
+          all.push(...page.channels);
+        }
+        return all;
+      }),
+    joinChannel: (conversationId) =>
+      attempt(async () => refreshThen((await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`)).id)),
+    listMembers: () =>
+      attempt(async () => {
+        const res = await api.get<MembersResponse>('/api/members');
+        names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
+        return res.members.map((m) => ({ id: m.id, displayName: m.display_name, role: m.role }));
+      }),
+    startDm: (userId) => attempt(async () => refreshThen((await api.post<ConversationRef>('/api/dms', { user_id: userId })).id)),
+    reload: () => {
+      if (listState === 'error') {
+        listState = 'loading';
+        emit();
+      }
+      void resume();
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

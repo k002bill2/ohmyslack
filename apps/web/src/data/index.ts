@@ -35,13 +35,63 @@ export interface Message {
 /** 디자인 §6-4 연결 상태 4종. */
 export type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'catching-up';
 
+/** 내 계정(`GET /api/me` user). role로 owner 전용 진입점을 가린다 — 서버 403이 최종 진실. */
+export interface Account {
+  readonly id: string;
+  readonly displayName: string;
+  readonly role: 'owner' | 'member';
+}
+
+/** 공간 목록 요청 상태(UI_STATES §2-3 로딩·오류). 없으면 `ready`로 본다(메모리 구현). */
+export type ListState = 'loading' | 'ready' | 'error';
+
 export interface Snapshot {
   readonly spaces: readonly Space[];
   readonly messages: readonly Message[];
   readonly connection: ConnectionState;
+  readonly account?: Account;
+  readonly listState?: ListState;
 }
 
-export interface DataSource {
+/** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */
+export type ActionFailure = { readonly status: number; readonly code?: string } | { readonly status: 'network' };
+
+/** 공간 진입 동작 결과. */
+export type ActionResult<T> = { readonly ok: true; readonly value: T } | ({ readonly ok: false } & ActionFailure);
+
+export interface DiscoverChannel {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface Member {
+  readonly id: string;
+  readonly displayName: string;
+  readonly role: 'owner' | 'member';
+}
+
+/**
+ * 공간 진입점(W-10g): 채널 만들기·찾기·참여·DM·로그아웃. 성공한 생성·참여·DM은 **목록을 다시 읽은 뒤** 대화 ID를 돌려준다
+ * — 호출자는 그 ID로 이동(`open`)만 하면 기존 구독·checkpoint 규칙이 그대로 적용된다.
+ */
+export interface SpacesApi {
+  /** `POST /api/conversations`(owner). 409 name_taken·403 forbidden은 실패로 돌려준다. */
+  createChannel?(name: string): Promise<ActionResult<string>>;
+  /** `GET /api/conversations/discover` 전 페이지. */
+  discoverChannels?(): Promise<ActionResult<readonly DiscoverChannel[]>>;
+  /** `POST /api/conversations/:id/join`. */
+  joinChannel?(conversationId: string): Promise<ActionResult<string>>;
+  /** `GET /api/members`. */
+  listMembers?(): Promise<ActionResult<readonly Member[]>>;
+  /** `POST /api/dms` — 같은 상대면 서버가 기존 DM ID를 돌려준다(FR-CONV-03). */
+  startDm?(userId: string): Promise<ActionResult<string>>;
+  /** 목록 오류 「다시 시도」 — 복귀 절차 1회. */
+  reload?(): void;
+  /** `POST /api/auth/logout` → 본문·checkpoint 정리 → 세션 종료. */
+  logout?(): Promise<void>;
+}
+
+export interface DataSource extends SpacesApi {
   getSnapshot(): Snapshot;
   subscribe(listener: () => void): () => void;
   send(target: { readonly conversationId: string; readonly rootId?: string }, body: string): void;

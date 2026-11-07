@@ -6,8 +6,23 @@
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export class HttpStatusError extends Error {
-  constructor(readonly status: number) {
+  /** `code`: 서버 오류 본문 `{ error: { code } }`(있을 때만). */
+  constructor(
+    readonly status: number,
+    readonly code?: string,
+  ) {
     super(`http ${status}`);
+  }
+}
+
+/** 오류 응답 본문의 `error.code`. 본문이 없거나 형식이 다르면 undefined. */
+async function errorCode(res: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await res.json();
+    const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === 'string' ? code : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -46,7 +61,7 @@ export function createApi(deps: ApiDeps) {
       deps.onUnauthorized();
       throw new HttpStatusError(401);
     }
-    if (!res.ok) throw new HttpStatusError(res.status);
+    if (!res.ok) throw new HttpStatusError(res.status, await errorCode(res));
     return (res.status === 204 ? undefined : await res.json()) as T;
   };
 

@@ -1,5 +1,6 @@
-import type { Space } from '../../data';
-import { COLLAPSED_LABEL_SEPARATOR } from '../../ui/copy.js';
+import type { Account, ListState, Space } from '../../data';
+import { COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
+import { ErrorState } from '../../ui/ErrorState.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 
 export interface SidebarProps {
@@ -8,6 +9,20 @@ export interface SidebarProps {
   /** §5-2 접힘(72px): 이름은 `aria-label`·툴팁으로만. */
   readonly collapsed: boolean;
   readonly onSelect: (id: string) => void;
+  /** 내 계정(하단 표시 이름 + 「로그아웃」). role = owner면 「채널 만들기」 진입점을 렌더한다. */
+  readonly account?: Account;
+  /** 목록 요청 상태(로딩 Skeleton·오류 ErrorState). 없으면 ready. */
+  readonly listState?: ListState;
+  /** 상단 「채널 찾기」(CMP-23). 없으면 버튼을 렌더하지 않는다. */
+  readonly onBrowseChannels?: () => void;
+  /** 상단 「DM 시작」(CMP-24). */
+  readonly onStartDm?: () => void;
+  /** owner 전용 「채널 만들기」 Dialog 열기. */
+  readonly onCreateChannel?: () => void;
+  /** 오류 상태 「다시 시도」. */
+  readonly onRetryList?: () => void;
+  /** 하단 「로그아웃」. */
+  readonly onLogout?: () => void;
 }
 
 /** 접힘 상태 항목 이름: 이름 + 상태(디자인 §7-2 "접힘 상태는 각 항목 aria-label에 이름+상태 포함"). */
@@ -49,21 +64,68 @@ function SpaceListItem({ space, selected, collapsed, onSelect }: {
   );
 }
 
-/** CMP-02 Sidebar · CMP-03 SpaceList — `nav aria-label="공간"` > `ul`(디자인 §7-2). */
-export function Sidebar({ spaces, selectedId, collapsed, onSelect }: SidebarProps) {
+/** 목록 본문: 로딩·오류·빈(관리자/비관리자)·기본(UI_STATES §2-3). */
+function SpaceListBody(props: SidebarProps) {
+  const { spaces, listState = 'ready', account } = props;
+  if (listState === 'loading' && spaces.length === 0) return <div className="skeleton" aria-busy="true" />;
+  if (listState === 'error' && spaces.length === 0) {
+    return <ErrorState message={ERROR_COPY.network} {...(props.onRetryList ? { onRetry: props.onRetryList } : {})} />;
+  }
+  if (spaces.length === 0) {
+    return <p className="empty-state">{account?.role === 'owner' ? SIDEBAR_COPY.emptyOwner : SIDEBAR_COPY.emptyMember}</p>;
+  }
+  return (
+    <ul className="space-list">
+      {spaces.map((space) => (
+        <SpaceListItem
+          key={space.id}
+          space={space}
+          selected={space.id === props.selectedId}
+          collapsed={props.collapsed}
+          onSelect={props.onSelect}
+        />
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * CMP-02 Sidebar · CMP-03 SpaceList — `nav aria-label="공간"`(디자인 §7-2).
+ * 상단 「채널 찾기」·「DM 시작」(+ owner 「채널 만들기」), 하단 내 계정(표시 이름 + 「로그아웃」).
+ * 다음 레인(W-10h)은 하단 `.sidebar-account`에 설정·멤버 관리 진입점을 더한다.
+ */
+export function Sidebar(props: SidebarProps) {
+  const { collapsed, account } = props;
   return (
     <nav className="sidebar" aria-label="공간" data-collapsed={collapsed ? 'true' : 'false'}>
-      <ul className="space-list">
-        {spaces.map((space) => (
-          <SpaceListItem
-            key={space.id}
-            space={space}
-            selected={space.id === selectedId}
-            collapsed={collapsed}
-            onSelect={onSelect}
-          />
-        ))}
-      </ul>
+      <div className="sidebar-actions">
+        {props.onBrowseChannels && (
+          <button type="button" onClick={props.onBrowseChannels}>
+            {SIDEBAR_COPY.browseChannels}
+          </button>
+        )}
+        {props.onStartDm && (
+          <button type="button" onClick={props.onStartDm}>
+            {SIDEBAR_COPY.startDm}
+          </button>
+        )}
+        {account?.role === 'owner' && props.onCreateChannel && (
+          <button type="button" onClick={props.onCreateChannel}>
+            {SIDEBAR_COPY.createChannel}
+          </button>
+        )}
+      </div>
+      <SpaceListBody {...props} />
+      {account !== undefined && (
+        <div className="sidebar-account">
+          <span className="account-name">{account.displayName}</span>
+          {props.onLogout && (
+            <button type="button" onClick={props.onLogout}>
+              {SIDEBAR_COPY.logout}
+            </button>
+          )}
+        </div>
+      )}
     </nav>
   );
 }
