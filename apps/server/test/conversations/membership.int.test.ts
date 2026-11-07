@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { as, createChannel, req, setupConvInt, teardownConvInt, type ConvIntContext } from './conv-int-harness.js';
+import { send } from '../messages/msg-int-harness.js';
+import { setupWsInt, subscribe } from '../realtime/ws-int-harness.js';
 
 /** FR-CONV-02의 HTTP·DB 부분(지정 `it`은 WS 구독 5초 검증이 붙는 W-09에서 완성). */
 let ctx: ConvIntContext;
@@ -64,5 +66,41 @@ describe('채널 참여·나가기', () => {
     const dm = (await req(ctx.app, 'POST', '/api/dms', a, { user_id: ctx.ids.b })).json<{ id: string }>().id;
     expect((await req(ctx.app, 'POST', `/api/conversations/${dm}/join`, c)).statusCode).toBe(404);
     expect((await req(ctx.app, 'DELETE', `/api/conversations/${dm}/membership`, a)).statusCode).toBe(400);
+  });
+});
+
+describe('FR-CONV-02 지정', () => {
+  it('FR-CONV-02 참여 후 이력·구독이 가능하고 나가면 이력·쓰기·구독이 거부되며 5초 안에 기존 구독이 끊기고 목록에 남아 재참여할 수 있다', async () => {
+    const ws = await setupWsInt();
+    try {
+      const { app } = ws.conv;
+      const owner = await as(app, 'a');
+      const b = await as(app, 'b');
+      const cid = await createChannel(app, owner, 'general');
+      expect((await req(app, 'POST', `/api/conversations/${cid}/join`, b)).statusCode).toBe(200);
+      expect((await req(app, 'GET', `/api/conversations/${cid}/messages`, b)).statusCode).toBe(200);
+      const wsB = await ws.open(b.token);
+      expect(await subscribe(wsB, cid)).toMatchObject({ type: 'conversation.subscribed' });
+      await send(app, owner, cid, { body: 'hello' });
+      await wsB.waitFor((f) => f.type === 'message.created');
+
+      const startedAt = performance.now();
+      expect((await req(app, 'DELETE', `/api/conversations/${cid}/membership`, b)).statusCode).toBe(204);
+      await wsB.waitFor((f) => f.type === 'error' && f.conversation_id === cid, 5000);
+      expect(performance.now() - startedAt).toBeLessThanOrEqual(5000);
+      // 끊긴 뒤 새 메시지는 0건, 이력·쓰기·재구독은 거부.
+      const seen = wsB.frames.length;
+      await send(app, owner, cid, { body: 'after leave' });
+      expect((await req(app, 'GET', `/api/conversations/${cid}/messages`, b)).statusCode).toBe(404);
+      expect((await req(app, 'POST', `/api/conversations/${cid}/messages`, b, { body: 'x', client_message_id: crypto.randomUUID() })).statusCode).toBe(404);
+      expect(await subscribe(wsB, cid)).toMatchObject({ type: 'error', code: 'not_found' });
+      expect(wsB.frames.slice(seen).filter((f) => f.type.startsWith('message.'))).toEqual([]);
+      // discover 목록에 남아 재참여 → 다시 구독 가능.
+      expect((await req(app, 'GET', '/api/conversations/discover', b)).json().channels).toEqual([{ id: cid, name: 'general' }]);
+      expect((await req(app, 'POST', `/api/conversations/${cid}/join`, b)).statusCode).toBe(200);
+      expect(await subscribe(wsB, cid, 0)).toMatchObject({ type: 'conversation.subscribed' });
+    } finally {
+      await ws.teardown();
+    }
   });
 });
