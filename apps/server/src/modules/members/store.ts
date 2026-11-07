@@ -30,6 +30,8 @@ export interface MembersStore {
   insertInvite(invite: NewInvite): Promise<void>;
   /** 미사용·미폐기 초대만 폐기한다. 바뀐 행이 없으면 false. */
   revokeInvite(id: string, at: Date): Promise<boolean>;
+  /** 해시 연산 전 사전 확인: 지금 수락 가능한(미사용·미폐기·미만료) token인지. 최종 판정은 acceptInvite가 한다. */
+  isInviteUsable(tokenHash: string, now: Date): Promise<boolean>;
   /**
    * 초대 원자적 1회 교환 + member 계정 생성(한 트랜잭션). 만료·사용·폐기·없는 token, 이미 있는 이메일은
    * 모두 `{ok:false}`이고 DB를 바꾸지 않는다.

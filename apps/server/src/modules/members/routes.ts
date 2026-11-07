@@ -7,7 +7,7 @@ import type { AuthEvents } from '../auth/events.js';
 import { accountGuard, adminGuards, requireAuth, SESSION_COOKIE, sessionToken } from '../auth/guards.js';
 import { checkPasswordPolicy, hashPassword, normalizeEmail } from '../auth/password.js';
 import { COOKIE_OPTIONS, meBody } from '../auth/routes.js';
-import { hashToken, type AuthService } from '../auth/service.js';
+import { createSerialQueue, hashToken, type AuthService } from '../auth/service.js';
 import type { MembersStore } from './store.js';
 
 /** 초대 수명·엔트로피(정본: TRD §5-1 S2). */
@@ -19,6 +19,11 @@ export interface MemberRouteDeps {
   readonly store: MembersStore;
   readonly events: AuthEvents;
   readonly clock: () => number;
+}
+
+/** 수락 처리 의존성: 공개 경로의 Argon2 연산은 한 번에 하나만 돈다(작업 풀 고갈 방지, Codex r1 P2). */
+interface AcceptDeps extends MemberRouteDeps {
+  readonly serial: ReturnType<typeof createSerialQueue>;
 }
 
 const idParams = z.object({ id: z.uuid() });
@@ -40,16 +45,19 @@ async function createInvite(deps: MemberRouteDeps, request: FastifyRequest, repl
 }
 
 /** 만료·사용·폐기·없는 token과 이미 있는 이메일은 같은 응답이다(S3·NC-20). 정책 위반은 token을 소비하지 않는다. */
-async function acceptInvite(deps: MemberRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<MeResponse> {
+async function acceptInvite(deps: AcceptDeps, request: FastifyRequest, reply: FastifyReply): Promise<MeResponse> {
   const body = parseOr400(inviteAcceptRequestSchema, request.body);
   if (!checkPasswordPolicy(body.password).ok) throw new HttpError(400, 'password_policy');
+  const tokenHash = hashToken(body.token);
+  // 무효 token은 Argon2 전에 같은 오류로 끊는다 — 미인증 요청이 고비용 해시를 반복시키지 못하게(Codex r1 P2).
+  if (!(await deps.store.isInviteUsable(tokenHash, new Date(deps.clock())))) throw new HttpError(400, 'invite_invalid');
   const member = {
     id: randomUUID(),
     emailNorm: normalizeEmail(body.email),
     displayName: body.display_name,
-    passwordHash: await hashPassword(body.password),
+    passwordHash: await deps.serial(() => hashPassword(body.password)),
   };
-  const result = await deps.store.acceptInvite(hashToken(body.token), new Date(deps.clock()), member);
+  const result = await deps.store.acceptInvite(tokenHash, new Date(deps.clock()), member);
   if (!result.ok) throw new HttpError(400, 'invite_invalid');
   const user = { ...member, status: 'active' as const, role: 'member' as const };
   const issued = await deps.auth.issueSession(user, sessionToken(request));
@@ -74,11 +82,12 @@ async function deactivate(deps: MemberRouteDeps, request: FastifyRequest, reply:
 export function registerMemberRoutes(app: FastifyInstance, deps: MemberRouteDeps): void {
   const account = accountGuard(deps.auth);
   const admin = [...adminGuards(deps.auth)];
+  const acceptDeps: AcceptDeps = { ...deps, serial: createSerialQueue() };
 
   app.post('/api/invites', { config: { access: 'admin' }, preHandler: admin }, (request, reply) => createInvite(deps, request, reply));
 
   app.post('/api/invites/accept', { config: { access: 'public' }, bodyLimit: 4096 }, (request, reply) =>
-    acceptInvite(deps, request, reply),
+    acceptInvite(acceptDeps, request, reply),
   );
 
   app.post('/api/invites/:id/revoke', { config: { access: 'admin' }, preHandler: admin }, async (request, reply) => {

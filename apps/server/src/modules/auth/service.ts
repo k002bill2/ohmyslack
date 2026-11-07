@@ -84,7 +84,7 @@ async function checkCredentials(store: AuthStore, email: string, secret: string)
  * 로그인 판정(제한 확인 → 해시 검증 → 실패/성공 기록)을 한 번에 하나씩 실행한다.
  * 겹쳐 실행되면 동시 요청이 모두 `isAllowed`를 통과한 뒤에야 실패가 기록돼 S1 상한(계정 5·전역 20)을 넘는다.
  */
-function createSerialQueue(): <T>(task: () => Promise<T>) => Promise<T> {
+export function createSerialQueue(): <T>(task: () => Promise<T>) => Promise<T> {
   let tail: Promise<unknown> = Promise.resolve();
   return <T>(task: () => Promise<T>): Promise<T> => {
     const run = tail.then(task, task);

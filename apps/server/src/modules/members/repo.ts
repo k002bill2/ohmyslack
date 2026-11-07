@@ -81,6 +81,13 @@ export function createPgMembersStore(pool: pg.Pool): MembersStore {
       const res = await pool.query('UPDATE invites SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL AND used_at IS NULL', [id, at]);
       return (res.rowCount ?? 0) > 0;
     },
+    async isInviteUsable(tokenHash, now) {
+      const res = await pool.query(
+        'SELECT 1 FROM invites WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2',
+        [tokenHash, now],
+      );
+      return (res.rowCount ?? 0) > 0;
+    },
     acceptInvite(tokenHash, now, member) {
       const rejected = { commit: false, value: { ok: false } } as const;
       return inTransaction<AcceptResult>(pool, async (client) => {
