@@ -16,6 +16,7 @@ import type {
   MessageWriteResponse,
   RepliesResponse,
   SnapshotResponse,
+  ReadStateResponse,
   SyncResponse,
   WsServerFrame,
 } from '../../../../packages/shared/src/index.js';
@@ -55,6 +56,10 @@ export interface HttpDataSource extends DataSource {
 /** 끊김 판정: HTTP 네트워크 오류 연속 횟수(디자인 §6-4 제안값). */
 const OFFLINE_AFTER_FAILURES = 2;
 const HISTORY_LIMIT = 100;
+/** 읽음 저장 묶음 지연(BRIEF ★1: 1초 이내 trailing). */
+export const READ_FLUSH_MS = 500;
+/** 배경 대화 변경 → 목록 재조회 묶음 지연(BRIEF ★2). */
+export const BACKGROUND_RELOAD_MS = 300;
 
 type Summary = ConversationsResponse['conversations'][number];
 
@@ -142,6 +147,20 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     return [...list, ...leftChannels.values()];
   };
   let detach = () => undefined as void;
+  const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer = deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  /** 배경 구독 중인 대화(현재 대화 제외). 소켓이 닫히면 비운다 — 다음 연결 완료 때 다시 구독한다. */
+  let background: ReadonlySet<string> = new Set();
+  let reloadTimer: unknown = null;
+  let reloading = false;
+  let reloadAgain = false;
+  /** 보낼 읽음 위치(키별 최대 seq)와 보낸 최대 위치(단조, 같은 값 재송신 방지). */
+  let readQueue: ReadonlyMap<string, { readonly conversationId: string; readonly rootId: string | null; readonly seq: number }> = new Map();
+  let readSent: ReadonlyMap<string, number> = new Map();
+  let readTimer: unknown = null;
+  /** 생성·참여·DM 직후 호출자가 `open(id)`할 대화 — 배경 구독에서 빼 이중 구독을 막는다. */
+  let opening: string | null = null;
+  const isVisible = () => (deps.lifecycle?.doc.visibilityState ?? 'visible') === 'visible';
 
   /** 이름 확인 전에는 빈 이름(UUID를 화면에 내지 않는다, W-10k A). */
   const author = (id: string) => names.get(id) ?? '';
@@ -260,6 +279,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     summaries = [];
     leftChannels = new Map();
     reads = new Map();
+    readQueue = new Map();
+    readSent = new Map();
+    background = new Set();
+    if (readTimer !== null) clearTimer(readTimer);
+    if (reloadTimer !== null) clearTimer(reloadTimer);
+    readTimer = null;
+    reloadTimer = null;
     pending = [];
     checkpoint = null;
     clearCheckpoints(storage);
@@ -323,6 +349,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   const onFrame = (frame: WsServerFrame) => {
     if (ended) return;
+    if (onBackgroundFrame(frame)) return;
     switch (frame.type) {
       case 'conversation.subscribed':
         acks.get(frame.conversation_id)?.resolve();
@@ -362,6 +389,74 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     }
   };
 
+  /**
+   * 배경 대화 프레임(BRIEF ★2): 본문은 fold에 넣지 않고 목록 재조회 1회로 묶어 unread·멘션·스레드 수를 맞춘다.
+   * 구독 거절·오류는 조용히 배경 집합에서 뺀다(복귀 절차·checkpoint와 무관). 처리했으면 true.
+   */
+  const onBackgroundFrame = (frame: WsServerFrame): boolean => {
+    if (!('conversation_id' in frame) || typeof frame.conversation_id !== 'string') return false;
+    const id = frame.conversation_id;
+    if (id === current || !background.has(id)) return false;
+    switch (frame.type) {
+      case 'message.created':
+      case 'message.updated':
+        if (frame.message.author_id !== userId) scheduleReload();
+        return true;
+      case 'message.deleted':
+        scheduleReload();
+        return true;
+      case 'conversation.subscribed':
+        return true;
+      case 'error':
+        background = new Set([...background].filter((b) => b !== id));
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  /** 목록 재조회 묶음: trailing 지연 + in-flight 1개(진행 중 요청이 끝나면 1회 더). */
+  const scheduleReload = () => {
+    if (reloading) {
+      reloadAgain = true;
+      return;
+    }
+    if (reloadTimer !== null) return;
+    reloadTimer = setTimer(() => {
+      reloadTimer = null;
+      reloading = true;
+      void loadList()
+        .then(
+          () => {
+            if (!ended) emit();
+          },
+          () => undefined,
+        )
+        .finally(() => {
+          reloading = false;
+          if (reloadAgain && !ended) {
+            reloadAgain = false;
+            scheduleReload();
+          }
+        });
+    }, BACKGROUND_RELOAD_MS);
+  };
+
+  /** 참여 중(나가지 않은) 대화 전부를 배경 구독으로 맞춘다. 연결됨 상태에서만(따라잡기 중 보류, UI_STATES C1–C2). */
+  const syncBackground = () => {
+    if (ended || checkpoint === null || connection !== 'connected' || !realtime.isOpen()) return;
+    const want = new Set(summaries.map((c) => c.id).filter((id) => id !== current && id !== opening && !leftChannels.has(id)));
+    for (const id of background) {
+      if (!want.has(id) && id !== current) realtime.send({ type: 'conversation.unsubscribe', conversation_id: id });
+    }
+    const after = checkpoint;
+    const next = new Set<string>();
+    for (const id of want) {
+      if (background.has(id) || realtime.send({ type: 'conversation.subscribe', conversation_id: id, after_cursor: after })) next.add(id);
+    }
+    background = next;
+  };
+
   const realtime = createRealtimeClient({
     url: deps.wsUrl,
     createSocket: deps.createSocket,
@@ -373,6 +468,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     onClose: ({ policy }) => {
       acks.forEach((a) => a.reject(new Error('socket closed')));
       acks.clear();
+      background = new Set();
       sendController.wsClosed();
       // 1008: 세션 종료 가능성 — 복귀 절차의 `GET /api/me`가 401이면 end(), 200이면 소켓 재연결·catch-up·구독(UI_STATES C9, Codex r3 P2).
       if (policy) void resume();
@@ -431,6 +527,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     summaries = all;
     spaces = withLeft(all.map((c) => toSpace(c, names, reads)));
     listState = 'ready';
+    syncBackground();
     return all;
   };
 
@@ -524,7 +621,67 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     writeCheckpoint(userId, watermark, storage);
     failures = 0;
     setConnection('connected');
+    syncBackground();
+    // 따라잡기 중 보류한 읽음 위치를 연결 완료 뒤 보낸다(BRIEF ★1, UI_STATES C1–C2).
+    flushReads();
     return true;
+  };
+
+  /** 읽음 위치 하한: 서버 목록 값·`read.updated`·이미 보낸 값 중 최대(단조, TRD §3). */
+  const readFloor = (conversationId: string, rootId: string | null): number => {
+    const key = readKey(conversationId, rootId);
+    const c = summaries.find((x) => x.id === conversationId);
+    const server = rootId === null ? (c?.last_read_seq ?? 0) : (c?.unread_threads.find((t) => t.root_message_id === rootId)?.last_read_seq ?? 0);
+    return Math.max(server, reads.get(key) ?? 0, readSent.get(key) ?? 0);
+  };
+
+  /** 묶인 읽음 위치를 보낸다. 연결됨이 아니면(따라잡기·끊김) 보류한다. 4xx는 버리고, 네트워크 오류는 다음 기회에 다시 보낸다. */
+  const flushReads = () => {
+    if (readTimer !== null) clearTimer(readTimer);
+    readTimer = null;
+    if (ended || connection !== 'connected' || readQueue.size === 0) return;
+    const batch = [...readQueue.values()];
+    readQueue = new Map();
+    for (const item of batch) {
+      const key = readKey(item.conversationId, item.rootId);
+      if (item.seq <= readFloor(item.conversationId, item.rootId)) continue;
+      readSent = new Map(readSent).set(key, item.seq);
+      api
+        .put<ReadStateResponse>('/api/read-state', {
+          conversation_id: item.conversationId,
+          thread_root_id: item.rootId,
+          last_read_seq: item.seq,
+        })
+        .then(
+          (res) => {
+            if (!ended) applyRead(res.conversation_id, res.thread_root_id, res.last_read_seq);
+          },
+          (e: unknown) => {
+            if (!(e instanceof NetworkError) || ended) return;
+            // 네트워크 오류: 보낸 기록을 되돌리고 대기열에 다시 넣는다(다음 읽음·복귀 완료 때 송신).
+            const sent = new Map(readSent);
+            sent.delete(key);
+            readSent = sent;
+            if ((readQueue.get(key)?.seq ?? 0) < item.seq) readQueue = new Map(readQueue).set(key, item);
+          },
+        );
+    }
+  };
+
+  /**
+   * 화면이 실제로 보여 준 위치(BRIEF ★1, PRD §7-7): 전경·현재 대화일 때만 받는다. 스레드는 서버 unread 대상 root일 때만.
+   * 같은 키는 최대 seq로 합치고 trailing 지연 뒤 보낸다.
+   */
+  const markRead = (conversationId: string, rootId: string | null, seq: number) => {
+    if (ended || conversationId !== current || !isVisible()) return;
+    if (rootId !== null) {
+      const c = summaries.find((x) => x.id === conversationId);
+      if (c?.unread_threads.some((t) => t.root_message_id === rootId) !== true) return;
+    }
+    const key = readKey(conversationId, rootId);
+    if (seq <= readFloor(conversationId, rootId) || seq <= (readQueue.get(key)?.seq ?? 0)) return;
+    readQueue = new Map(readQueue).set(key, { conversationId, rootId, seq });
+    if (readTimer === null) readTimer = setTimer(flushReads, READ_FLUSH_MS);
   };
 
   const resume = async (retried = false): Promise<boolean> => {
@@ -600,10 +757,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const refreshThen = async (id: string): Promise<string> => {
     // 생성·참여·DM은 이미 성공했다 — 목록 조회 실패를 동작 실패로 돌려주면 재제출이 409가 된다(Codex r1 P2).
     // 목록은 다음 복귀 절차가 다시 읽는다. 401은 api가 세션을 이미 끝냈다.
+    opening = id;
     try {
       await loadList();
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
+    } finally {
+      opening = null;
     }
     if (!ended) emit();
     return id;
@@ -691,9 +851,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     },
     open(conversationId) {
       if (ended || conversationId === current) return;
-      if (current !== null) realtime.send({ type: 'conversation.unsubscribe', conversation_id: current });
+      // 이전 대화는 참여 중이면 배경 구독으로 남기고(BRIEF ★2), 아니면 구독을 푼다.
+      const prev = current;
+      const keep = prev !== null && connection === 'connected' && summaries.some((c) => c.id === prev) && !leftChannels.has(prev);
+      if (keep) background = new Set(background).add(prev);
+      else if (prev !== null) realtime.send({ type: 'conversation.unsubscribe', conversation_id: prev });
       // 나간 채널은 구독·이력을 열지 않는다(구독은 서버가 거절한다) — 다시 참여 뒤 `open(id)`이 연다.
       current = conversationId !== null && leftChannels.has(conversationId) ? null : conversationId;
+      // 배경 구독 중이었어도 현재 대화는 기존 절차(ACK 구독)로 다시 구독한다(BRIEF ★2 현재 대화 절차 불변).
+      if (current !== null && background.has(current)) background = new Set([...background].filter((b) => b !== current));
       if (current === null || conversationId === null) return;
       void loadHistory(conversationId);
       if (!resuming && checkpoint !== null) {
@@ -702,6 +868,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         });
       }
     },
+    markRead,
     openThread(rootId) {
       if (ended || rootId === null) return;
       void loadReplies(rootId);
@@ -712,6 +879,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         // 전경 복귀는 WS가 살아 있어도 항상 catch-up(UI_STATES C8, DD R-03) — 5분 이상 백그라운드 복귀를 포함한다.
         const onVisible = () => {
           if (life.doc.visibilityState === 'visible') void resume();
+          // 전경에서 본 위치는 전경 이탈 즉시 보낸다(대기분 손실 방지, BRIEF ★1).
+          else flushReads();
         };
         const onOnline = () => void resume();
         const onOffline = () => setConnection('offline');
