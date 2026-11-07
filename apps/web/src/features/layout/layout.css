@@ -705,6 +705,19 @@ body {
     calc(var(--space-3) + env(safe-area-inset-left));
   background: var(--bg-elevated);
 }
+/*
+ * Codex r1 P2: 셸 패딩(2 × space-3)과 패널 사이 여백(space-3씩)이 정본 열 최소 폭 합에 더해지면 경계 폭(641·1120)에서 넘친다.
+ * 사이드바 폭(260·72)·구간 경계는 그대로 두고, 본문 열 최소 폭에서 추가 여백만큼 뺀다 — 열 합계 최소값이 정본과 같아진다(REPORT 「시안↔정본 충돌」).
+ */
+.app-shell[data-layout='medium'] {
+  grid-template-columns: var(--sidebar-w) minmax(calc(var(--body-min-medium) - 3 * var(--space-3)), 1fr);
+}
+.app-shell[data-layout='wide'] {
+  grid-template-columns: var(--sidebar-w) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) auto;
+}
+.app-shell[data-layout='wide'][data-sidebar='collapsed'] {
+  grid-template-columns: var(--sidebar-w-collapsed) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) auto;
+}
 .app-shell:not([data-layout='compact']) > .connection-banner {
   margin: 0 0 var(--space-3);
 }
@@ -807,8 +820,20 @@ body {
 .space-selected .space-status {
   background: var(--accent-solid);
 }
+/* Codex r1 P2: 접힘(72px)은 섹션·항목 안쪽 여백과 간격을 줄여 점·↳·배지(모두 줄지 않음)가 한 줄에 들어가게 한다. */
+.sidebar[data-collapsed='true'] > .space-sections {
+  padding-inline: var(--space-1);
+}
 .sidebar[data-collapsed='true'] .space-item {
   justify-content: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
+}
+.sidebar[data-collapsed='true'] .space-item .thread-dot {
+  margin-left: 0;
+}
+.sidebar[data-collapsed='true'] .unread-badge {
+  margin-left: 0;
 }
 
 /* 하단 계정 카드(시안 01): 이니셜 원형 + 이름 + 역할. 버튼(멤버 관리·로그아웃)은 카드 아래 한 줄. */
