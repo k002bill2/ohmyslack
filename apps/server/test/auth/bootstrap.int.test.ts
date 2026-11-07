@@ -3,10 +3,14 @@ import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
 import { runBootstrapOwner } from '../../bin/lib/bootstrap.js';
 import { verifyPassword } from '../../src/modules/auth/password.js';
 import { buildApp } from '../../src/app.js';
+import { createPgAuthStore } from '../../src/modules/auth/index.js';
+import { createPgMembersStore } from '../../src/modules/members/index.js';
+import { HOST, login, ORIGIN, sessionCookie, testApp } from '../support/auth-app.js';
+import { SESSION_COOKIE } from '../../src/modules/auth/routes.js';
 import type { TestSchema } from '../support/test-db.js';
 import { canary, dumpAllRows, migratedSchema, pipedIo, snapshot } from './bootstrap-harness.js';
 
-/** 정본: DEV_DESIGN 6-2 BOOT-01, TRD §5. 초대 발급·member 수락 단언은 W-06(invite 라우트)에서 이 파일에 추가한다. */
+/** 정본: DEV_DESIGN 6-2 BOOT-01, TRD §5. 초대 발급·member 수락 단언은 W-06b가 같은 `it`에 추가했다. */
 const PASSWORD = canary('credential');
 const EMAIL = '  Owner@Example.TEST ';
 const FIRST = ['--email', EMAIL, '--name', 'Owner', '--workspace', 'Home'];
@@ -60,6 +64,26 @@ describe('BOOT-01 최초 owner 생성 (bin/bootstrap-owner.ts)', () => {
     }
     await app.close();
     expect(await counts()).toEqual({ users: 1, owners: 1, workspaces: 1 });
+
+    // 이후 초대 발급과 member 수락이 된다(W-06b): bootstrap owner로 로그인 → 초대 발급 → 새 계정이 member로 수락.
+    const served = testApp({ authStore: createPgAuthStore(schema.pool), membersStore: createPgMembersStore(schema.pool) });
+    const ownerLogin = await login(served, EMAIL, PASSWORD);
+    expect(ownerLogin.statusCode).toBe(200);
+    const headers = {
+      host: HOST,
+      origin: ORIGIN,
+      cookie: `${SESSION_COOKIE}=${sessionCookie(ownerLogin) ?? ''}`,
+      'x-csrf-token': ownerLogin.json<{ csrf_token: string }>().csrf_token,
+    };
+    const invite = await served.inject({ method: 'POST', url: '/api/invites', headers });
+    expect(invite.statusCode).toBe(201);
+    const token = invite.json<{ token: string }>().token;
+    const payload = { token, email: 'member@example.test', display_name: 'Member', password: PASSWORD };
+    const accepted = await served.inject({ method: 'POST', url: '/api/invites/accept', headers: { host: HOST, origin: ORIGIN }, payload });
+    expect(accepted.statusCode).toBe(201);
+    expect(accepted.json<{ user: { role: string } }>().user.role).toBe('member');
+    await served.close();
+    expect(await counts()).toEqual({ users: 2, owners: 1, workspaces: 1 });
   });
 
   it('비밀번호 원문은 DB 전 테이블·stdout·stderr 어디에도 남지 않는다', async () => {

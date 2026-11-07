@@ -39,8 +39,13 @@ export type LoginResult =
   | { readonly ok: true; readonly token: string; readonly user: UserRecord; readonly session: SessionRecord }
   | { readonly ok: false; readonly reason: 'rate_limited' | 'invalid_credentials' };
 
+export type IssuedSession = { readonly token: string; readonly user: UserRecord; readonly session: SessionRecord };
+
 export interface AuthService {
-  login(email: string, secret: string): Promise<LoginResult>;
+  /** 성공 시 요청에 실려 온 기존 세션(previousToken)을 새 세션 insert **전에** 폐기한다(고아 세션 방지, NC-07). */
+  login(email: string, secret: string, previousToken?: string): Promise<LoginResult>;
+  /** 검증을 마친 활성 계정에 새 세션을 발급한다(초대 수락). 기존 세션은 먼저 폐기한다. */
+  issueSession(user: UserRecord, previousToken?: string): Promise<IssuedSession>;
   authenticate(token: string | undefined): Promise<Authenticated | undefined>;
   logout(auth: Authenticated): Promise<void>;
   /** 로그인 직전 요청에 실려 온 기존 세션을 폐기한다(세션 고정·회전, NC-07). */
@@ -55,11 +60,18 @@ export interface AuthServiceDeps {
   readonly clock: () => number;
 }
 
-/** 없는 계정에도 같은 횟수로 해시 검증을 거치게 하는 더미 해시(NC-17). 최초 사용 때 한 번 만든다. */
+/**
+ * 없는 계정에도 같은 횟수로 해시 검증을 거치게 하는 더미 해시(NC-17).
+ * `buildApp` 준비 단계(primeDummyHash)에서 미리 만들어 첫 로그인 응답 시간이 튀지 않게 한다.
+ */
 let dummyHash: Promise<string> | undefined;
 function getDummyHash(): Promise<string> {
   dummyHash ??= hashPassword(randomBytes(24).toString('base64url'));
   return dummyHash;
+}
+
+export async function primeDummyHash(): Promise<void> {
+  await getDummyHash();
 }
 
 async function checkCredentials(store: AuthStore, email: string, secret: string): Promise<UserRecord | undefined> {
@@ -72,7 +84,7 @@ async function checkCredentials(store: AuthStore, email: string, secret: string)
  * 로그인 판정(제한 확인 → 해시 검증 → 실패/성공 기록)을 한 번에 하나씩 실행한다.
  * 겹쳐 실행되면 동시 요청이 모두 `isAllowed`를 통과한 뒤에야 실패가 기록돼 S1 상한(계정 5·전역 20)을 넘는다.
  */
-function createSerialQueue(): <T>(task: () => Promise<T>) => Promise<T> {
+export function createSerialQueue(): <T>(task: () => Promise<T>) => Promise<T> {
   let tail: Promise<unknown> = Promise.resolve();
   return <T>(task: () => Promise<T>): Promise<T> => {
     const run = tail.then(task, task);
@@ -100,25 +112,38 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     events.sessionRevoked([session.id]);
   }
 
+  async function revokeByToken(token: string | undefined): Promise<void> {
+    if (token === undefined || token === '') return;
+    const session = await store.findSessionByTokenHash(hashToken(token));
+    if (session !== undefined && session.revokedAt === null) await revoke(session);
+  }
+
+  async function issueSession(user: UserRecord, previousToken?: string): Promise<IssuedSession> {
+    await revokeByToken(previousToken);
+    const token = randomBytes(TOKEN_BYTES).toString('base64url');
+    const createdAt = now();
+    const session: SessionRecord = {
+      id: randomUUID(),
+      userId: user.id,
+      tokenHash: hashToken(token),
+      createdAt,
+      lastSeenAt: createdAt,
+      expiresAt: slidingExpiry(createdAt, createdAt),
+      revokedAt: null,
+    };
+    await store.insertSession(session);
+    return { token, user, session };
+  }
+
   return {
-    async login(email, secret) {
+    async login(email, secret, previousToken) {
       const user = await serial(() => verifyAttempt(email, secret));
       if (user === 'rate_limited') return { ok: false, reason: 'rate_limited' };
       if (user === undefined) return { ok: false, reason: 'invalid_credentials' };
-      const token = randomBytes(TOKEN_BYTES).toString('base64url');
-      const createdAt = now();
-      const session: SessionRecord = {
-        id: randomUUID(),
-        userId: user.id,
-        tokenHash: hashToken(token),
-        createdAt,
-        lastSeenAt: createdAt,
-        expiresAt: slidingExpiry(createdAt, createdAt),
-        revokedAt: null,
-      };
-      await store.insertSession(session);
-      return { ok: true, token, user, session };
+      return { ok: true, ...(await issueSession(user, previousToken)) };
     },
+
+    issueSession,
 
     async authenticate(token) {
       if (token === undefined || token === '') return undefined;
@@ -137,11 +162,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       await revoke(auth.session);
     },
 
-    async revokeByToken(token) {
-      if (token === undefined || token === '') return;
-      const session = await store.findSessionByTokenHash(hashToken(token));
-      if (session !== undefined && session.revokedAt === null) await revoke(session);
-    },
+    revokeByToken,
 
     async listSessions(auth) {
       return store.listLiveSessions(auth.user.id, now());

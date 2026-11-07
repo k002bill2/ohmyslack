@@ -7,8 +7,10 @@ import { normalizeHost, registerRequestGuards, registerResponseHeaders } from '.
 import { createAuthEvents, type AuthEvents } from './modules/auth/events.js';
 import { createLoginLimiter, type LoginLimiter } from './modules/auth/login-limiter.js';
 import { registerAuthRoutes } from './modules/auth/routes.js';
-import { createAuthService } from './modules/auth/service.js';
+import { createAuthService, primeDummyHash } from './modules/auth/service.js';
 import type { AuthStore } from './modules/auth/store.js';
+import { registerMemberRoutes } from './modules/members/routes.js';
+import type { MembersStore } from './modules/members/store.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
 
 export interface AppOptions {
@@ -18,6 +20,8 @@ export interface AppOptions {
   readonly extraHosts?: readonly string[];
   /** 주어지지 않으면 인증 라우트를 등록하지 않는다(DB 없는 골격 테스트). */
   readonly authStore?: AuthStore;
+  /** 초대·멤버·비활성화 저장소. authStore와 함께 주어질 때만 해당 라우트를 등록한다. */
+  readonly membersStore?: MembersStore;
   readonly clock?: () => number;
   readonly limiter?: LoginLimiter;
   readonly authEvents?: AuthEvents;
@@ -28,6 +32,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'allowedOrigin',
   'extraHosts',
   'authStore',
+  'membersStore',
   'clock',
   'limiter',
   'authEvents',
@@ -100,8 +105,13 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   if (options.authStore !== undefined) {
     const store = options.authStore;
     const limiter = options.limiter ?? createLoginLimiter(clock);
+    const membersStore = options.membersStore;
     app.register(async (scope) => {
-      registerAuthRoutes(scope, createAuthService({ store, limiter, events: authEvents, clock }));
+      // 더미 해시를 준비 단계에서 선계산해 첫 로그인의 미존재 계정 응답 시간이 튀지 않게 한다(NC-17).
+      await primeDummyHash();
+      const auth = createAuthService({ store, limiter, events: authEvents, clock });
+      registerAuthRoutes(scope, auth);
+      if (membersStore !== undefined) registerMemberRoutes(scope, { auth, store: membersStore, events: authEvents, clock });
     });
   }
   return app;
