@@ -1,0 +1,94 @@
+import { randomUUID } from 'node:crypto';
+import { HttpError } from '../../http/errors.js';
+import type { AccessAction, ConversationsService } from '../conversations/service.js';
+import type { MessageEvents } from './events.js';
+import type { MessageLocator, MessageRecord, MessagesStore, Page, PageRequest, WriteResult } from './store.js';
+
+export interface MessagesServiceDeps {
+  readonly store: MessagesStore;
+  readonly conversations: ConversationsService;
+  readonly events: MessageEvents;
+  readonly clock: () => number;
+}
+
+export interface SendInput {
+  readonly clientMessageId: string;
+  readonly body: string;
+  readonly threadRootId: string | null;
+  readonly mentionUserIds: readonly string[];
+}
+
+export interface WriteOutcome {
+  readonly message: MessageRecord;
+  readonly changeId: number;
+  /** 새로 만들었으면 true, 멱등 재시도면 false. */
+  readonly created: boolean;
+}
+
+export interface MessagesService {
+  /**
+   * `message` 메타 라우트의 접근 판정(B2): 메시지 ID로 대화를 해석한 뒤 `conversations.service.assertAccess` **하나**로 판정한다.
+   * 없는 메시지는 존재를 숨기고 404.
+   */
+  resolveAccess(userId: string, messageId: string, action: AccessAction): Promise<MessageLocator>;
+  send(authorId: string, conversationId: string, input: SendInput): Promise<WriteOutcome>;
+  edit(editorId: string, messageId: string, body: string, mentionUserIds: readonly string[]): Promise<WriteOutcome>;
+  remove(actorId: string, messageId: string): Promise<WriteOutcome>;
+  history(conversationId: string, page: PageRequest): Promise<Page>;
+  replies(rootId: string, page: PageRequest): Promise<{ readonly root: MessageRecord; readonly page: Page }>;
+}
+
+const notFound = (): HttpError => new HttpError(404, 'not_found');
+
+function written(result: WriteResult): { readonly message: MessageRecord; readonly changeId: number } {
+  if (result.kind === 'forbidden') throw new HttpError(403, 'forbidden');
+  if (result.kind === 'not_found') throw notFound();
+  return result;
+}
+
+/** 이벤트는 store가 commit하고 돌아온 **뒤**에만 발행한다(B3). 롤백·예외 경로는 이벤트 0건. */
+export function createMessagesService(deps: MessagesServiceDeps): MessagesService {
+  const { store, conversations, events, clock } = deps;
+  const now = (): Date => new Date(clock());
+
+  return {
+    async resolveAccess(userId, messageId, action) {
+      const located = await store.locate(messageId);
+      if (located === undefined) throw notFound();
+      await conversations.assertAccess(userId, located.conversationId, action);
+      return located;
+    },
+    async send(authorId, conversationId, input) {
+      const result = await store.send({ id: randomUUID(), conversationId, authorId, ...input, at: now() });
+      if (result.kind === 'conflict') throw new HttpError(409, 'idempotency_conflict');
+      if (result.kind === 'bad_root') throw new HttpError(400, 'invalid_thread_root');
+      if (result.kind === 'not_member') throw notFound();
+      if (result.kind === 'created') events.created({ changeId: result.changeId, message: result.message });
+      return { message: result.message, changeId: result.changeId, created: result.kind === 'created' };
+    },
+    async edit(editorId, messageId, body, mentionUserIds) {
+      const result = written(await store.edit({ id: messageId, editorId, body, mentionUserIds, at: now() }));
+      events.updated(result);
+      return { ...result, created: false };
+    },
+    async remove(actorId, messageId) {
+      const result = written(await store.remove(messageId, actorId, now()));
+      const { message } = result;
+      events.deleted({
+        changeId: result.changeId,
+        conversationId: message.conversationId,
+        messageId: message.id,
+        seq: message.seq,
+        deletedAt: message.deletedAt ?? now(),
+      });
+      return { ...result, created: false };
+    },
+    history: (conversationId, page) => store.history(conversationId, page),
+    async replies(rootId, page) {
+      const root = await store.get(rootId);
+      if (root === undefined) throw notFound();
+      if (root.threadRootId !== null) throw new HttpError(400, 'invalid_thread_root');
+      return { root, page: await store.replies(rootId, page) };
+    },
+  };
+}
