@@ -112,3 +112,41 @@ body {
   border-radius: 50%;
   background: var(--accent-solid);
 }
+
+/* W-10g 공간 진입점: 사이드바 상단·하단, Dialog(CMP-18). 색·간격은 기존 토큰만 쓴다. */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-actions,
+.sidebar-account {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+.sidebar-account {
+  margin-top: auto;
+  align-items: center;
+}
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg-sidebar) 60%, transparent);
+  z-index: 10;
+}
+.dialog {
+  min-width: min(420px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border-radius: 8px;
+}
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

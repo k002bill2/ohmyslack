@@ -141,3 +141,31 @@ export const SPACE_SWITCHER_COPY = {
   inputLabel: '채널 또는 DM 이름',
   empty: '일치하는 채널이나 DM이 없습니다',
 } as const;
+
+/** CMP-18 Dialog 닫기 버튼(D §6 아이콘 표 「닫기 / 뒤로」 `x`, UI_STATES §2-8 「Esc·닫기(`x`)」). 아이콘 없이 텍스트로. */
+export const DIALOG_CLOSE_LABEL = '닫기';
+
+/** CMP-02 Sidebar(UI_STATES §2-3, D §6-2 CMP-02 버튼명·§10-1 SCR-03, D §4-2 설정 「로그아웃」). */
+export const SIDEBAR_COPY = {
+  browseChannels: DIALOG_TITLES.browseChannels,
+  startDm: DIALOG_TITLES.startDm,
+  createChannel: DIALOG_TITLES.createChannel,
+  emptyOwner: '첫 채널을 만들어 보세요',
+  emptyMember: '채널이 없습니다 — 관리자만 생성',
+  logout: '로그아웃',
+} as const;
+
+/** CMP-23 ChannelBrowser(UI_STATES §2-11, D §6-2 CMP-23). */
+export const CHANNEL_BROWSER_COPY = {
+  empty: '참여할 수 있는 채널이 없습니다',
+  join: '참여',
+} as const;
+
+/** CMP-24 DmStarter(UI_STATES §2-11). 시작 버튼은 「DM 시작」(같은 표 기본 상태). */
+export const DM_STARTER_COPY = {
+  empty: '다른 멤버가 없습니다',
+  start: DIALOG_TITLES.startDm,
+} as const;
+
+/** 서버 403(D §4-2 멤버 관리 「권한이 없습니다」, UI_STATES §2-12 권한 없음). 채널 만들기 403에도 같은 문장을 쓴다. */
+export const FORBIDDEN_TEXT = '권한이 없습니다';
