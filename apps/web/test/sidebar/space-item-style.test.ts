@@ -48,8 +48,8 @@ describe('사이드바 항목 스타일(CMP-03·CMP-04)', () => {
   it('읽음 이름은 400, 읽지 않음은 700 — 둘 다 기본 글자색(muted는 나간 채널 전용)', () => {
     expect(decls('.space-name')).toContain('font-weight: 400');
     expect(decls('.space-unread .space-name')).toContain('font-weight: 700');
-    expect(decls('.space-name')).not.toContain('color');
-    expect(decls('.space-unread .space-name')).not.toContain('color');
+    expect(decls('.space-name')).toContain('color: var(--text-muted)');
+    expect(decls('.space-unread .space-name')).toContain('color: var(--text)');
     expect(decls('.space-left .space-name')).toContain('color: var(--text-muted)');
   });
 

@@ -100,6 +100,7 @@
 }
 .space-name {
   min-width: 0;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -107,6 +108,7 @@
 }
 .space-unread .space-name {
   font-weight: 700;
+  color: var(--text);
 }
 /* 새 답글 점은 이름 바로 뒤, 멘션 배지(CMP-04)는 오른쪽 끝. 두 표시는 줄지 않는다. */
 .space-item .thread-dot {
