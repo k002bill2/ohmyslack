@@ -79,6 +79,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let ended = false;
   let failures = 0;
   const rootFor = new Map<string, string>();
+  /** 전송 대기 항목의 작성 시각(로컬). 빈 문자열이면 시각 포맷이 RangeError를 낸다(Codex r1 P1). */
+  const createdFor = new Map<string, string>();
   const acks = new Map<string, { resolve: () => void; reject: (e: Error) => void }>();
   let nextRoot: string | undefined;
   let detach = () => undefined as void;
@@ -92,7 +94,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       conversationId: p.conversationId,
       ...(rootId === undefined ? {} : { rootId }),
       author: author(userId ?? p.authorId),
-      createdAt: '',
+      createdAt: createdFor.get(p.clientMessageId) ?? new Date().toISOString(),
       body: p.body,
       replyCount: 0,
       pending: p,
@@ -148,7 +150,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
           body: req.body,
           ...(rootId === undefined ? {} : { thread_root_id: rootId }),
         });
-        fold = foldMessage(fold, res.change_id, res.message, author);
+        if (!ended) fold = foldMessage(fold, res.change_id, res.message, author);
         return { ok: true, messageId: res.message.id };
       } catch (e) {
         if (e instanceof HttpStatusError) return { ok: false, status: e.status };
@@ -158,10 +160,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     newClientMessageId: () => {
       const id = deps.newClientMessageId?.() ?? crypto.randomUUID();
       if (nextRoot !== undefined) rootFor.set(id, nextRoot);
+      createdFor.set(id, new Date().toISOString());
       return id;
     },
     isOnline,
     onChange: (items) => {
+      // 세션 종료 뒤 늦게 끝난 전송이 본문을 되살리지 않는다(Codex r1 P2).
+      if (ended) return;
       pending = items;
       emit();
     },
@@ -255,14 +260,22 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     return through;
   };
 
+  /** `next_cursor`가 null이 될 때까지 모든 페이지를 합친다(Codex r1 P2). */
   const loadList = async () => {
-    const list = await api.get<ConversationsResponse>('/api/conversations');
-    spaces = list.conversations.map((c) => toSpace(c, names));
-    return list.conversations;
+    let page = await api.get<ConversationsResponse>('/api/conversations');
+    const all = [...page.conversations];
+    while (page.next_cursor !== null) {
+      page = await api.get<ConversationsResponse>(`/api/conversations?after=${encodeURIComponent(page.next_cursor)}`);
+      all.push(...page.conversations);
+    }
+    spaces = all.map((c) => toSpace(c, names));
+    return all;
   };
 
   /** 새 기기·410: 목록 → 대화별 snapshot → 첫 snapshot_cursor부터 catch-up(TRD §3). */
   const snapshotProcedure = async (): Promise<number> => {
+    // snapshot이 정본: 만료 기간의 수정·삭제가 이전 applied change_id에 막혀 무시되지 않도록 fold를 새로 쌓는다(Codex r1 P1).
+    fold = emptyFold;
     let first: number | null = null;
     for (const c of await loadList()) {
       const snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
@@ -288,6 +301,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     userId = me.user.id;
     names = new Map(names).set(me.user.id, me.user.display_name);
     adoptAccount(userId, storage);
+    // 이름이 먼저 있어야 catch-up·snapshot 메시지 작성자와 DM 이름이 UUID·빈 값으로 굳지 않는다(Codex r1 P2).
+    await loadMembers();
+    if (gen !== generation) return false;
     realtime.start();
     const saved = readCheckpoint(userId, storage);
     let watermark: number;
@@ -298,7 +314,6 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       watermark = await snapshotProcedure();
     }
     await loadList();
-    await loadMembers();
     if (gen !== generation) return false;
     emit();
     if (current !== null) {
@@ -313,7 +328,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     return true;
   };
 
-  const resume = async (): Promise<boolean> => {
+  const resume = async (retried = false): Promise<boolean> => {
     if (ended) return false;
     generation += 1;
     const gen = generation;
@@ -324,7 +339,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     } catch (e) {
       if (gen !== generation || ended) return false;
       // 서버 불가: 최신으로 표시하지 않는다. 네트워크 오류가 1회뿐이면 한 번 더 시도해 끊김 판정을 확정한다.
-      if (e instanceof NetworkError && failures < OFFLINE_AFTER_FAILURES) return resume();
+      // 재시도는 복귀 절차당 1회 — 중간 HTTP 성공이 실패 횟수를 초기화해도 무한 재호출하지 않는다(Codex r1 P2).
+      if (e instanceof NetworkError && !retried) return resume(true);
+      if (e instanceof NetworkError) setConnection('offline');
       return false;
     } finally {
       if (gen === generation) resuming = false;
@@ -336,6 +353,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       const res = await api.get<{ messages: SnapshotResponse['messages'] }>(
         `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=${HISTORY_LIMIT}`,
       );
+      if (ended) return;
       for (const m of res.messages) fold = foldMessage(fold, 0, m, author);
       emit();
     } catch (e) {

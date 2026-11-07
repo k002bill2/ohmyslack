@@ -35,6 +35,7 @@ export function LiveApp({ fetch, createSource, session: injected }: LiveAppProps
     void source.start().then((ok) => {
       if (ok) hadSession.current = true;
     });
+    return source;
   }, [createSource, fetch, session]);
 
   useEffect(
@@ -46,8 +47,10 @@ export function LiveApp({ fetch, createSource, session: injected }: LiveAppProps
     [session],
   );
 
+  // 첫 연결 소스는 만든 effect가 직접 정리한다 — StrictMode 이중 실행에서 버려진 소스의 WS·리스너가 남지 않는다(Codex r1 P2).
   useEffect(() => {
-    connect();
+    const source = connect();
+    return () => source.stop();
   }, [connect]);
 
   useEffect(() => {
