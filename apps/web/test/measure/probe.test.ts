@@ -78,6 +78,7 @@ describe('W-10k C 측정 probe', () => {
     expect(s.stages['emit-ws'].p50).toBe(5);
     expect(s.stages['commit-emit'].p50).toBe(15);
     expect(s.stages['raf-commit'].p50).toBe(16);
+    expect(s.stages['raf-ws'].p50).toBe(36);
     expect(s.pending).toBe(0);
     h.stop();
   });

@@ -7,7 +7,7 @@
 import { createHistogram, type Histogram, type StageStats } from './histogram.js';
 import { setProbeSink, type ProbeStage } from './hook.js';
 
-export const STAGES = ['ws', 'emit', 'commit', 'raf', 'emit-ws', 'commit-emit', 'raf-commit'] as const;
+export const STAGES = ['ws', 'emit', 'commit', 'raf', 'emit-ws', 'commit-emit', 'raf-commit', 'raf-ws'] as const;
 export type StageName = (typeof STAGES)[number];
 
 export interface LatencySummary {
@@ -85,6 +85,7 @@ export function createProbe(deps: ProbeDeps): Probe {
     hist['emit-ws'].record(e.emit - e.ws);
     hist['commit-emit'].record(e.commit - e.emit);
     hist['raf-commit'].record(raf - e.commit);
+    hist['raf-ws'].record(raf - e.ws);
   };
 
   const committed = (id: string) => {
