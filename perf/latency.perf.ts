@@ -37,19 +37,22 @@ interface Sent {
   readonly senderConn: number;
 }
 
+/** 부하 중 누적하는 측정 상태(실행 동안만 갱신, 끝나면 읽기만 한다). */
 interface LoadResult {
   readonly sent: Sent[];
-  readonly attempts: number;
-  readonly errors: number;
+  attempts: number;
+  errors: number;
   readonly commitMs: number[];
-  readonly lockWaitsMax: number;
+  lockWaitsMax: number;
   readonly startedAt: string;
-  readonly elapsedS: number;
+  elapsedS: number;
 }
 
 let ctx: E2eContext | undefined;
 let conns: Conn[] = [];
 let channel = '';
+/** 측정 시작 시점의 환경(커밋 SHA 포함). 실행 중 작업 트리가 바뀌어도 측정한 코드를 가리킨다. */
+let env: Record<string, unknown> = {};
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -190,6 +193,7 @@ function writeReport(report: Record<string, unknown>): string {
 
 beforeAll(async () => {
   ctx = await setupE2e();
+  env = await environment(ctx);
   await connect(ctx);
 }, 120_000);
 
@@ -217,7 +221,7 @@ describe('FR-SYNC-01 (a) 프로토콜 지연', () => {
       latency_ms: latency ?? null,
       commit_roundtrip_ms: summarize(load.commitMs) ?? null,
       r08_pg_lock_waits_max: load.lockWaitsMax,
-      environment: await environment(ctx),
+      environment: env,
     };
     const path = writeReport(report);
     console.info(`FR-SYNC-01 (a) 결과: ${path}\n${JSON.stringify({ sends: report.sends, delivery, latency_ms: latency, commit_roundtrip_ms: report.commit_roundtrip_ms, r08_pg_lock_waits_max: load.lockWaitsMax })}`);
