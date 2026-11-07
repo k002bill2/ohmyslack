@@ -37,6 +37,8 @@ export interface MessageItemProps {
   readonly onOpenThread?: (id: string) => void;
   readonly threadUnread?: boolean;
   readonly threadHolding?: boolean;
+  /** 보이는 시각 위치(UI_STATES §3 타임스탬프 행): compact = 본문 아래(`below`), medium·wide = 작성자 옆(`inline`, 기본). */
+  readonly timePlacement?: 'inline' | 'below';
 }
 
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -44,6 +46,23 @@ const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digi
 /** 디자인 §7-2 `aria-label="홍길동, 오후 3:12"` 형식(작성자, 시각). */
 export function messageLabel(author: string, createdAt: string): string {
   return `${author}, ${TIME.format(new Date(createdAt))}`;
+}
+
+/**
+ * 보이는 시각(기존 TIME 포맷). 항목 aria-label에 이미 시각이 있어 스크린리더 중복 낭독을 막으려 `aria-hidden`.
+ * 수정된 메시지는 툴팁(title)에 수정 시각(UI_STATES §2-5 「시간 툴팁에 수정 시각」 — 정본에 문구가 없어 시각만).
+ */
+function MessageTime({ message, placement }: { readonly message: MessageItemData; readonly placement: 'inline' | 'below' }) {
+  return (
+    <time
+      className={`msg-time msg-time-${placement}`}
+      dateTime={message.createdAt}
+      aria-hidden="true"
+      {...(message.editedAt === undefined ? {} : { title: TIME.format(new Date(message.editedAt)) })}
+    >
+      {TIME.format(new Date(message.createdAt))}
+    </time>
+  );
 }
 
 /** 본문 자리: 삭제 자리표시자(자리 유지) / 본문 + 「(수정됨)」(UI_STATES §2-5). */
@@ -65,6 +84,7 @@ function MessageContent({ message }: { readonly message: MessageItemData }) {
 function MessageItemView(props: MessageItemProps) {
   const { message, onReply, onRetry, onDiscard, selfId, onEdit, onDelete, onOpenThread } = props;
   const pending = message.pending;
+  const placement = props.timePlacement ?? 'inline';
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const item = useRef<HTMLLIElement>(null);
@@ -90,6 +110,7 @@ function MessageItemView(props: MessageItemProps) {
   return (
     <li ref={item} tabIndex={-1} className="msg-item" data-message-id={message.id} aria-label={messageLabel(message.author, message.createdAt)}>
       <span className="msg-author">{message.author}</span>
+      {placement === 'inline' && <MessageTime message={message} placement="inline" />}
       {isEditing ? (
         <MessageEditor
           initial={message.body}
@@ -101,6 +122,19 @@ function MessageItemView(props: MessageItemProps) {
         />
       ) : (
         <MessageContent message={message} />
+      )}
+      {placement === 'below' && <MessageTime message={message} placement="below" />}
+      {/* CMP-14: 원문 아래 별도 줄(액션 줄과 분리, UI_STATES §2-7). */}
+      {onOpenThread !== undefined && (message.replyCount ?? 0) >= 1 && (
+        <div className="msg-thread">
+          <ThreadSummary
+            rootId={message.id}
+            count={message.replyCount ?? 0}
+            unread={props.threadUnread === true}
+            holding={props.threadHolding === true}
+            onOpen={onOpenThread}
+          />
+        </div>
       )}
       {pending !== undefined && (
         <MessageStatus
@@ -123,19 +157,11 @@ function MessageItemView(props: MessageItemProps) {
           )}
         </div>
       )}
-      {onReply !== undefined && (
+      {/* 삭제 자리표시자 액션은 「스레드 열기만」(UI_STATES §2-5) — 「답글」 없음, CMP-14는 유지. */}
+      {onReply !== undefined && message.deleted !== true && (
         <button type="button" className="msg-action" data-reply-for={message.id} onClick={() => onReply(message.id)}>
           답글
         </button>
-      )}
-      {onOpenThread !== undefined && (
-        <ThreadSummary
-          rootId={message.id}
-          count={message.replyCount ?? 0}
-          unread={props.threadUnread === true}
-          holding={props.threadHolding === true}
-          onOpen={onOpenThread}
-        />
       )}
       {confirming && onDelete !== undefined && (
         <DeleteMessageDialog
