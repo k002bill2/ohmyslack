@@ -70,23 +70,61 @@
   margin: 0;
   padding: 0;
 }
+/*
+ * CMP-03 SpaceListItem(UI_STATES §2-3, DESIGN_REFERENCE §6-2): 버튼 기본 글꼴 대신 상속 글꼴 + --text-md, 세로 가운데 정렬.
+ * 읽음 = 400·기본 글자색, 읽지 않음 = 700·기본 글자색. muted는 「나간 채널」 전용(UI_STATES §2-3 표 「나간 채널」 행).
+ */
 .space-item {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
   width: 100%;
   min-height: 44px;
+  padding: 0 var(--space-3);
   border: 0;
   border-left: 3px solid transparent;
   background: transparent;
-  color: inherit;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-tight);
   text-align: start;
 }
-.space-selected {
+.space-item:hover {
+  background: var(--bg-hover);
+}
+.space-selected,
+.space-selected:hover {
   border-left-color: var(--accent-solid);
   background: var(--bg-active);
 }
+.space-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
 .space-unread .space-name {
   font-weight: 700;
+}
+/* 새 답글 점은 이름 바로 뒤, 멘션 배지(CMP-04)는 오른쪽 끝. 두 표시는 줄지 않는다. */
+.space-item .thread-dot {
+  flex: none;
+}
+.unread-badge {
+  flex: none;
+  margin-left: auto;
+  min-width: 1.25rem;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-sizing: border-box;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: var(--leading-tight);
+  text-align: center;
 }
 .conversation-pane {
   display: flex;
