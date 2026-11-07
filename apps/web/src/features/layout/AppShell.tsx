@@ -86,6 +86,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts }: AppShellProps) 
     }
   }, [state.threadRootId]);
 
+  // 현재 대화 구독·이력 로드(HTTP 구현). 메모리 구현은 open이 없다.
+  useEffect(() => {
+    dataSource.open?.(state.conversationId);
+  }, [dataSource, state.conversationId]);
+
   // F4: 공간 전환 후 새 공간의 작성기.
   useEffect(() => {
     if (!focusComposer.current) return;

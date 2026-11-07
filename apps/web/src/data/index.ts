@@ -1,5 +1,5 @@
 /**
- * 화면 데이터 주입 경계(W-10b). 운영 구현(HTTP·WS)은 다음 웹 레인이 같은 인터페이스로 붙인다.
+ * 화면 데이터 주입 경계(W-10b). 운영 구현은 `createHttpDataSource`(HTTP + WS, W-10c).
  * 값 필드는 TRD §3 `GET /api/conversations` 항목 필드(unread_count·mention_count·unread_thread_count)와 대응한다.
  */
 import type { PendingMessage } from '../features/conversation';
@@ -25,6 +25,11 @@ export interface Message {
   readonly replyCount: number;
   /** 내 전송 대기 항목(전송 중·저장 여부 확인 중·실패). 저장 확인이면 없음. */
   readonly pending?: PendingMessage;
+  /** 서버 메시지 필드(HTTP 구현만 채운다). */
+  readonly seq?: number;
+  readonly authorId?: string;
+  readonly clientMessageId?: string;
+  readonly deleted?: boolean;
 }
 
 /** 디자인 §6-4 연결 상태 4종. */
@@ -40,6 +45,8 @@ export interface DataSource {
   getSnapshot(): Snapshot;
   subscribe(listener: () => void): () => void;
   send(target: { readonly conversationId: string; readonly rootId?: string }, body: string): void;
+  /** 현재 대화가 바뀔 때 호출(구독·이력 로드). 메모리 구현은 없음. */
+  open?(conversationId: string | null): void;
 }
 
 export interface MemoryDataSource extends DataSource {
