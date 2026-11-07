@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ActionFailure, ActionResult, Invite, Member } from '../../data';
 import { FORBIDDEN_TEXT, MEMBER_ADMIN_COPY, MEMBER_DEACTIVATE_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
@@ -63,6 +64,8 @@ export function MemberAdmin({ account, load, createInvite, deactivate, origin = 
   const [pending, setPending] = useState<Pending | null>(null);
   /** 발급 요청 차수 — 닫힌 뒤 도착한 응답은 버린다. */
   const issue = useRef(0);
+  /** 비활성화 확인창 차수 — 닫힌 확인창의 늦은 응답이 새 확인창을 바꾸지 않게(Codex r1 P2). */
+  const confirmRound = useRef(0);
 
   const fetchList = useCallback(async () => {
     setView({ kind: 'loading' });
@@ -92,12 +95,21 @@ export function MemberAdmin({ account, load, createInvite, deactivate, origin = 
   const confirmDeactivate = async () => {
     if (pending === null || pending.busy) return;
     const target = pending.member;
+    const mine = confirmRound.current;
     setPending({ member: target, busy: true, failure: null });
     const res = await deactivate(target.id);
-    if (res.ok) {
-      setInactive((prev) => new Set([...prev, target.id]));
-      setPending(null);
-    } else setPending({ member: target, busy: false, failure: res });
+    // 성공은 확인창이 닫혔어도 행에 반영한다. 확인창 상태는 같은 차수일 때만 바꾼다.
+    if (res.ok) setInactive((prev) => new Set([...prev, target.id]));
+    if (confirmRound.current !== mine) return;
+    setPending(res.ok ? null : { member: target, busy: false, failure: res });
+  };
+  const openConfirm = (member: Member) => {
+    confirmRound.current += 1;
+    setPending({ member, busy: false, failure: null });
+  };
+  const closeConfirm = () => {
+    confirmRound.current += 1;
+    setPending(null);
   };
 
   const body = (() => {
@@ -120,7 +132,7 @@ export function MemberAdmin({ account, load, createInvite, deactivate, origin = 
               member={m}
               self={m.id === account?.id}
               inactive={inactive.has(m.id)}
-              onDeactivate={() => setPending({ member: m, busy: false, failure: null })}
+              onDeactivate={() => openConfirm(m)}
             />
           ))}
         </ul>
@@ -134,15 +146,18 @@ export function MemberAdmin({ account, load, createInvite, deactivate, origin = 
         {MEMBER_ADMIN_COPY.title}
       </h1>
       {body}
-      {invite !== null && <InviteDialog view={invite} onRetry={() => void openInvite()} onClose={closeInvite} />}
-      {pending !== null && (
-        <DeactivateDialog
-          busy={pending.busy}
-          failure={pending.failure}
-          onConfirm={() => void confirmDeactivate()}
-          onCancel={() => setPending(null)}
-        />
-      )}
+      {/* Dialog는 body 바로 아래로 — 형제(앱 루트 전체: 사이드바 포함)를 inert로 막는다(Codex r1 P2). */}
+      {invite !== null && createPortal(<InviteDialog view={invite} onRetry={() => void openInvite()} onClose={closeInvite} />, document.body)}
+      {pending !== null &&
+        createPortal(
+          <DeactivateDialog
+            busy={pending.busy}
+            failure={pending.failure}
+            onConfirm={() => void confirmDeactivate()}
+            onCancel={closeConfirm}
+          />,
+          document.body,
+        )}
     </main>
   );
 }

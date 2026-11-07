@@ -184,6 +184,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       e.shiftKey ? (id) => unread.has(id) : undefined,
     );
     if (next === null) return;
+    setMembers(false);
     focusComposer.current = true;
     dispatch({ type: 'select-space', conversationId: next });
   };

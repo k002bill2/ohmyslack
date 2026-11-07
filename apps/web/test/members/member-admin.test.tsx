@@ -259,6 +259,28 @@ describe('멤버 비활성화 확인 Dialog(UI_STATES §2-8, §2-12 비활성화
     expect(within(page()).getByRole('button', { name: 'B 비활성화' })).toBeTruthy();
   });
 
+  it('닫힌 확인창의 늦은 응답은 새 확인창을 바꾸지 않고, 성공은 행에 반영(Codex r1 P2)', async () => {
+    let finish: (ok: boolean) => void = () => undefined;
+    const deactivate = vi.fn((id: string) =>
+      id === PEER ? new Promise<{ ok: true; value: null }>((r) => (finish = () => r({ ok: true, value: null }))) : Promise.resolve({ ok: true as const, value: null }),
+    );
+    const members = [
+      { id: ME, displayName: 'A', role: 'owner' as const },
+      { id: PEER, displayName: 'B', role: 'member' as const },
+      { id: C, displayName: 'C', role: 'member' as const },
+    ];
+    render(<MemberAdmin account={{ id: ME, role: 'owner' }} load={async () => ({ ok: true, value: members })} createInvite={vi.fn()} deactivate={deactivate} origin="https://h.test" />);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'B 비활성화' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '멤버 비활성화' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '취소' }));
+    fireEvent.click(screen.getByRole('button', { name: 'C 비활성화' }));
+    await act(async () => finish(true));
+    const dialog = screen.getByRole('dialog', { name: '멤버 비활성화' });
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(screen.getAllByRole('listitem')[1]!.className).toContain('member-inactive');
+  });
+
   it('오류 → Dialog 안 ErrorState, 행 그대로', async () => {
     installViewport(1280);
     const server = adminServer();
@@ -304,6 +326,28 @@ describe('사이드바 진입점·경로(D §4-2)', () => {
     await settle();
     expect(screen.queryByRole('main', { name: '멤버 관리' })).toBeNull();
     expect(history.pathname()).toMatch(/^\/c\//);
+  });
+
+  it('Ctrl+Alt+↓ 공간 이동 → 멤버 관리 닫힘(Codex r1 P2)', async () => {
+    installViewport(1280);
+    const { history } = mount(adminServer());
+    await settle();
+    fireEvent.keyDown(page(), { key: 'ArrowDown', ctrlKey: true, altKey: true });
+    await settle();
+    expect(screen.queryByRole('main', { name: '멤버 관리' })).toBeNull();
+    expect(history.pathname()).toMatch(/^\/c\//);
+  });
+
+  it('Dialog 열림 → 사이드바(앱 루트)가 inert(Codex r1 P2)', async () => {
+    installViewport(1280);
+    mount(adminServer());
+    await settle();
+    fireEvent.click(within(page()).getByRole('button', { name: 'B 비활성화' }));
+    const nav = document.querySelector('nav.sidebar') as HTMLElement;
+    const inertUp = (el: HTMLElement | null): boolean => el !== null && (el.inert || inertUp(el.parentElement));
+    expect(inertUp(nav)).toBe(true);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '취소' }));
+    expect(inertUp(nav)).toBe(false);
   });
 
   it('compact: 멤버 관리 화면 + 「닫기」', async () => {
