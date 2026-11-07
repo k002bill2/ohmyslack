@@ -81,6 +81,12 @@ describe('check-cleanroom', () => {
     }
   });
 
+  it('FR-OPS-04 CLEANROOM 5절 패턴 검사가 0건이면 통과하고 위반과 실행 오류는 실패한다', async () => {
+    expect(await run([], captureCtx(fixtureRoot({ 'src/a.ts': 'export const ok = 1;\n' }), {}))).toBe(0);
+    expect(await run([], captureCtx(fixtureRoot({ 'src/bad.ts': `// ${forbiddenToken()}\n` }), {}))).toBe(1);
+    expect(await run(['--cleanroom', CLEANROOM], captureCtx('/nonexistent-cleanroom-root', {}))).toBe(1);
+  });
+
   it('passes on the real repository', async () => {
     expect(await run([], captureCtx(REPO, {}))).toBe(0);
   });
