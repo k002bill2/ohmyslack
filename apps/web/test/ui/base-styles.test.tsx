@@ -69,8 +69,10 @@ describe('auth.css', () => {
     expect(src('ui/base.css')).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
   });
 
-  it('카드는 --bg-elevated, 제목 --text-xl, 입력·버튼 최소 44px, 오류 --danger-text, 링크 --accent-text', () => {
-    expect(css).toContain('background: var(--bg-elevated)');
+  // 시안 03(W-11c): 카드·입력 면은 slate1(--bg-app), 화면 바탕은 slate2(--bg-sidebar). 이전 기대값 --bg-elevated 카드 → 시안 근거로 교체.
+  it('카드는 --bg-app(바탕 --bg-sidebar), 제목 --text-xl, 입력·버튼 최소 44px, 오류 --danger-text, 링크 --accent-text', () => {
+    expect(css).toMatch(/\.auth-card \{[^}]*background: var\(--bg-app\)/);
+    expect(css).toMatch(/\.auth-screen \{[^}]*background: var\(--bg-sidebar\)/);
     expect(css).toContain('font-size: var(--text-xl)');
     expect(css.match(/min-height: 44px/g)).toHaveLength(2);
     expect(css).toMatch(/\[role='alert'\][^{]*\{[^}]*color: var\(--danger-text\)/);
@@ -92,9 +94,10 @@ describe('auth.css 글자 대비(§7-1 1.4.3, 두 스킴)', () => {
     expect(css).toMatch(/button\[type='submit'\] \{[^}]*background: var\(--accent-bg\);\s*color: var\(--accent-text\)/);
   });
 
-  it.each(['light', 'dark'] as const)('%s: 카드·입력(bg-elevated)·버튼 위 글자 4.5:1 이상', (scheme) => {
+  it.each(['light', 'dark'] as const)('%s: 카드·입력(bg-elevated·bg-app)·버튼 위 글자 4.5:1 이상', (scheme) => {
     for (const fg of ['--text', '--text-muted', '--danger-text', '--accent-text']) {
       expect(ratio(scheme, fg, '--bg-elevated')).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(scheme, fg, '--bg-app')).toBeGreaterThanOrEqual(4.5);
     }
     expect(ratio(scheme, '--accent-text', '--accent-bg')).toBeGreaterThanOrEqual(4.5);
   });
@@ -108,5 +111,33 @@ describe('폰트는 SW precache 대상이 아니다', () => {
   it('번들에 fonts/ 파일이 섞여도 목록에 넣지 않는다', () => {
     const entries = buildPrecacheEntries({ 'fonts/PretendardVariable.woff2': 'x', 'index.html': '<html>' }, {});
     expect(entries.map((e) => e.url)).toEqual(['/index.html']);
+  });
+});
+
+describe('auth.css 오류 알림 면(시안 03 showError, W-11c)', () => {
+  const css = src('features/auth/auth.css');
+  /** srgb color-mix(p% a, b) — 채널별 선형 보간. */
+  const mix = (a: string, b: string, p: number): string => {
+    const ch = (h: string) => [1, 3, 5].map((i) => Number.parseInt(h.slice(i, i + 2), 16));
+    const [ca, cb] = [ch(a), ch(b)];
+    return `#${ca.map((v, i) => Math.round(v * p + (cb[i] ?? 0) * (1 - p)).toString(16).padStart(2, '0')).join('')}`;
+  };
+
+  it.each(['light', 'dark'] as const)('%s: danger-solid를 bg-app에 섞은 면 위 --danger-text 4.5:1 이상', (scheme) => {
+    const m = /color-mix\(in srgb, var\(--danger-solid\) (\d+)%, var\(--bg-app\)\)/.exec(css);
+    expect(m).not.toBeNull();
+    const c = tokens.colors[scheme] as Readonly<Record<string, { readonly value: string } | undefined>>;
+    const surface = mix(c['--danger-solid']?.value ?? '', c['--bg-app']?.value ?? '', Number(m?.[1]) / 100);
+    expect(contrast(c['--danger-text']?.value ?? '', surface)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe('auth.css 오류 아이콘 1개(Codex r1 P2)', () => {
+  it('「!」 ::before는 직접 렌더한 p[role=alert]와 ErrorState 안 p에만 — ErrorState 루트(div[role=alert])에는 없다', () => {
+    const css = src('features/auth/auth.css');
+    const selectors = [...css.matchAll(/([^{}]+)\{[^}]*content: '!'/g)].map((m) => m[1] ?? '').join(' ');
+    expect(selectors).toContain(".auth-card > p[role='alert']::before");
+    expect(selectors).toContain('.auth-card .error-state > p::before');
+    expect(selectors).not.toMatch(/\.auth-card > \[role='alert'\]::before/);
   });
 });

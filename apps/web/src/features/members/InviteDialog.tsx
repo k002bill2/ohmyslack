@@ -41,17 +41,18 @@ export function InviteDialog({ view, onRetry, onClose }: InviteDialogProps) {
           return <ErrorState message={failureText(view.failure)} {...(isRetryable(view.failure) ? { onRetry } : {})} />;
         }
         return (
-          <div className="dialog-form">
-            <input ref={input} className="field" type="text" readOnly value={view.link} aria-labelledby={titleId} onFocus={(e) => e.target.select()} />
-            <p className="field-hint">
-              {MEMBER_ADMIN_COPY.expiresLabel} <time dateTime={view.expiresAt}>{formatExpiry(view.expiresAt)}</time>
-            </p>
-            <p className="field-hint">{MEMBER_ADMIN_COPY.inviteWarning}</p>
-            <div className="dialog-actions">
+          <div className="dialog-form invite-dialog">
+            {/* 시안 10 dialog: 링크 입력 + 복사 버튼 한 줄, 아래 만료 안내, 경고 상자. */}
+            <div className="invite-link-row">
+              <input ref={input} className="field" type="text" readOnly value={view.link} aria-labelledby={titleId} onFocus={(e) => e.target.select()} />
               <button type="button" className="btn btn-primary" onClick={() => void copyLink(view.link, input.current)}>
                 {MEMBER_ADMIN_COPY.copy}
               </button>
             </div>
+            <p className="field-hint">
+              {MEMBER_ADMIN_COPY.expiresLabel} <time dateTime={view.expiresAt}>{formatExpiry(view.expiresAt)}</time>
+            </p>
+            <p className="invite-warning">{MEMBER_ADMIN_COPY.inviteWarning}</p>
           </div>
         );
       }}

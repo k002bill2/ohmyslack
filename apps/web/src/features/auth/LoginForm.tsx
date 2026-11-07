@@ -1,6 +1,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { LOGIN_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
+import { AuthBrand } from './AuthBrand.js';
 
 /** 로그인 결과. 네트워크 오류는 reject(throw)로 전달한다. */
 export type LoginResult = { readonly ok: true } | { readonly ok: false; readonly status: number };
@@ -60,8 +61,7 @@ export function LoginForm({ sessionEnded = false, onLogin, onSuccess }: LoginFor
   return (
     <div className="auth-screen">
       <form className="auth-card" onSubmit={submit}>
-        <h1>{LOGIN_COPY.title}</h1>
-        <p>{LOGIN_COPY.intro}</p>
+        <AuthBrand title={LOGIN_COPY.title} intro={LOGIN_COPY.intro} />
         {sessionEnded && <p role="status">{SESSION_ENDED_TEXT}</p>}
         <label htmlFor={emailId}>이메일</label>
         <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />

@@ -30,6 +30,11 @@ interface Pending {
   readonly failure: ActionFailure | null;
 }
 
+/** 표시 이름 첫 글자(서로게이트 쌍 안전). 비면 빈 문자열. */
+export function memberInitial(name: string): string {
+  return Array.from(name.trim())[0]?.toUpperCase() ?? '';
+}
+
 /** 목록 행: 이름·역할·(이번 세션 비활성화면) 「비활성」. 본인 행·비활성 행은 버튼 없음. */
 function MemberRow({ member, self, inactive, onDeactivate }: {
   readonly member: Member;
@@ -39,6 +44,8 @@ function MemberRow({ member, self, inactive, onDeactivate }: {
 }) {
   return (
     <li className={inactive ? 'member-row member-inactive' : 'member-row'}>
+      {/* 이니셜 원(시안 10) — 이름이 바로 옆에 있어 장식. 글자는 CSS attr()로 그려 행 텍스트·접근 이름에 섞지 않는다. */}
+      <span className="member-avatar" aria-hidden="true" data-initial={memberInitial(member.displayName)} />
       <span className="member-name">{member.displayName}</span>
       <span className="member-role">{MEMBER_ADMIN_COPY.roles[member.role]}</span>
       {inactive && <span className="member-status">{MEMBER_ADMIN_COPY.inactive}</span>}
