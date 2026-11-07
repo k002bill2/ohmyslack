@@ -117,6 +117,11 @@ export function foldMessage(state: FoldState, changeId: number, m: MessageView):
   });
 }
 
+/** WS `message.deleted`(본문 없음)를 같은 멱등 병합으로 접는다. */
+export function foldDeleted(state: FoldState, f: { change_id: number; conversation_id: string; message_id: string; seq: number }): FoldState {
+  return foldChange(state, f.message_id, { changeId: f.change_id, conversationId: f.conversation_id, seq: f.seq, body: null, deleted: true });
+}
+
 /** 서버 진실(DB 원장): 대화별 seq 순 (id, body, deleted). */
 export async function truth(ctx: E2eContext, conversationIds: readonly string[]): Promise<{ id: string; conversationId: string; seq: number; body: string | null; deleted: boolean }[]> {
   const res = await ctx.schema.pool.query<{ id: string; conversation_id: string; seq: string; body: string | null; deleted_at: Date | null }>(

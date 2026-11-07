@@ -50,6 +50,18 @@ describe('전경 복귀', () => {
       expect(summary?.last_read_seq).toBe(readSeq);
       expect(summary?.unread_count).toBe(50);
 
+      // catch-up과 구독 사이에 온 변경은 구독 replay로 받아 상태에 반영한다(Codex r1 P2).
+      await client.background();
+      let gap: MessageView | undefined;
+      const app = ctx.app;
+      expect(
+        await client.resume(async () => {
+          gap = await send(app, peer, dm, { body: 'gap-between-catchup-and-subscribe' });
+        }),
+      ).toBe(true);
+      expect(foldedRows(client.state, [dm])).toEqual(await truth(ctx, [dm]));
+      expect(foldedRows(client.state, [dm]).find((r) => r.id === gap?.id)?.body).toBe('gap-between-catchup-and-subscribe');
+
       // 서버 불가: 복귀 실패, 최신으로 표시하지 않는다.
       await client.background();
       await client.close();
