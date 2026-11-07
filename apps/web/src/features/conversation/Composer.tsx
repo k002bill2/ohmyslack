@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import {
   JUST_COMPOSED_WINDOW_MS,
   MESSAGE_BODY_MAX_CODE_POINTS,
@@ -7,7 +7,8 @@ import {
   decideKey,
 } from './ime.js';
 import type { DraftStore } from './drafts.js';
-import { COMPOSER_COPY, overText, remainingText } from '../../ui/copy.js';
+import { MENTION_DRAFT_SUFFIX, filterCandidates, insertMention, mentionIdsIn, mentionQuery, parseSelections, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
+import { COMPOSER_COPY, MENTION_EMPTY_TEXT, overText, remainingText } from '../../ui/copy.js';
 
 export type MentionKey = 'Enter' | 'Tab' | 'Escape' | 'ArrowUp' | 'ArrowDown';
 
@@ -16,13 +17,15 @@ export interface ComposerProps {
   readonly label: string;
   /** placeholder(G-28). 라벨을 대신하지 않는다. */
   readonly placeholder?: string;
-  /** 전송 1회. 작성기는 호출 직후 비워진다(UI_STATES §2-5 전이 3 — 늦은 ACK는 작성기를 건드리지 않음). */
-  readonly onSend: (body: string) => void;
+  /** 전송 1회. 작성기는 호출 직후 비워진다(UI_STATES §2-5 전이 3 — 늦은 ACK는 작성기를 건드리지 않음). 멘션 ID는 CMP-12 선택분. */
+  readonly onSend: (body: string, mentionUserIds?: readonly string[]) => void;
   /** CMP-12 멘션 후보 열림(`aria-expanded=true`). 열려 있으면 Enter/Tab/Esc/↑/↓를 후보에 넘긴다(§7-4 순위 3). */
   readonly mentionOpen?: boolean;
   readonly onMentionKey?: (key: MentionKey) => void;
   /** 대상별 초안 보존(디자인 §7-3 초안 규칙). 마운트 시 복원하고 입력마다 저장, 전송으로 비우면 지운다. */
   readonly draft?: { readonly store: DraftStore; readonly key: string };
+  /** CMP-12 멘션 후보(현재 대화 참여자). 있으면 `@` 입력으로 후보 목록을 연다(자기 자신 제외). */
+  readonly mentions?: { readonly candidates: readonly MentionCandidate[]; readonly selfId?: string };
 }
 
 const LIMIT_MESSAGE = COMPOSER_COPY.limit;
@@ -44,8 +47,26 @@ export function counterAnnouncement(length: number, max: number): string {
 }
 
 /** CMP-11 Composer — IME 안전 Enter(디자인 §7-4). 키 판정은 `ime.ts`의 순수 함수가 한다. */
-export function Composer({ label, placeholder, onSend, mentionOpen = false, onMentionKey, draft }: ComposerProps) {
+export function Composer({ label, placeholder, onSend, mentionOpen = false, onMentionKey, draft, mentions }: ComposerProps) {
   const [text, setText] = useState(() => draft?.store.get(draft.key) ?? '');
+  const [picker, setPicker] = useState<MentionQuery | null>(null);
+  const [active, setActive] = useState(0);
+  // 선택한 멘션도 초안과 함께 보존·복원한다(Codex r1 P2).
+  const mentionKey = draft === undefined ? undefined : `${draft.key}${MENTION_DRAFT_SUFFIX}`;
+  const [selected, setSelectedState] = useState<readonly MentionSelection[]>(() =>
+    mentionKey === undefined ? [] : parseSelections(draft?.store.get(mentionKey)),
+  );
+  const setSelected = (next: readonly MentionSelection[]) => {
+    setSelectedState(next);
+    if (draft === undefined || mentionKey === undefined) return;
+    if (next.length === 0) draft.store.delete(mentionKey);
+    else draft.store.set(mentionKey, JSON.stringify(next));
+  };
+  const area = useRef<HTMLTextAreaElement>(null);
+  const caretAfter = useRef<number | null>(null);
+  const listId = useId();
+  const options = picker === null || mentions === undefined ? [] : filterCandidates(mentions.candidates, picker.query, mentions.selfId);
+  const pickerOpen = picker !== null && mentions !== undefined;
   const composing = useRef(false);
   const justComposed = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -62,9 +83,51 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
     draft?.store.set(draft.key, next);
   };
 
+  useEffect(() => {
+    if (caretAfter.current === null) return;
+    area.current?.setSelectionRange(caretAfter.current, caretAfter.current);
+    caretAfter.current = null;
+  }, [text]);
+
+  /** 입력 변경 → 트리거 판정. 조합 중에는 새로 열지 않고, 이미 열린 후보만 조합 텍스트로 거른다(§2-6). */
+  const onInput = (next: string, caret: number) => {
+    updateText(next);
+    if (mentions === undefined) return;
+    const q = mentionQuery(next, caret);
+    if (q === null || (composing.current && picker === null)) {
+      setPicker(null);
+      return;
+    }
+    if (picker === null || picker.start !== q.start || picker.query !== q.query) setActive(0);
+    setPicker(q);
+  };
+
+  const choose = (candidate: MentionCandidate) => {
+    if (picker === null) return;
+    const next = insertMention(text, picker, candidate.displayName);
+    updateText(next.text);
+    caretAfter.current = next.caret;
+    setSelected([...selected, { id: candidate.id, displayName: candidate.displayName }]);
+    setPicker(null);
+  };
+
+  const onPickerKey = (key: MentionKey) => {
+    if (key === 'Escape') setPicker(null);
+    else if (key === 'ArrowDown') setActive((i) => (options.length === 0 ? 0 : (i + 1) % options.length));
+    else if (key === 'ArrowUp') setActive((i) => (options.length === 0 ? 0 : (i - 1 + options.length) % options.length));
+    else {
+      const candidate = options[active];
+      if (candidate !== undefined) choose(candidate);
+    }
+  };
+
   const send = () => {
     if (!canSend(text)) return;
-    onSend(text);
+    const ids = mentionIdsIn(text, selected);
+    if (ids.length > 0) onSend(text, ids);
+    else onSend(text);
+    setSelected([]);
+    setPicker(null);
     draft?.store.delete(draft.key);
     if (composing.current) clearAfterComposition.current = true;
     else updateText('');
@@ -74,13 +137,14 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
     const native = e.nativeEvent;
     const decision = decideKey(
       { key: e.key, keyCode: native.keyCode, isComposing: native.isComposing, shiftKey: e.shiftKey },
-      { composing: composing.current, justComposed: justComposed.current, mentionOpen },
+      { composing: composing.current, justComposed: justComposed.current, mentionOpen: mentionOpen || pickerOpen },
     );
     if (decision === 'swallow-commit-enter') {
       e.preventDefault();
       endJustComposed();
     } else if (decision === 'mention') {
       e.preventDefault();
+      if (pickerOpen) onPickerKey(e.key as MentionKey);
       onMentionKey?.(e.key as MentionKey);
     } else if (decision === 'send') {
       e.preventDefault();
@@ -94,10 +158,21 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
   return (
     <div className="composer">
       <textarea
+        ref={area}
         aria-label={label}
         placeholder={placeholder}
         value={text}
-        onChange={(e) => updateText(e.target.value)}
+        {...(!pickerOpen
+          ? {}
+          : {
+              // UI_STATES §2-6 「열림」 행: combobox + aria-expanded=true + listbox. 닫힘은 기본 textbox(기존 접근 이름 유지).
+              role: 'combobox',
+              'aria-autocomplete': 'list' as const,
+              'aria-expanded': true,
+              'aria-controls': listId,
+              ...(options[active] !== undefined ? { 'aria-activedescendant': `${listId}-${active}` } : {}),
+            })}
+        onChange={(e) => onInput(e.target.value, e.target.selectionStart)}
         onKeyDown={onKeyDown}
         onKeyUp={endJustComposed}
         onCompositionStart={() => {
@@ -115,6 +190,31 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
           }
         }}
       />
+      {pickerOpen && (
+        <ul className="mention-picker" id={listId} role="listbox" aria-label={label}>
+          {options.length === 0 ? (
+            <li className="mention-empty" role="presentation">
+              {MENTION_EMPTY_TEXT}
+            </li>
+          ) : (
+            options.map((c, i) => (
+              <li
+                key={c.id}
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === active}
+                className={i === active ? 'mention-option mention-active' : 'mention-option'}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  choose(c);
+                }}
+              >
+                {c.displayName}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
       {counter !== null && (
         <p className="composer-counter" aria-hidden="true">
           {counter}

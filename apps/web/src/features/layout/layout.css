@@ -395,3 +395,42 @@ body {
     flex: 1 1 auto;
   }
 }
+
+/* W-10j 나간 채널(UI_STATES §2-3 muted) · 멘션 후보(CMP-12) · 나간 채널 안내(MessageList) */
+.space-left .space-name {
+  color: var(--text-muted);
+}
+.space-rejoin {
+  margin: 0 var(--space-2) var(--space-2);
+}
+.left-channel-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  color: var(--text-muted);
+}
+.mention-picker {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+}
+.mention-option,
+.mention-empty {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.mention-empty {
+  color: var(--text-muted);
+}
+.mention-active {
+  background: var(--border-subtle);
+}

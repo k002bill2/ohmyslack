@@ -15,6 +15,8 @@ export interface Space {
   readonly unreadThreadCount: number;
   /** `unread_threads[]` 중 아직 새 답글이 남은 스레드 root id(CMP-14 「새 답글」, W-10i). */
   readonly unreadThreadRoots?: readonly string[];
+  /** 이번 세션에 본인이 나간 채널(UI_STATES §2-3 「나간 채널」). 서버 목록은 나간 채널을 주지 않아 클라이언트가 기억한다. */
+  readonly left?: boolean;
 }
 
 export interface Message {
@@ -106,10 +108,10 @@ export interface SpacesApi {
   logout?(): Promise<void>;
 }
 
-export interface DataSource extends SpacesApi {
+export interface DataSource extends SpacesApi, MembershipApi {
   getSnapshot(): Snapshot;
   subscribe(listener: () => void): () => void;
-  send(target: { readonly conversationId: string; readonly rootId?: string }, body: string): void;
+  send(target: { readonly conversationId: string; readonly rootId?: string }, body: string, mentionUserIds?: readonly string[]): void;
   /** 현재 대화가 바뀔 때 호출(구독·이력 로드). 메모리 구현은 없음. */
   open?(conversationId: string | null): void;
   /** 스레드를 열거나(root id) 닫을 때(null) 호출 — 기존 답글 조회. 메모리 구현은 없음. */
@@ -162,4 +164,12 @@ export function createMemoryDataSource(seed: Snapshot): MemoryDataSource {
       replace({ ...snapshot, connection });
     },
   };
+}
+
+/** CMP-12 멘션 후보·채널 나가기(W-10j). 구현이 없으면 화면은 진입점을 렌더하지 않는다. */
+export interface MembershipApi {
+  /** `DELETE /api/conversations/:id/membership`(204). 성공하면 목록에 「나간 채널」로 남긴다. */
+  leaveChannel?(conversationId: string): Promise<ActionResult<null>>;
+  /** `GET /api/conversations/:id/members`. */
+  listConversationMembers?(conversationId: string): Promise<ActionResult<readonly { readonly id: string; readonly displayName: string }[]>>;
 }

@@ -1,5 +1,5 @@
 import type { Account, ListState, Space } from '../../data';
-import { COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
+import { COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 
@@ -25,6 +25,8 @@ export interface SidebarProps {
   readonly onManageMembers?: () => void;
   /** 하단 「로그아웃」. */
   readonly onLogout?: () => void;
+  /** 「나간 채널 · 다시 참여」(UI_STATES §2-3) → `POST …/join`. 없으면 버튼을 렌더하지 않는다. */
+  readonly onRejoin?: (id: string) => void;
 }
 
 /** 접힘 상태 항목 이름: 이름 + 상태(디자인 §7-2 "접힘 상태는 각 항목 aria-label에 이름+상태 포함"). */
@@ -36,13 +38,15 @@ function collapsedLabel(space: Space): string {
 }
 
 /** CMP-03 SpaceListItem — 굵게(unread)·배지(멘션)·점(새 답글) 세 표시는 독립(UI_STATES §2-3). */
-function SpaceListItem({ space, selected, collapsed, onSelect }: {
+function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
   readonly space: Space;
   readonly selected: boolean;
   readonly collapsed: boolean;
   readonly onSelect: (id: string) => void;
+  readonly onRejoin?: (id: string) => void;
 }) {
-  const classes = ['space-item', selected ? 'space-selected' : '', space.unreadCount > 0 ? 'space-unread' : '']
+  const left = space.left === true;
+  const classes = ['space-item', selected ? 'space-selected' : '', space.unreadCount > 0 ? 'space-unread' : '', left ? 'space-left' : '']
     .filter(Boolean)
     .join(' ');
   return (
@@ -62,6 +66,11 @@ function SpaceListItem({ space, selected, collapsed, onSelect }: {
         )}
         <UnreadBadge count={space.mentionCount} />
       </button>
+      {left && onRejoin && !collapsed && (
+        <button type="button" className="btn btn-secondary space-rejoin" onClick={() => onRejoin(space.id)}>
+          {LEFT_CHANNEL_COPY.rejoinRow}
+        </button>
+      )}
     </li>
   );
 }
@@ -85,6 +94,7 @@ function SpaceListBody(props: SidebarProps) {
           selected={space.id === props.selectedId}
           collapsed={props.collapsed}
           onSelect={props.onSelect}
+          {...(props.onRejoin ? { onRejoin: props.onRejoin } : {})}
         />
       ))}
     </ul>

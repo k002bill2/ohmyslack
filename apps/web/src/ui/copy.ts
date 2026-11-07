@@ -208,3 +208,12 @@ export const THREAD_SUMMARY_COPY = {
   replies: (count: number): string => `답글 ${count}`,
   newReplies: '새 답글',
 } as const;
+
+/** 나간 채널(UI_STATES §2-3 SpaceListItem·§2-5 ConversationHeader·MessageList 「나간 채널」 행 문구 그대로, W-10j). */
+export const LEFT_CHANNEL_COPY = {
+  leave: DIALOG_TITLES.leaveChannel,
+  rejoinRow: '나간 채널 · 다시 참여',
+  rejoin: '다시 참여',
+  notice: '이 채널을 나갔습니다. 다시 참여하면 이력을 볼 수 있습니다',
+  join: '참여',
+} as const;
