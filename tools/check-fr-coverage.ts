@@ -136,7 +136,7 @@ function declarationCallee(expr: ts.Expression): { modifier: string | undefined 
 
 /** AST에서 첫 인자가 문자열·치환 없는 템플릿 리터럴인 it/test 선언만 모은다. 주석·일반 문자열은 세지 않는다. */
 export function findDeclarations(text: string, file: string): Declaration[] {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const found: Declaration[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {

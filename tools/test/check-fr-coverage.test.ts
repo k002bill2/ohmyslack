@@ -250,6 +250,12 @@ describe('check-fr-coverage regressions (Codex round 3)', () => {
     expect(res.code).toBe(1);
   });
 
+  it('parses .ts files in TS mode so generic arrows do not hide declarations', async () => {
+    const res = await progressWith(`const identity = <T>(value: T): T => value;\nit('${N1}', () => identity(1));`);
+    expect(res.text).toContain('구현 1');
+    expect(res.code).toBe(0);
+  });
+
   const DRILL = 'tools/restore-drill.sh';
   const shRows = [
     defaultRows[0] ?? '',
