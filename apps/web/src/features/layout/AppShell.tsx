@@ -3,6 +3,7 @@ import type { DataSource, Message, Space } from '../../data';
 import { Composer, MessageItem, createDraftStore, type DraftStore } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { ConnectionBanner } from '../sync';
+import { COMPOSER_COPY, messageComposerLabel } from '../../ui/copy.js';
 import { ThreadPanel } from '../thread';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
@@ -53,7 +54,8 @@ function ConversationPane(props: {
       <div data-composer="main">
         <Composer
           key={space.id}
-          label={space.name}
+          label={messageComposerLabel(spaceTitle(space))}
+          placeholder={COMPOSER_COPY.messagePlaceholder}
           onSend={props.onSend}
           draft={{ store: props.drafts, key: space.id }}
         />

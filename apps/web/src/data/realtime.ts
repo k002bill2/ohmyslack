@@ -1,7 +1,7 @@
 /**
  * 브라우저 WebSocket 클라이언트(TRD §4, same-origin `/api/ws`). 끊기면 지수 백오프로 다시 연결한다.
  * heartbeat: 서버 ping(TRD §7)은 브라우저가 프로토콜 수준에서 자동으로 pong한다 — 앱 프레임 계약에 heartbeat 메시지는 없다.
- * 백오프 간격·상한은 정본 없음(UI_STATES Q-12) → 아래 값은 구현 기본값이며 REPORT에 남긴다.
+ * 백오프 수치 정본: UI_STATES §9 G-37(COPY_GAPS G-37) — 1초 시작·2배·상한 30초·횟수 상한 없음·연결 시 0으로 초기화.
  */
 import type { WsClientFrame, WsServerFrame } from '../../../../packages/shared/src/index.js';
 
@@ -26,7 +26,9 @@ export interface RealtimeDeps {
   readonly clearTimer?: (handle: unknown) => void;
 }
 
+/** 정본: UI_STATES §9 G-37 초기 간격 1초(배수 2). */
 export const BACKOFF_BASE_MS = 1_000;
+/** 정본: UI_STATES §9 G-37 상한 30초. */
 export const BACKOFF_MAX_MS = 30_000;
 const FRAME_MAX_BYTES = 64 * 1024;
 const OPEN = 1;

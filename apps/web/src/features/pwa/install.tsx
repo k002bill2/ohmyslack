@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { INSTALL_COPY } from '../../ui/copy.js';
 
 export type InstallMode = 'standalone' | 'prompt' | 'ios' | 'unsupported';
 
@@ -43,16 +44,17 @@ export interface InstallCopy {
 }
 
 /**
- * CMP-20 InstallHint. 안내 문장 정본이 아직 없어(UI_STATES §8 Q-1) 문구가 주어지지 않으면 렌더하지 않는다.
+ * CMP-20 InstallHint(G-14·G-15). 기본 문구는 `INSTALL_COPY`. 문구 항목이 없으면 그 분기는 렌더하지 않는다.
+ * macOS 분기 문장(G-16)은 보류라 두지 않는다 — 'unsupported'는 렌더 없음.
  */
-export function InstallHint({ mode, onInstall, copy }: { readonly mode: InstallMode; readonly onInstall: () => void; readonly copy?: InstallCopy }) {
-  if (mode === 'prompt' && copy?.button !== undefined) {
+export function InstallHint({ mode, onInstall, copy = INSTALL_COPY }: { readonly mode: InstallMode; readonly onInstall: () => void; readonly copy?: InstallCopy }) {
+  if (mode === 'prompt' && copy.button !== undefined) {
     return (
       <button type="button" className="install-hint" onClick={onInstall}>
         {copy.button}
       </button>
     );
   }
-  if (mode === 'ios' && copy?.ios !== undefined) return <p className="install-hint">{copy.ios}</p>;
+  if (mode === 'ios' && copy.ios !== undefined) return <p className="install-hint">{copy.ios}</p>;
   return null;
 }

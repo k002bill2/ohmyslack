@@ -107,7 +107,8 @@ describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
     expect(item().status).toBe('unknown');
     view(item());
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe('저장 여부 확인 중 · 다시 시도');
+    expect(screen.getByRole('status').textContent).toBe('저장 여부 확인 중다시 시도목록에서 지우기');
+    expect(screen.getByRole('button', { name: '저장 여부 확인 중 · 다시 시도' }).textContent).toBe('다시 시도');
   });
 
   it('④ 「저장 여부 확인 중」은 대응 키가 같은 message.created로 저장 확인으로 자동 해소', async () => {
@@ -266,5 +267,6 @@ it('FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 않고 
   ctl.messageCreated({ conversationId: CONV, authorId: ME, clientMessageId: 'cm-3' }, 'm-3');
   expect(ctl.items()[2]?.status).toBe('confirmed');
   view(ctl.items()[1] as PendingMessage);
-  expect(screen.getByRole('alert').textContent).toContain('전송 실패 · 다시 시도');
+  expect(screen.getByRole('alert').textContent).toContain('전송 실패');
+    expect(screen.getByRole('button', { name: '전송 실패 · 다시 시도' }).textContent).toBe('다시 시도');
 });

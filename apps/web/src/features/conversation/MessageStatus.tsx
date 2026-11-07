@@ -1,3 +1,4 @@
+import { MESSAGE_STATUS_COPY as COPY, RETRY_LABEL } from '../../ui/copy.js';
 import type { PendingMessage } from './send-status.js';
 
 export interface MessageStatusProps {
@@ -7,8 +8,8 @@ export interface MessageStatusProps {
 }
 
 /**
- * CMP-07 MessageItem의 전송 상태 표시(문구 정본: 디자인 §6-3, UI_STATES §4-4). 아이콘은 Q-14 미정이라 텍스트만.
- * 「저장 확인」은 표시 없음. 「저장 여부 확인 중」 로컬 삭제 버튼은 문구 미정(Q-15)이라 렌더하지 않는다.
+ * CMP-07 MessageItem의 전송 상태 표시(문구 정본: 디자인 §6-3, UI_STATES §4-4·§9 G-20·G-34·G-35). 아이콘은 Q-14 미정이라 텍스트만.
+ * 「저장 확인」은 표시 없음. 라벨(muted)과 「다시 시도」 버튼을 따로 두고, 버튼 접근 이름은 정본 문구를 유지한다(G-35).
  */
 export function MessageStatus({ item, onRetry, onDiscard }: MessageStatusProps) {
   switch (item.status) {
@@ -23,8 +24,12 @@ export function MessageStatus({ item, onRetry, onDiscard }: MessageStatusProps) 
     case 'unknown':
       return (
         <div className="msg-status" role="status">
-          <button type="button" onClick={onRetry}>
-            저장 여부 확인 중 · 다시 시도
+          <span className="msg-status-label">{COPY.unknownLabel}</span>
+          <button type="button" aria-label={COPY.unknownRetryName} onClick={onRetry}>
+            {RETRY_LABEL}
+          </button>
+          <button type="button" onClick={onDiscard}>
+            {COPY.unknownDiscard}
           </button>
         </div>
       );
@@ -32,11 +37,14 @@ export function MessageStatus({ item, onRetry, onDiscard }: MessageStatusProps) 
       return (
         <div className="msg-status msg-failed" role="alert">
           {item.failure === 'rewrite' ? (
-            <span>다시 작성</span>
+            <span>{item.rewriteReason === 'conflict' ? COPY.rewriteConflict : COPY.rewriteInvalid}</span>
           ) : (
-            <button type="button" onClick={onRetry}>
-              전송 실패 · 다시 시도
-            </button>
+            <>
+              <span className="msg-status-label">{COPY.failedLabel}</span>
+              <button type="button" aria-label={COPY.failedRetryName} onClick={onRetry}>
+                {RETRY_LABEL}
+              </button>
+            </>
           )}
           <button type="button" onClick={onDiscard}>
             삭제

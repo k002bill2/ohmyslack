@@ -1,6 +1,6 @@
 {
-  "name": "Workspace",
-  "short_name": "Workspace",
+  "name": "메신저",
+  "short_name": "메신저",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

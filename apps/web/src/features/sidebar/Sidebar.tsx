@@ -1,4 +1,5 @@
 import type { Space } from '../../data';
+import { COLLAPSED_LABEL_SEPARATOR } from '../../ui/copy.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 
 export interface SidebarProps {
@@ -14,7 +15,7 @@ function collapsedLabel(space: Space): string {
   const parts = [space.name];
   if (space.mentionCount > 0) parts.push(mentionLabel(space.mentionCount));
   if (space.unreadThreadCount > 0) parts.push(threadDotLabel(space.unreadThreadCount));
-  return parts.join(', ');
+  return parts.join(COLLAPSED_LABEL_SEPARATOR);
 }
 
 /** CMP-03 SpaceListItem — 굵게(unread)·배지(멘션)·점(새 답글) 세 표시는 독립(UI_STATES §2-3). */

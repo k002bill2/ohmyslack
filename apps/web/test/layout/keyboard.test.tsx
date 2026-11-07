@@ -28,10 +28,10 @@ describe('FR-CLIENT-01 키보드', () => {
       // 공간 전환(디자인 §7-3 Ctrl+Alt+↑/↓) → 새 공간의 작성기(F4).
       await user.keyboard('{Control>}{Alt>}{ArrowDown}{/Alt}{/Control}');
       expect(current()).toBe('dev');
-      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'dev' }));
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '#dev에 메시지 작성' }));
       await user.keyboard('{Control>}{Alt>}{ArrowUp}{/Alt}{/Control}');
       expect(current()).toBe('general');
-      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'general' }));
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '#general에 메시지 작성' }));
       // Shift: 읽지 않은 공간만.
       await user.keyboard('{Control>}{Alt>}{Shift>}{ArrowUp}{/Shift}{/Alt}{/Control}');
       expect(current()).toBe('dev');
@@ -40,7 +40,7 @@ describe('FR-CLIENT-01 키보드', () => {
 
       // 전송: Enter → 목록에 추가, 작성기 비움·포커스 유지.
       await user.keyboard('키보드 전송{Enter}');
-      const composer = screen.getByRole('textbox', { name: 'general' });
+      const composer = screen.getByRole('textbox', { name: '#general에 메시지 작성' });
       expect(screen.getByText('키보드 전송')).toBeTruthy();
       expect(document.activeElement).toBe(composer);
       expect((composer as HTMLTextAreaElement).value).toBe('');
@@ -50,7 +50,7 @@ describe('FR-CLIENT-01 키보드', () => {
       const reply = document.activeElement as HTMLElement;
       expect(reply.textContent).toBe('답글');
       await user.keyboard('{Enter}');
-      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '답글' }));
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '답글 작성' }));
 
       if (width === 1280) {
         // wide + 입력 있음: Esc 1회는 안내만, 1.5초 안 2회째에 닫기.
