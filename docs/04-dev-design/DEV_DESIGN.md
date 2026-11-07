@@ -290,7 +290,7 @@ pnpm audit --prod --audit-level=high
 
 | ID | 지정 테스트 이름 | 계층·파일 | 실행 | 수동 |
 |---|---|---|---|---|
-| BOOT-01 | `BOOT-01 빈 합성 DB에서 owner 최초 생성은 성공하고 재실행은 기존 계정을 바꾸지 않고 실패하며 owner를 만드는 원격 라우트가 없고 이후 초대 발급과 member 수락이 된다` | 통합 `apps/server/test/ops/bootstrap-owner.int.test.ts`(원격 경로 부재는 2-4 레지스트리로 단언) | PR | `QA-BOOT-01`: 합성 환경에서 `docs/runbooks/BOOTSTRAP_OWNER.md` 1회 실행 증거(PRD:142 순서). 실제 계정 생성은 이 문서가 승인하지 않음 |
+| BOOT-01 | `BOOT-01 빈 합성 DB에서 owner 최초 생성은 성공하고 재실행은 기존 계정을 바꾸지 않고 실패하며 owner를 만드는 원격 라우트가 없고 이후 초대 발급과 member 수락이 된다` | 통합 `apps/server/test/auth/bootstrap.int.test.ts`(원격 경로 부재는 2-4 레지스트리로 단언) | PR | `QA-BOOT-01`: 합성 환경에서 `docs/runbooks/BOOTSTRAP_OWNER.md` 1회 실행 증거(PRD:142 순서). 실제 계정 생성은 이 문서가 승인하지 않음 |
 
 ### 6-3. TRD TR-SEC → 테스트 (보조 표, R1 약속 이행 · NC-01 게이트 편입)
 
@@ -406,6 +406,9 @@ PRD:89는 "DB 저장 → 다른 기기 **표시**"를 요구합니다. 수신 �
 - §2-1·W-04b 폰트: 서브셋 서술을 디자인 §3-1(공식 빌드 무수정)에 맞춤.
 - ⚖️-1 결정: (A) 채택 — shared-infra `ohmyslack_test` DB + 전용 role `ohmyslack_test`(운영 `ohmyslack` CONNECT 없음) 생성 완료. 접속 정보는 저장소 루트 `.env.test`(600, git ignore).
 - ⚖️-2(자동 E2E 없음)·⚖️-3(GitHub Actions)·⚖️-6(전 패키지 라인 80%): 권고안 채택.
+
+### R3.2 Jarvis 정합 (2026-11-07)
+- BOOT-01 지정 테스트 파일 경로를 구현 위치 `apps/server/test/auth/bootstrap.int.test.ts`로 정정(W-05b). 지정 이름 중 "이후 초대 발급과 member 수락" 단언은 W-06b가 같은 `it`에 추가.
 
 ## 리뷰 반영 기록
 
