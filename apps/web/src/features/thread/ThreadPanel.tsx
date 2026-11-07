@@ -13,6 +13,9 @@ export interface ThreadPanelProps {
   readonly announce: (text: string) => void;
   /** 대상별 초안 저장소(디자인 §7-3 초안 규칙). 키는 스레드 root id. */
   readonly drafts?: DraftStore;
+  /** 실패 답글 「다시 시도」·「삭제」(client_message_id). */
+  readonly onRetry?: (clientMessageId: string) => void;
+  readonly onDiscard?: (clientMessageId: string) => void;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -51,7 +54,8 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard }: ThreadPanelProps) {
+  const actions = { ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }) };
   const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
 
@@ -100,14 +104,14 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
         </button>
       </div>
       <ul className="thread-root">
-        <MessageItem message={root} />
+        <MessageItem message={root} {...actions} />
       </ul>
       {replies.length === 0 ? (
         <p className="thread-empty">첫 답글</p>
       ) : (
         <ul className="thread-replies">
           {replies.map((r) => (
-            <MessageItem key={r.id} message={r} />
+            <MessageItem key={r.id} message={r} {...actions} />
           ))}
         </ul>
       )}

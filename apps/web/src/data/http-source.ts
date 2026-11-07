@@ -51,15 +51,38 @@ export interface HttpDataSource extends DataSource {
 const OFFLINE_AFTER_FAILURES = 2;
 const HISTORY_LIMIT = 100;
 
-function toSpace(c: ConversationsResponse['conversations'][number], names: ReadonlyMap<string, string>): Space {
+type Summary = ConversationsResponse['conversations'][number];
+
+/** 구독 거절(`error` 프레임에 대화 ID가 실린 경우). */
+class SubscribeRejected extends Error {
+  constructor(readonly code: string) {
+    super('subscribe rejected');
+  }
+}
+
+/** 읽음 위치 키: 대화 본문은 대화 ID, 스레드는 `대화:root`. */
+const readKey = (conversationId: string, rootId: string | null) => (rootId === null ? conversationId : `${conversationId}:${rootId}`);
+
+/**
+ * 목록 항목 → Space. `reads`(WS `read.updated`로 받은 읽음 위치)와 서버 값을 단조 병합해 큰 쪽을 쓴다.
+ * 병합한 위치가 마지막 seq에 닿으면 미읽음을 0으로, 스레드는 마지막 답글에 닿으면 미읽음 스레드에서 뺀다.
+ */
+function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: ReadonlyMap<string, number>): Space {
   const peer = c.peer_user_id === null ? undefined : names.get(c.peer_user_id);
+  const read = Math.max(c.last_read_seq, reads.get(c.id) ?? 0);
+  const caughtUp = read > c.last_read_seq && read >= c.last_seq;
+  // mention_count는 본문·스레드 합산이라 로컬에서 줄이지 않는다 — read.updated 뒤 목록 재조회(서버 집계)를 따른다(Codex r1 P2).
+  const threadsRead = c.unread_threads.filter((t) => {
+    const r = Math.max(t.last_read_seq, reads.get(readKey(c.id, t.root_message_id)) ?? 0);
+    return r > t.last_read_seq && r >= t.last_reply_seq;
+  }).length;
   return {
     id: c.id,
     kind: c.kind,
     name: c.name ?? peer ?? '',
-    unreadCount: c.unread_count,
+    unreadCount: caughtUp ? 0 : c.unread_count,
     mentionCount: c.mention_count,
-    unreadThreadCount: c.unread_thread_count,
+    unreadThreadCount: Math.max(0, c.unread_thread_count - threadsRead),
   };
 }
 
@@ -70,6 +93,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let snapshot: Snapshot = Object.freeze({ spaces: [], messages: [], connection: 'catching-up' as ConnectionState });
   let fold: FoldState = emptyFold;
   let spaces: readonly Space[] = [];
+  let summaries: readonly Summary[] = [];
+  /** 다른 기기 읽음 위치(단조 증가만). 목록을 다시 읽어도 뒤로 가지 않는다. */
+  let reads: ReadonlyMap<string, number> = new Map();
   let pending: readonly PendingMessage[] = [];
   let connection: ConnectionState = 'catching-up';
   let names: ReadonlyMap<string, string> = new Map();
@@ -126,6 +152,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     detach();
     fold = emptyFold;
     spaces = [];
+    summaries = [];
+    reads = new Map();
     pending = [];
     checkpoint = null;
     clearCheckpoints(storage);
@@ -207,7 +235,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       case 'sync.required':
         void resume();
         return;
+      case 'read.updated':
+        applyRead(frame.conversation_id, frame.thread_root_id, frame.last_read_seq);
+        return;
       case 'error':
+        // 대화 ID가 실린 오류는 그 대화의 구독 거절 — ACK 대기를 끝낸다(Codex r3 P2).
+        if (frame.conversation_id !== undefined) {
+          acks.get(frame.conversation_id)?.reject(new SubscribeRejected(frame.code));
+          acks.delete(frame.conversation_id);
+        }
         if (frame.code === 'cursor_expired') void resume();
         return;
       default:
@@ -227,8 +263,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       acks.forEach((a) => a.reject(new Error('socket closed')));
       acks.clear();
       sendController.wsClosed();
-      // 1008: 세션 종료 가능성 — 다음 HTTP가 401이면 end()로 간다(UI_STATES C9).
-      if (policy) void api.get('/api/me').catch(() => undefined);
+      // 1008: 세션 종료 가능성 — 복귀 절차의 `GET /api/me`가 401이면 end(), 200이면 소켓 재연결·catch-up·구독(UI_STATES C9, Codex r3 P2).
+      if (policy) void resume();
       else if (connection !== 'offline') setConnection('reconnecting');
     },
     ...(deps.setTimer === undefined ? {} : { setTimer: deps.setTimer }),
@@ -279,8 +315,33 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       page = await api.get<ConversationsResponse>(`/api/conversations?after=${encodeURIComponent(page.next_cursor)}`);
       all.push(...page.conversations);
     }
-    spaces = all.map((c) => toSpace(c, names));
+    // 세션 종료 뒤 늦게 도착한 목록 응답은 버린다(Codex r1 P2).
+    if (ended) return [];
+    summaries = all;
+    spaces = all.map((c) => toSpace(c, names, reads));
     return all;
+  };
+
+  /** 거절된 대화를 현재 대화에서 내리고 목록을 다시 읽는다(접근 권한이 사라졌으면 목록에서도 빠진다). */
+  const release = async (conversationId: string) => {
+    if (current === conversationId) current = null;
+    await loadList();
+    if (!ended) emit();
+  };
+
+  /** WS `read.updated`: 읽음 위치를 단조 병합해 배지를 즉시 다시 계산하고, 멘션·부분 읽음은 서버 집계(목록 재조회)로 맞춘다. */
+  const applyRead = (conversationId: string, rootId: string | null, seq: number) => {
+    const key = readKey(conversationId, rootId);
+    if (seq <= (reads.get(key) ?? 0)) return;
+    reads = new Map(reads).set(key, seq);
+    spaces = summaries.map((c) => toSpace(c, names, reads));
+    emit();
+    void loadList().then(
+      () => {
+        if (!ended) emit();
+      },
+      () => undefined,
+    );
   };
 
   /** 새 기기·410: 목록 → 대화별 snapshot → 첫 snapshot_cursor부터 catch-up(TRD §3). */
@@ -333,7 +394,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 복귀 중 대화가 바뀌었으면 바뀐 대화를 다시 구독한다 — 현재 대화의 ACK 뒤에만 연결됨·checkpoint 전진(Codex r2 P2).
     for (let target = current; target !== null; target = current) {
       await waitOpen();
-      await subscribe(target, watermark);
+      try {
+        await subscribe(target, watermark);
+      } catch (e) {
+        // 접근 거절(not_found)만 현재 대화를 내린다. cursor_expired 등은 프레임 처리가 시작한 복귀 절차가 재구독한다(Codex r1 P2).
+        if (!(e instanceof SubscribeRejected) || e.code !== 'not_found') throw e;
+        if (gen !== generation) return false;
+        await release(target);
+        continue;
+      }
       if (gen !== generation) return false;
       if (current === target) break;
     }
@@ -415,7 +484,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       current = conversationId;
       if (conversationId === null) return;
       void loadHistory(conversationId);
-      if (!resuming && checkpoint !== null) subscribe(conversationId, checkpoint).catch(() => undefined);
+      if (!resuming && checkpoint !== null) {
+        subscribe(conversationId, checkpoint).catch((e: unknown) => {
+          if (e instanceof SubscribeRejected && e.code === 'not_found' && !ended) void release(conversationId).catch(() => undefined);
+        });
+      }
     },
     openThread(rootId) {
       if (ended || rootId === null) return;
