@@ -403,18 +403,32 @@ body {
 .space-rejoin {
   margin: 0 var(--space-2) var(--space-2);
 }
+/* W-10k B: 중앙 빈 상태 형식(.empty-state와 같은 muted·간격). */
 .left-channel-notice {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-4);
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-10) var(--space-4);
   color: var(--text-muted);
+  text-align: center;
+  line-height: var(--leading-body);
 }
-.mention-picker {
-  list-style: none;
+.left-channel-notice p {
   margin: 0;
-  padding: var(--space-2) 0;
+}
+/* CMP-12: 작성기(.composer, position: relative) 위 팝오버 — 작성기 폭 이내, 최대 높이 + 스크롤. */
+.mention-picker {
+  position: absolute;
+  bottom: 100%;
+  inset-inline: var(--space-4);
+  z-index: 5;
+  box-sizing: border-box;
+  list-style: none;
+  margin: 0 0 var(--space-1);
+  padding: var(--space-1) 0;
   max-height: 240px;
   overflow-y: auto;
   background: var(--bg-elevated);
@@ -424,13 +438,120 @@ body {
 }
 .mention-option,
 .mention-empty {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  box-sizing: border-box;
   padding: var(--space-2) var(--space-3);
+  border-inline-start: 3px solid transparent;
   font-size: var(--text-sm);
   color: var(--text);
+}
+.mention-option {
+  cursor: pointer;
+}
+.mention-option:hover {
+  background: var(--bg-hover);
 }
 .mention-empty {
   color: var(--text-muted);
 }
-.mention-active {
-  background: var(--border-subtle);
+.mention-active,
+.mention-active:hover {
+  border-inline-start-color: var(--accent-solid);
+  background: var(--bg-active);
+  font-weight: 600;
+}
+
+/* W-10k B 대화 영역: 헤더 · 목록(남는 높이) · 작성기 하단 고정(AppShell 래퍼 [data-composer]). */
+.conversation-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.conversation-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+.conversation-header > button:not(.btn) {
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.conversation-header > button:not(.btn):hover {
+  background: var(--bg-hover);
+}
+.conversation-pane > .message-list {
+  flex: 1 1 auto;
+  padding-block: var(--space-2);
+}
+.message-empty {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: var(--space-10) var(--space-4);
+  text-align: center;
+}
+.conversation-pane > [data-composer='main'] {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: auto;
+  background: var(--bg-elevated);
+}
+/* 넓은 구간은 문서 스크롤 기준 sticky, 고정 오버레이(medium)만 자체 스크롤. */
+.thread-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.thread-medium {
+  overflow-y: auto;
+  /* 메인 작성기(sticky, z-index 1)보다 위에 겹친다(Codex r1 P2). */
+  z-index: 2;
+}
+.thread-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.thread-root {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.thread-empty {
+  margin: 0;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  font-size: var(--text-sm);
+}
+.thread-panel > .composer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+}
+@media (width <= 640px) {
+  .conversation-header {
+    padding: var(--space-2) var(--space-3);
+  }
+  .mention-picker {
+    inset-inline: var(--space-3);
+    max-height: 176px;
+  }
+  .left-channel-notice {
+    padding: var(--space-8) var(--space-3);
+  }
 }

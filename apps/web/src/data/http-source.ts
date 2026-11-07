@@ -25,6 +25,7 @@ import { createApi, HttpStatusError, NetworkError, type FetchLike } from './api.
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
 import { createRealtimeClient, type SocketLike } from './realtime.js';
+import { probeMark } from '../measure/hook.js';
 
 export interface HttpDataSourceDeps {
   readonly fetch: FetchLike;
@@ -142,7 +143,76 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   };
   let detach = () => undefined as void;
 
-  const author = (id: string) => names.get(id) ?? id;
+  /** 이름 확인 전에는 빈 이름(UUID를 화면에 내지 않는다, W-10k A). */
+  const author = (id: string) => names.get(id) ?? '';
+  /** 재조회를 이미 시도한 미지 ID(실패·응답에 없음 포함) — 같은 ID로 무한 재조회하지 않는다. */
+  const triedAuthors = new Set<string>();
+  /** 대화별 in-flight 재조회. */
+  const authorFetches = new Map<string, Promise<void>>();
+
+  /** 이름 갱신 뒤 이미 접은 메시지 작성자·DM 이름을 다시 맞춘다(바뀐 항목만 새 객체). */
+  const refreshNames = () => {
+    let changed = false;
+    const messages = new Map(fold.messages);
+    for (const [id, m] of fold.messages) {
+      const name = m.authorId === undefined ? undefined : names.get(m.authorId);
+      if (name !== undefined && name !== m.author) {
+        messages.set(id, { ...m, author: name });
+        changed = true;
+      }
+    }
+    if (changed) fold = { applied: fold.applied, messages };
+    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads)));
+    emit();
+  };
+
+  const fetchNames = async (conversationId: string) => {
+    let members: readonly { readonly id: string; readonly display_name: string }[];
+    try {
+      members = (await api.get<ConversationMembersResponse>(`/api/conversations/${encodeURIComponent(conversationId)}/members`)).members;
+    } catch (e) {
+      if (!(e instanceof HttpStatusError)) throw e;
+      members = (await api.get<MembersResponse>('/api/members')).members;
+    }
+    if (ended) return;
+    names = new Map([...names, ...members.map((m) => [m.id, m.display_name] as const)]);
+    refreshNames();
+  };
+
+  /** 처음 보는 author_id면 그 대화 멤버를 1회 in-flight로 다시 읽는다(초기 이력·sync·WS·답글 공통). */
+  /** 재조회 진행 중에 발견한 다른 미지 ID(대화별). 응답 뒤에도 이름이 없으면 1회 후속 조회한다(Codex r1 P2). */
+  const waitingAuthors = new Map<string, ReadonlySet<string>>();
+
+  const noteAuthor = (view: MessageView) => {
+    const id = view.author_id;
+    const conv = view.conversation_id;
+    if (names.has(id) || triedAuthors.has(id)) return;
+    if (authorFetches.has(conv)) {
+      waitingAuthors.set(conv, new Set([...(waitingAuthors.get(conv) ?? []), id]));
+      return;
+    }
+    triedAuthors.add(id);
+    const run = fetchNames(conv)
+      .catch((e: unknown) => {
+        if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
+      })
+      .finally(() => {
+        authorFetches.delete(conv);
+        const waiting = [...(waitingAuthors.get(conv) ?? [])].filter((w) => !names.has(w) && !triedAuthors.has(w));
+        waitingAuthors.delete(conv);
+        const next = waiting[0];
+        if (next === undefined || ended) return;
+        // 남은 ID는 한 번에 묶는다 — 후속 조회 1회가 모두를 시도한 것으로 친다.
+        waiting.slice(1).forEach((w) => triedAuthors.add(w));
+        noteAuthor({ ...view, author_id: next });
+      });
+    authorFetches.set(conv, run);
+  };
+
+  const foldView = (changeId: number, view: MessageView) => {
+    noteAuthor(view);
+    return foldMessage(fold, changeId, view, author);
+  };
 
   const pendingAsMessage = (p: PendingMessage): Message => {
     const rootId = rootFor.get(p.clientMessageId);
@@ -218,7 +288,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
           ...(rootId === undefined ? {} : { thread_root_id: rootId }),
           ...(mentionIds === undefined ? {} : { mention_user_ids: mentionIds }),
         });
-        if (!ended) fold = foldMessage(fold, res.change_id, res.message, author);
+        if (!ended) fold = foldView(res.change_id, res.message);
         return { ok: true, messageId: res.message.id };
       } catch (e) {
         if (e instanceof HttpStatusError) return { ok: false, status: e.status };
@@ -260,12 +330,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         return;
       case 'message.created':
       case 'message.updated':
-        fold = foldMessage(fold, frame.change_id, frame.message, author);
+        if (frame.type === 'message.created') probeMark('ws', frame.message.id, frame.message.created_at);
+        fold = foldView(frame.change_id, frame.message);
         if (frame.type === 'message.created' && frame.message.author_id === userId) {
           const key = { conversationId: frame.conversation_id, authorId: '', clientMessageId: frame.message.client_message_id };
           sendController.messageCreated(key, frame.message.id);
         }
         emit();
+        if (frame.type === 'message.created') probeMark('emit', frame.message.id, frame.message.created_at);
         return;
       case 'message.deleted':
         fold = foldDeleted(fold, frame);
@@ -329,7 +401,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   const foldChanges = (res: SyncResponse) => {
     for (const c of res.changes) {
-      fold = foldMessage(fold, c.change_id, c.message, author);
+      fold = foldView(c.change_id, c.message);
       confirmOwn(c.message);
     }
   };
@@ -393,7 +465,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       const snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
       first ??= snap.snapshot_cursor;
       for (const m of snap.messages) {
-        fold = foldMessage(fold, 0, m, author);
+        fold = foldView(0, m);
         confirmOwn(m);
       }
     }
@@ -486,7 +558,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=${HISTORY_LIMIT}&roots_only=true`,
       );
       if (ended) return;
-      for (const m of res.messages) fold = foldMessage(fold, 0, m, author);
+      for (const m of res.messages) fold = foldView(0, m);
       emit();
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
@@ -501,8 +573,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       for (;;) {
         const res = await api.get<RepliesResponse>(`${path}?after_seq=${after}&limit=${HISTORY_LIMIT}`);
         if (ended) return;
-        fold = foldMessage(fold, 0, res.root, author);
-        for (const m of res.replies) fold = foldMessage(fold, 0, m, author);
+        fold = foldView(0, res.root);
+        for (const m of res.replies) fold = foldView(0, m);
         emit();
         const last = res.replies.at(-1);
         if (!res.has_more || last === undefined) return;
@@ -659,7 +731,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       attempt(async () => {
         const res = await api.patch<MessageWriteResponse>(`/api/messages/${encodeURIComponent(messageId)}`, { body });
         if (!ended) {
-          fold = foldMessage(fold, res.change_id, res.message, author);
+          fold = foldView(res.change_id, res.message);
           emit();
         }
         return null;

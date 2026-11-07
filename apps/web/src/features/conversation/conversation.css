@@ -54,3 +54,141 @@
 .thread-summary-new {
   font-weight: 600;
 }
+
+/*
+ * W-10k B 대화 화면 마감(D §3-2·§6-2 CMP-07/11/12/14·§7-2, UI_STATES §2-5·§2-6). 토큰·공통 컨트롤만.
+ * layout.css의 .btn과 겹치지 않게 액션은 독립 클래스(.msg-action) + 복합 선택자로 둔다.
+ * 시각은 화면 글자가 없고 항목 aria-label에만 있다(DOM 문구 불변) — 별도 스타일 없음.
+ */
+.msg-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  line-height: var(--leading-body);
+}
+.msg-item + .msg-item {
+  border-top: 1px solid var(--border-subtle);
+}
+.msg-item:hover {
+  background: var(--bg-hover);
+}
+.msg-author {
+  flex: 1 0 100%;
+  font-weight: 700;
+  color: var(--text);
+}
+.msg-item > .msg-body,
+.msg-item > .msg-deleted,
+.msg-item > .msg-editor,
+.msg-item > .msg-status {
+  flex: 1 0 100%;
+}
+.msg-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+/* 액션(수정·삭제·답글·다시 시도)은 텍스트 버튼: 44px 터치 영역, hover·포커스 시 강조. 포커스 링은 :focus-visible 공통. */
+.msg-item .msg-action,
+.msg-item .msg-status button,
+.msg-item .thread-summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  box-sizing: border-box;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.msg-item .msg-action:hover,
+.msg-item .msg-status button:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.msg-item .msg-action:focus-visible,
+.msg-item .msg-status button:focus-visible {
+  color: var(--text);
+}
+/* CMP-14 스레드 요약: accent 텍스트 버튼. */
+.msg-item .thread-summary {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.msg-item .thread-summary:hover {
+  background: var(--accent-bg);
+  text-decoration: underline;
+}
+.msg-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+.msg-failed {
+  padding-inline-start: var(--space-2);
+}
+.msg-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.msg-editor textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+/* CMP-11 작성기: 입력(여러 줄 자동 높이 + 상한) + 전송(.btn-primary). 멘션 후보(CMP-12)는 작성기 위 팝오버(layout.css). */
+.composer {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+.composer .composer-input {
+  flex: 1 1 0;
+  min-width: 0;
+  field-sizing: content;
+  max-height: 200px;
+  overflow-y: auto;
+  resize: none;
+  line-height: var(--leading-body);
+}
+.composer-send {
+  flex: 0 0 auto;
+}
+.composer-counter,
+.composer-limit {
+  flex: 1 0 100%;
+  order: 1;
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.composer-counter {
+  color: var(--text-muted);
+}
+@media (width <= 640px) {
+  .msg-item {
+    padding: var(--space-2) var(--space-3);
+  }
+  .composer {
+    padding: var(--space-2) var(--space-3);
+  }
+  .composer .composer-input {
+    max-height: 140px;
+  }
+}
