@@ -5,7 +5,7 @@ import type {
   ConversationsStore,
   CreateChannelResult,
   OpenDmResult,
-  UnreadThread,
+  UnreadAggregate,
 } from './store.js';
 
 interface UnreadThreadRow {
@@ -14,6 +14,20 @@ interface UnreadThreadRow {
   last_reply_seq: number | string;
   unread_reply_count: number | string;
   mention_count: number | string;
+}
+
+function toAggregate(unreadCount: string, mentionCount: string, threads: readonly UnreadThreadRow[]): UnreadAggregate {
+  return {
+    unreadCount: Number(unreadCount),
+    mentionCount: Number(mentionCount),
+    threads: threads.map((t) => ({
+      rootMessageId: t.root_message_id,
+      lastReadSeq: Number(t.last_read_seq),
+      lastReplySeq: Number(t.last_reply_seq),
+      unreadReplyCount: Number(t.unread_reply_count),
+      mentionCount: Number(t.mention_count),
+    })),
+  };
 }
 
 /** conversations 저장소의 pg 구현. 모든 SQL은 파라미터 바인딩만 쓴다(NC-25). */
@@ -186,7 +200,7 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
         last_seq: string;
         last_read_seq: string;
         peer_user_id: string | null;
-        unread_count: string;
+        unread_count?: string;
         mention_count: string;
         unread_threads: UnreadThreadRow[];
       }>(LIST_FOR_USER_SQL, [userId, after ?? null, limit]);
@@ -198,17 +212,7 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
           peerUserId: r.peer_user_id,
           lastSeq: Number(r.last_seq),
           lastReadSeq: Number(r.last_read_seq),
-          unreadCount: Number(r.unread_count),
-          mentionCount: Number(r.mention_count),
-          unreadThreads: r.unread_threads.map(
-            (t): UnreadThread => ({
-              rootMessageId: t.root_message_id,
-              lastReadSeq: Number(t.last_read_seq),
-              lastReplySeq: Number(t.last_reply_seq),
-              unreadReplyCount: Number(t.unread_reply_count),
-              mentionCount: Number(t.mention_count),
-            }),
-          ),
+          ...(r.unread_count === undefined ? {} : { unread: toAggregate(r.unread_count, r.mention_count, r.unread_threads) }),
         }),
       );
     },

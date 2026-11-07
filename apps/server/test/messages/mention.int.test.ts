@@ -68,3 +68,41 @@ describe('멘션', () => {
     expect(await targets(root.id)).toEqual(sorted([ctx.ids.a, ctx.ids.b, ctx.ids.l]));
   });
 });
+
+describe('멘션 집계(W-09a)', () => {
+  it('FR-MSG-07 멘션은 mention_user_ids의 참여자만 1회 집계되고 자기 멘션은 제외되며 수정 시 추가·제거되고 이미 읽은 메시지는 새 미읽음이 되지 않으며 읽음으로 해제된다', async () => {
+    const a = await as(ctx.app, 'a');
+    const b = await as(ctx.app, 'b');
+    const general = await createChannel(ctx.app, a, 'general');
+    await req(ctx.app, 'POST', `/api/conversations/${general}/join`, b);
+    const counts = async (who: typeof a): Promise<{ mention_count: number; unread_count: number }> => {
+      const list = (await req(ctx.app, 'GET', '/api/conversations', who)).json<{ conversations: { id: string; mention_count: number; unread_count: number }[] }>();
+      const found = list.conversations.find((c) => c.id === general);
+      return { mention_count: found?.mention_count ?? -1, unread_count: found?.unread_count ?? -1 };
+    };
+    const read = (who: typeof a, seq: number) =>
+      req(ctx.app, 'PUT', '/api/read-state', who, { conversation_id: general, last_read_seq: seq });
+
+    // 참여자 B만 1회(중복·자기·비참여자·없는 사용자 제외).
+    const m1 = await send(ctx.app, a, general, { body: '@B @B @A @C', mention_user_ids: [ctx.ids.b, ctx.ids.b, ctx.ids.a, ctx.ids.c, randomUUID()] });
+    expect(await counts(b)).toEqual({ mention_count: 1, unread_count: 1 });
+    expect((await counts(a)).mention_count).toBe(0);
+
+    // 수정 시 제거·추가.
+    expect((await req(ctx.app, 'PATCH', `/api/messages/${m1.id}`, a, { body: '없음', mention_user_ids: [] })).statusCode).toBe(200);
+    expect((await counts(b)).mention_count).toBe(0);
+    expect((await req(ctx.app, 'PATCH', `/api/messages/${m1.id}`, a, { body: '@B', mention_user_ids: [ctx.ids.b] })).statusCode).toBe(200);
+    expect((await counts(b)).mention_count).toBe(1);
+
+    // 읽음으로 해제.
+    expect((await read(b, m1.seq)).statusCode).toBe(200);
+    expect(await counts(b)).toEqual({ mention_count: 0, unread_count: 0 });
+
+    // 이미 읽은 메시지에 나중에 멘션이 추가돼도 새 미읽음이 되지 않는다(cursor 후퇴 없음).
+    const m2 = await send(ctx.app, a, general, { body: '그냥' });
+    expect((await read(b, m2.seq)).statusCode).toBe(200);
+    expect((await req(ctx.app, 'PATCH', `/api/messages/${m2.id}`, a, { body: '@B 추가', mention_user_ids: [ctx.ids.b] })).statusCode).toBe(200);
+    expect(await counts(b)).toEqual({ mention_count: 0, unread_count: 0 });
+    expect(await mentionRows(m2.id)).toEqual([ctx.ids.b]);
+  });
+});

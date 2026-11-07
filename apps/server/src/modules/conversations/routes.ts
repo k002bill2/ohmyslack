@@ -74,10 +74,10 @@ async function listConversations(deps: ConversationRouteDeps, request: FastifyRe
       peer_user_id: r.peerUserId,
       last_seq: r.lastSeq,
       last_read_seq: r.lastReadSeq,
-      unread_count: r.unreadCount,
-      mention_count: r.mentionCount,
-      unread_thread_count: r.unreadThreads.length,
-      unread_threads: r.unreadThreads.map((t) => ({
+      unread_count: r.unread?.unreadCount ?? 0,
+      mention_count: r.unread?.mentionCount ?? 0,
+      unread_thread_count: r.unread?.threads.length ?? 0,
+      unread_threads: (r.unread?.threads ?? []).map((t) => ({
         root_message_id: t.rootMessageId,
         last_read_seq: t.lastReadSeq,
         last_reply_seq: t.lastReplySeq,
