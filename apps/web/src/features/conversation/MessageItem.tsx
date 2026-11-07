@@ -112,19 +112,19 @@ function MessageItemView(props: MessageItemProps) {
       {actionable && !isEditing && (
         <div className="msg-actions">
           {onEdit !== undefined && (
-            <button type="button" onClick={() => setEditing(true)}>
+            <button type="button" className="msg-action" onClick={() => setEditing(true)}>
               {MESSAGE_ACTION_COPY.edit}
             </button>
           )}
           {onDelete !== undefined && (
-            <button type="button" onClick={() => setConfirming(true)}>
+            <button type="button" className="msg-action" onClick={() => setConfirming(true)}>
               {MESSAGE_ACTION_COPY.delete}
             </button>
           )}
         </div>
       )}
       {onReply !== undefined && (
-        <button type="button" data-reply-for={message.id} onClick={() => onReply(message.id)}>
+        <button type="button" className="msg-action" data-reply-for={message.id} onClick={() => onReply(message.id)}>
           답글
         </button>
       )}
