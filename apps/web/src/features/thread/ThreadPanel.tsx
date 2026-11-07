@@ -1,5 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { COMPOSER_COPY, THREAD_EMPTY_TEXT } from '../../ui/copy.js';
+import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
 import { Composer, MessageItem, lastServerSeq, scrolledToBottom, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
@@ -21,6 +21,8 @@ export interface ThreadPanelProps {
   readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete'>;
   /** FR-SYNC-03: 패널이 맨 아래(마지막 답글이 보임)일 때 그 답글 seq를 알린다. 답글이 없으면 부르지 않는다(본문 열기 ≠ 답글 읽음). */
   readonly onSeen?: (seq: number) => void;
+  /** 헤더 보조 줄 「채널 · 답글 n」의 채널 이름(시안 01·06). 없으면 「답글 n」만. */
+  readonly spaceTitle?: string;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -59,7 +61,7 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
   const actions = { timePlacement, ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }), ...messageActions };
   const container = useRef<HTMLElement>(null);
@@ -104,6 +106,13 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
   };
 
   const Tag = variant === 'wide' ? 'aside' : 'section';
+  const replyCount = THREAD_SUMMARY_COPY.replies(replies.length);
+  const subtitle = spaceTitle === undefined ? replyCount : `${spaceTitle} · ${replyCount}`;
+  const closeButton = (
+    <button type="button" className="btn btn-secondary thread-close" onClick={onClose}>
+      {variant === 'compact' ? '뒤로' : '닫기'}
+    </button>
+  );
   return (
     <Tag
       ref={container}
@@ -113,10 +122,14 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
       onKeyDown={onKeyDown}
       onScroll={reportSeen}
     >
+      {/* 시안 01·06: 「스레드」 + 「채널 · 답글 n」 보조 + 닫기(compact는 왼쪽 「뒤로」). */}
       <div className="thread-header">
-        <button type="button" className="btn btn-secondary" onClick={onClose}>
-          {variant === 'compact' ? '뒤로' : '닫기'}
-        </button>
+        {variant === 'compact' && closeButton}
+        <div className="thread-heading">
+          <h2 className="thread-title">스레드</h2>
+          <p className="thread-subtitle">{subtitle}</p>
+        </div>
+        {variant !== 'compact' && closeButton}
       </div>
       <ul className="thread-root">
         {/* 원문이 바뀌면 다시 마운트 — 편집·삭제 확인 상태가 다른 메시지로 이어지지 않게(Codex r1 P1). */}

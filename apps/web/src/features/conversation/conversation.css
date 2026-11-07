@@ -212,3 +212,224 @@
     max-height: 140px;
   }
 }
+
+/*
+ * W-11b 디자인 시안 반영(아트보드 01·05·08·11). 토큰만 사용 — hex 리터럴 금지(check:design-tokens).
+ * 레이아웃 레인(layout.css)과 겹치는 선택자는 `.composer`·`.msg-item` 하위 복합 선택자로 범위를 좁힌다.
+ */
+/* 01·05 메시지 행: 「시각(고정폭·muted) 작성자(굵게)」 한 줄, 본문 아래. 구분선 대신 여백. */
+.msg-item {
+  position: relative;
+  border-radius: var(--radius-md);
+}
+.msg-item + .msg-item {
+  border-top: 0;
+}
+.msg-item .msg-time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.msg-item .msg-time-inline {
+  order: -1;
+  margin-inline: 0 var(--space-2);
+}
+.msg-item .msg-edited {
+  margin-inline-start: 0;
+}
+/* 01 멘션 강조: accent-bg 둥근 블록 + 「나를 멘션」 라벨. */
+.msg-item.msg-mentioned,
+.msg-item.msg-mentioned:hover {
+  background: var(--accent-bg);
+  border-radius: var(--radius-lg);
+}
+.msg-mention-label {
+  margin-inline-start: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+/* 01 코드 블록·링크. */
+.msg-body .msg-code {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+.msg-body a {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* 01 스레드 요약 알약: accent-bg + 테두리. */
+.msg-item .thread-summary {
+  min-height: 36px;
+  margin-block: var(--space-1);
+  border-color: var(--accent-solid);
+  border-radius: var(--radius-md);
+  background: var(--accent-bg);
+}
+.msg-item .thread-summary-new {
+  color: var(--text);
+}
+/* 01 전송 실패·저장 여부 확인 중: 라벨 + 테두리 「다시 시도」 + 텍스트 「삭제」. */
+.msg-failed {
+  border-left: 0;
+  padding-inline-start: 0;
+}
+.msg-failed .msg-status-label {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+.msg-item .msg-status .msg-status-retry {
+  border-color: var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+/* 11 A·B 툴바: 포인터(hover) 장치의 넓은 폭에서는 메시지 오른쪽 위에 떠 있고 hover·포커스 때만 보인다.
+   터치·compact는 인라인으로 항상 보인다(액션 시트 미구현 — REPORT 남은 작업). 44px 터치 대상 유지. */
+.msg-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+@media (hover: hover) and (width > 640px) {
+  .msg-item .msg-toolbar {
+    position: absolute;
+    top: calc(-1 * var(--space-4));
+    inset-inline-end: var(--space-4);
+    z-index: 1;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-popover);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .msg-item:hover > .msg-toolbar,
+  .msg-item:focus-within > .msg-toolbar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .msg-item .msg-toolbar .msg-action[data-reply-for] {
+    background: var(--accent-bg);
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+}
+/* CMP-10 DateSeparator(01·05): 큰 날짜 + 요일 보조. */
+.date-separator {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-1);
+}
+.date-separator-day {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--text);
+}
+.date-separator-weekday {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+/* CMP-09 NewMessagesDivider(01): 빨간 알약 라벨 + 선. */
+.new-messages-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+}
+.new-messages-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  border-top: 1px solid var(--border);
+}
+.new-messages-label {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--danger-solid);
+  border-radius: var(--radius-lg);
+  color: var(--danger-text);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+/* 01·05 작성기: 둥근 카드, 입력 위 · 아래 줄 오른쪽 원형 전송. 입력 글자 16px 이상(iOS 확대 방지). */
+.composer {
+  margin: var(--space-2) var(--space-4) var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  padding-bottom: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+}
+[data-composer] > .composer,
+.thread-panel > .composer {
+  margin-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+}
+.composer .composer-input {
+  flex: 1 0 100%;
+  min-height: 44px;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  font-size: max(1rem, var(--text-md));
+}
+.composer .composer-input:focus-visible {
+  outline: none;
+}
+.composer:focus-within {
+  border-color: var(--accent-solid);
+}
+.composer .composer-send {
+  margin-inline-start: auto;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+}
+.composer-send-icon {
+  display: block;
+  margin: auto;
+}
+/* 11 C 멘션 팝오버: 작성기 위 카드, 왼쪽 정렬 고정 폭 — 오른쪽 전송 버튼을 덮지 않는다(QA3). */
+.composer .mention-picker {
+  inset-inline: 0 auto;
+  width: min(320px, 100%);
+  border-radius: var(--radius-lg);
+  padding: var(--space-1);
+}
+.composer .mention-option,
+.composer .mention-empty {
+  gap: var(--space-2);
+  border-inline-start: 0;
+  border-radius: var(--radius-md);
+}
+.composer .mention-option::before {
+  content: attr(data-initial);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+.composer .mention-active,
+.composer .mention-active:hover {
+  background: var(--accent-bg);
+}
+@media (width <= 640px) {
+  .composer {
+    margin-inline: var(--space-2);
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  }
+  .composer .mention-picker {
+    width: min(280px, 100%);
+  }
+}
