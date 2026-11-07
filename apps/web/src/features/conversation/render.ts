@@ -16,7 +16,24 @@ export type Block =
 const FENCE = /^\s*```/;
 /** 링크 후보: `스킴:` 으로 시작하는 공백 없는 토큰. 스킴 허용 여부는 `safeLinkHref`가 판정한다. */
 const LINK_CANDIDATE = /[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"'`]+/g;
-const TRAILING_PUNCT = /[.,;:!?)\]}'"」』>]+$/;
+const TRAILING_PUNCT = new Set([...'.,;:!?\'"」』>']);
+const CLOSE_TO_OPEN: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{' };
+
+function count(text: string, ch: string): number {
+  return text.split(ch).length - 1;
+}
+
+/** 링크 뒤 문장부호를 떼되, URL 안에서 짝이 맞는 닫는 괄호는 보존한다(`.../Function_(mathematics)`). */
+export function trimTrailing(raw: string): string {
+  let out = raw;
+  for (;;) {
+    const last = out.at(-1) ?? '';
+    const open = CLOSE_TO_OPEN[last];
+    const strip = TRAILING_PUNCT.has(last) || (open !== undefined && count(out, last) > count(out, open));
+    if (!strip) return out;
+    out = out.slice(0, -1);
+  }
+}
 const ALLOWED_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
 
 /** 허용 스킴(http/https)과 host가 있는 절대 URL이면 정규화된 href, 아니면 undefined. */
@@ -35,7 +52,7 @@ export function linkify(text: string): Line {
   const out: Inline[] = [];
   let last = 0;
   for (const match of text.matchAll(LINK_CANDIDATE)) {
-    const raw = match[0].replace(TRAILING_PUNCT, '');
+    const raw = trimTrailing(match[0]);
     const href = raw === '' ? undefined : safeLinkHref(raw);
     if (href === undefined) continue;
     const start = match.index;

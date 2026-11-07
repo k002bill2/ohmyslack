@@ -33,6 +33,8 @@ export type SendEvent =
   | { readonly type: 'network-error' }
   | { readonly type: 'message-created'; readonly key: MatchKey; readonly messageId: string }
   | { readonly type: 'retry' }
+  /** 다시 시도 시점에 `navigator.onLine === false` → HTTP 미호출, 즉시 실패(디자인 §6-1 오프라인). */
+  | { readonly type: 'offline-retry' }
   | { readonly type: 'ws-closed' };
 
 export function createPending(input: MatchKey & { readonly body: string; readonly online: boolean }): PendingMessage {
@@ -77,6 +79,8 @@ export function transition(item: PendingMessage, event: SendEvent): PendingMessa
       return onMessageCreated(item, event.key, event.messageId);
     case 'retry':
       return canRetry(item) ? { ...item, status: 'sending', failure: undefined } : item;
+    case 'offline-retry':
+      return canRetry(item) ? { ...item, status: 'failed', failure: 'retryable' } : item;
     case 'ws-closed':
       // 전이 1: 연결 단절·WS 종료는 어떤 상태도 바꾸지 않는다.
       return item;

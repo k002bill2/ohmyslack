@@ -13,8 +13,8 @@ afterEach(() => {
 
 function setup(props: Partial<ComposerProps> = {}) {
   const onSend = vi.fn<(body: string) => void>();
-  render(<Composer onSend={onSend} {...props} />);
-  const box = screen.getByRole('textbox') as HTMLTextAreaElement;
+  render(<Composer label="작성기" onSend={onSend} {...props} />);
+  const box = screen.getByRole('textbox', { name: '작성기' }) as HTMLTextAreaElement;
   return { onSend, box };
 }
 

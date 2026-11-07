@@ -64,6 +64,17 @@ describe('FR-MSG-01 세부 사례', () => {
     expect(root.textContent).toBe('자료 https://example.com/a?b=1 와 http://example.org.');
   });
 
+  it('URL 안에서 짝이 맞는 닫는 괄호는 보존하고 문장 괄호는 뗀다', () => {
+    const wiki = 'https://en.wikipedia.org/wiki/Function_(mathematics)';
+    expect(linkify(wiki)).toEqual([{ kind: 'link', text: wiki, href: wiki }]);
+    expect(linkify(`(참고 ${wiki}).`)).toEqual([
+      { kind: 'text', text: '(참고 ' },
+      { kind: 'link', text: wiki, href: wiki },
+      { kind: 'text', text: ').' },
+    ]);
+    expect(linkify('(https://example.com)')[1]).toEqual({ kind: 'link', text: 'https://example.com', href: 'https://example.com/' });
+  });
+
   it('한글 바로 뒤에 붙은 링크도 인식한다', () => {
     const root = renderBody('링크:https://example.com');
     expect(root.querySelector('a')?.getAttribute('href')).toBe('https://example.com/');

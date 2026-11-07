@@ -60,6 +60,10 @@ export function createSendController(deps: SendControllerDeps) {
     async retry(clientMessageId: string): Promise<void> {
       const before = items.find((it) => it.clientMessageId === clientMessageId);
       if (before === undefined) return;
+      if (!deps.isOnline()) {
+        update(clientMessageId, { type: 'offline-retry' });
+        return;
+      }
       update(clientMessageId, { type: 'retry' });
       const after = items.find((it) => it.clientMessageId === clientMessageId);
       if (after !== undefined && after.status === 'sending' && before.status !== 'sending') await dispatchPost(after);

@@ -25,7 +25,8 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function setup(online = true) {
+function setup(initialOnline = true) {
+  let online = initialOnline;
   const calls: PostRequest[] = [];
   const pending: ReturnType<typeof deferred<PostResult>>[] = [];
   let seq = 0;
@@ -41,7 +42,10 @@ function setup(online = true) {
     isOnline: () => online,
     onChange: () => undefined,
   });
-  return { ctl, calls, pending, item: () => ctl.items()[0] as PendingMessage };
+  const setOnline = (v: boolean) => {
+    online = v;
+  };
+  return { ctl, calls, pending, setOnline, item: () => ctl.items()[0] as PendingMessage };
 }
 
 function view(item: PendingMessage, onRetry = vi.fn(), onDiscard = vi.fn()) {
@@ -203,6 +207,23 @@ describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
     expect(item()).toMatchObject({ status: 'failed', failure: 'retryable' });
   });
 
+  it('오프라인에서 다시 시도하면 HTTP를 보내지 않고 실패를 유지하며, 복구 뒤 재시도는 같은 ID로 1회 보낸다', async () => {
+    const { ctl, calls, pending, setOnline, item } = setup(false);
+    await ctl.submit(CONV, '오프라인');
+    await ctl.retry('cm-1');
+    expect(calls).toHaveLength(0);
+    expect(item()).toMatchObject({ status: 'failed', failure: 'retryable' });
+    setOnline(true);
+    const r = ctl.retry('cm-1');
+    pending[0]?.reject(new Error('network'));
+    await r;
+    expect(item().status).toBe('unknown');
+    setOnline(false);
+    await ctl.retry('cm-1');
+    expect(item()).toMatchObject({ status: 'failed', failure: 'retryable' });
+    expect(calls).toHaveLength(1);
+  });
+
   it('로컬 삭제는 목록에서 제거하고, 저장 확인 뒤의 늦은 오류는 상태를 되돌리지 않는다', () => {
     const { ctl } = setup();
     void ctl.submit(CONV, 'x');
@@ -212,6 +233,7 @@ describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
     expect(transition(confirmed, { type: 'network-error' })).toBe(confirmed);
     expect(transition(confirmed, { type: 'http-error', status: 500 })).toBe(confirmed);
     expect(transition(confirmed, { type: 'retry' })).toBe(confirmed);
+    expect(transition(confirmed, { type: 'offline-retry' })).toBe(confirmed);
     expect(transition(confirmed, { type: 'http-success', messageId: 'z' })).toBe(confirmed);
   });
 
