@@ -3,7 +3,7 @@ import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerAccessRegistry, type RegisteredRoute } from './http/access.js';
 import { errorBody, toHttpError } from './http/errors.js';
-import { normalizeHost, registerRequestGuards, registerResponseHeaders } from './http/security.js';
+import { frameworkErrorHandler, normalizeHost, registerRequestGuards, registerResponseHeaders } from './http/security.js';
 import { createAuthEvents, type AuthEvents } from './modules/auth/events.js';
 import { createLoginLimiter, type LoginLimiter } from './modules/auth/login-limiter.js';
 import { registerAuthRoutes } from './modules/auth/routes.js';
@@ -25,6 +25,7 @@ import { createSyncService } from './modules/sync/service.js';
 import type { SyncStore } from './modules/sync/store.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
 import { registerRealtime, type RealtimeOptions } from './modules/realtime/index.js';
+import { registerStatic } from './static/index.js';
 
 export interface AppOptions {
   /** 정확한 허용 Origin(스킴·호스트·포트). 기본값은 골격 테스트용 `http://localhost`. */
@@ -50,6 +51,8 @@ export interface AppOptions {
   readonly logger?: OpsLogger;
   /** WS 설정 주입(heartbeat 등). syncStore가 있을 때 `/api/ws`를 등록한다. */
   readonly realtime?: RealtimeOptions;
+  /** 웹 빌드 산출물 디렉터리(절대 경로). 주어지면 같은 출처로 정적 셸·SPA fallback을 서빙한다(TRD §6). */
+  readonly webDistDir?: string;
 }
 
 const OPTION_KEYS: ReadonlySet<string> = new Set([
@@ -68,6 +71,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'authEvents',
   'logger',
   'realtime',
+  'webDistDir',
 ]);
 
 declare module 'fastify' {
@@ -122,7 +126,12 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   const readEvents = options.readEvents ?? createReadEvents();
   const allowedHosts = [new URL(allowedOrigin).host, ...(options.extraHosts ?? [])].map((h) => normalizeHost(h) ?? '');
 
-  const app = Fastify({ logger: false, genReqId: () => randomUUID(), bodyLimit: 64 * 1024 });
+  const app = Fastify({
+    logger: false,
+    genReqId: () => randomUUID(),
+    bodyLimit: 64 * 1024,
+    frameworkErrors: frameworkErrorHandler(allowedHosts),
+  });
   const routes = registerAccessRegistry(app);
   app.decorate('accessRoutes', routes);
   app.decorate('authEvents', authEvents);
@@ -142,6 +151,8 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
 
   app.register(cookie);
   app.get('/api/healthz', { config: { access: 'public' } }, async () => ({ status: 'ok' as const }));
+  const webDistDir = options.webDistDir;
+  if (webDistDir !== undefined) app.register(async (scope) => registerStatic(scope, webDistDir));
   if (options.authStore !== undefined) {
     const store = options.authStore;
     const limiter = options.limiter ?? createLoginLimiter(clock);

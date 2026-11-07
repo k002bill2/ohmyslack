@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { sendError } from './errors.js';
 
@@ -68,12 +69,57 @@ export function registerRequestGuards(app: FastifyInstance, options: SecurityOpt
   });
 }
 
+function underApi(path: string): boolean {
+  return path === '/api' || path.startsWith('/api/');
+}
+
+/**
+ * 원시 URL 경로를 판정용으로 정규화한다: 퍼센트 디코드(`%2F` 포함) → 소문자 → 중복 슬래시·점 세그먼트 정리.
+ * 디코드할 수 없으면 undefined.
+ */
+export function normalizePath(rawUrl: string): string | undefined {
+  const raw = rawUrl.split('?')[0] ?? '';
+  try {
+    return posix.normalize(decodeURIComponent(raw).toLowerCase());
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `/api/**` 요청인지(F-4). 매칭된 라우트 패턴이 `/api`면 참이고, 그 밖에는 원시 경로를 정규화해 본다 —
+ * `/%61pi/…`·`/API/…`·`//api/…` 같은 변형도 `/api`로 취급한다. 디코드 불가 경로는 보수적으로 참.
+ */
+export function isApiPath(request: FastifyRequest): boolean {
+  const route = request.routeOptions.url;
+  if (route !== undefined && underApi(route)) return true;
+  const path = normalizePath(request.url);
+  return path === undefined || underApi(path);
+}
+
+/** S6 헤더(+`/api`면 S5 no-store)를 응답에 직접 싣는다. onSend를 거치지 않는 경로(frameworkErrors)도 쓴다. */
+export function applyResponseHeaders(request: FastifyRequest, reply: FastifyReply): void {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) reply.header(name, value);
+  if (isApiPath(request)) reply.header('cache-control', 'no-store');
+}
+
 /** S6 헤더는 모든 응답, S5 `Cache-Control: no-store`는 `/api/**` 응답에 붙인다. */
 export function registerResponseHeaders(app: FastifyInstance): void {
   app.addHook('onSend', async (request, reply, payload) => {
-    for (const [name, value] of Object.entries(SECURITY_HEADERS)) reply.header(name, value);
-    const path = request.url.split('?')[0] ?? '';
-    if (path === '/api' || path.startsWith('/api/')) reply.header('cache-control', 'no-store');
+    applyResponseHeaders(request, reply);
     return payload;
   });
+}
+
+/**
+ * Fastify 프레임워크 오류(`FST_ERR_BAD_URL` 등) 처리기(F-5). 이 경로는 onRequest 가드·onSend 훅보다 앞에서 응답되므로
+ * Host 허용 목록(NC-04)과 S6 헤더를 여기서 직접 적용한다. 본문은 TRD §3 형식이고 원문 경로·메시지를 싣지 않는다.
+ */
+export function frameworkErrorHandler(allowedHosts: readonly string[]) {
+  const hosts = new Set(allowedHosts);
+  return (_error: unknown, request: FastifyRequest, reply: FastifyReply): void => {
+    const host = normalizeHost(headerValue(request, 'host'));
+    applyResponseHeaders(request, reply);
+    void sendError(request, reply, 400, host !== undefined && hosts.has(host) ? 'invalid_request' : 'host_not_allowed');
+  };
 }

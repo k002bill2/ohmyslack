@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { markAccountGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
 import { inviteAcceptRequestSchema, type InviteCreateResponse, type MeResponse, type MembersResponse } from '../../shared.js';
 import type { AuthEvents } from '../auth/events.js';
@@ -68,7 +69,8 @@ async function acceptInvite(deps: AcceptDeps, request: FastifyRequest, reply: Fa
 async function deactivate(deps: MemberRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   const { user_id: targetId } = parseOr400(userParams, request.params);
   const actor = requireAuth(request).user;
-  if (targetId === actor.id) throw new HttpError(409, 'owner_protected');
+  // UUID는 대소문자 무관 — 대문자로 보낸 자기 id도 자기 비활성화로 본다(H-2).
+  if (targetId.toLowerCase() === actor.id.toLowerCase()) throw new HttpError(409, 'owner_protected');
   const result = await deps.store.deactivate(actor.id, targetId, new Date(deps.clock()));
   if (!result.ok) {
     if (result.reason === 'last_owner') throw new HttpError(409, 'owner_protected');
@@ -80,7 +82,7 @@ async function deactivate(deps: MemberRouteDeps, request: FastifyRequest, reply:
 
 /** 초대·멤버·관리자 라우트(정본: TRD §3, DEV_DESIGN §2-4). */
 export function registerMemberRoutes(app: FastifyInstance, deps: MemberRouteDeps): void {
-  const account = accountGuard(deps.auth);
+  const account = markAccountGuard(accountGuard(deps.auth));
   const admin = [...adminGuards(deps.auth)];
   const acceptDeps: AcceptDeps = { ...deps, serial: createSerialQueue() };
 

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
-import { markConversationGuard } from '../../http/access.js';
+import { markAccountGuard, markConversationGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
 import {
   readStateRequestSchema,
@@ -90,7 +90,7 @@ async function markRead(deps: SyncRouteDeps, request: FastifyRequest): Promise<R
  * snapshot·read-state는 URL이 경로 변수 없이 고정이라 `account` 메타지만, 표식 붙은 assertAccess 가드를 반드시 거친다.
  */
 export function registerSyncRoutes(app: FastifyInstance, deps: SyncRouteDeps): void {
-  const account = accountGuard(deps.auth);
+  const account = markAccountGuard(accountGuard(deps.auth));
   app.get('/api/sync', { config: { access: 'account' }, preHandler: account }, (request) => sync(deps, request));
   app.get(
     '/api/sync/snapshot',
