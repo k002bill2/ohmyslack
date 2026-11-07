@@ -16,7 +16,8 @@
     "check:no-persist-cache": "tsx tools/bin/check-no-persist-cache.ts",
     "check:design-tokens": "tsx tools/bin/check-design-tokens.ts",
     "check:fr-coverage": "tsx tools/bin/check-fr-coverage.ts",
-    "check:log-leak": "tsx tools/bin/check-log-leak.ts"
+    "check:log-leak": "tsx tools/bin/check-log-leak.ts",
+    "e2e:realgap": "tsx tools/bin/assert-test-db.ts && vitest run --config e2e/vitest.realgap.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
