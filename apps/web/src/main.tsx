@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LiveApp, browserSource } from './LiveApp.js';
 import { registerServiceWorker } from './features/pwa';
+import { maybeInstallProbe } from './measure/index.js';
 import 'virtual:tokens.css';
 import './ui/base.css';
 
@@ -16,3 +17,4 @@ createRoot(container).render(
 );
 
 registerServiceWorker({ prod: import.meta.env.PROD, navigator });
+void maybeInstallProbe();

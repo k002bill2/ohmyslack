@@ -25,6 +25,7 @@ import { createApi, HttpStatusError, NetworkError, type FetchLike } from './api.
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
 import { createRealtimeClient, type SocketLike } from './realtime.js';
+import { probeMark } from '../measure/hook.js';
 
 export interface HttpDataSourceDeps {
   readonly fetch: FetchLike;
@@ -312,12 +313,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         return;
       case 'message.created':
       case 'message.updated':
+        if (frame.type === 'message.created') probeMark('ws', frame.message.id, frame.message.created_at);
         fold = foldView(frame.change_id, frame.message);
         if (frame.type === 'message.created' && frame.message.author_id === userId) {
           const key = { conversationId: frame.conversation_id, authorId: '', clientMessageId: frame.message.client_message_id };
           sendController.messageCreated(key, frame.message.id);
         }
         emit();
+        if (frame.type === 'message.created') probeMark('emit', frame.message.id, frame.message.created_at);
         return;
       case 'message.deleted':
         fold = foldDeleted(fold, frame);
