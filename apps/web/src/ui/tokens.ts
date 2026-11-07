@@ -182,3 +182,28 @@ export const tokens = Object.freeze({
   motion: Object.freeze({ ...MOTION }),
   motionReduced: Object.freeze({ ...MOTION_REDUCED }),
 });
+
+/**
+ * §5-1 구간 경계·§5-2 접힘 경계(px). 구간 판정은 이 상수로만 한다(개발설계서 A5 — 1곳에만 둔다).
+ * compact: width ≤ compactMax / medium: compactMax < width < wideMin / wide: width ≥ wideMin.
+ * 스레드 열림 + width < threadRoomyMin → 사이드바 72px 자동 접힘(§5-2 필수).
+ */
+export const breakpoints = Object.freeze({ compactMax: 640, wideMin: 1024, threadRoomyMin: 1120 });
+
+/** §5-1 Media Queries Level 4 범위 문법(상수에서 생성). */
+export const mediaQueries = Object.freeze({
+  compact: `(width <= ${breakpoints.compactMax}px)`,
+  medium: `(${breakpoints.compactMax}px < width < ${breakpoints.wideMin}px)`,
+  wide: `(width >= ${breakpoints.wideMin}px)`,
+  threadRoomy: `(width >= ${breakpoints.threadRoomyMin}px)`,
+});
+
+/** §5-2·§5-3 레이아웃 폭 토큰 그대로. */
+export const layoutVars: Readonly<Record<string, string>> = Object.freeze({
+  '--sidebar-w': '260px',
+  '--sidebar-w-collapsed': '72px',
+  '--thread-w': 'clamp(320px, 32vw, 380px)',
+  '--body-min': '480px',
+  '--body-min-medium': '380px',
+  '--thread-overlay-w': 'min(420px, 100%)',
+});
