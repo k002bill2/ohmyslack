@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, MessageItem } from '../conversation';
+import { Composer, MessageItem, createDraftStore, type DraftStore } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { ConnectionBanner } from '../sync';
 import { ThreadPanel } from '../thread';
@@ -9,6 +9,8 @@ import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js'
 
 export interface AppShellProps {
   readonly dataSource: DataSource;
+  /** 작성기 초안 저장소(디자인 §7-3 초안 규칙). 로그아웃·401에서 소유자가 `clear()`로 폐기한다. 없으면 셸이 만든다. */
+  readonly drafts?: DraftStore;
 }
 
 function spaceTitle(space: Space): string {
@@ -21,6 +23,7 @@ function ConversationPane(props: {
   readonly roots: readonly Message[];
   readonly breakpoint: Breakpoint;
   readonly inert: boolean;
+  readonly drafts: DraftStore;
   readonly onBack: () => void;
   readonly onReply: (id: string) => void;
   readonly onSend: (body: string) => void;
@@ -46,14 +49,20 @@ function ConversationPane(props: {
         </ul>
       )}
       <div data-composer="main">
-        <Composer key={space.id} label={space.name} onSend={props.onSend} />
+        <Composer
+          key={space.id}
+          label={space.name}
+          onSend={props.onSend}
+          draft={{ store: props.drafts, key: space.id }}
+        />
       </div>
     </main>
   );
 }
 
 /** CMP-01 AppShell — 3/2/1단, §5-2 접힘 규칙, 포커스 관리(디자인 §5·§7-3, UI_STATES §2-2·§3·§4-2). */
-export function AppShell({ dataSource }: AppShellProps) {
+export function AppShell({ dataSource, drafts: injectedDrafts }: AppShellProps) {
+  const [drafts] = useState(() => injectedDrafts ?? createDraftStore());
   const snap = useSyncExternalStore(dataSource.subscribe, dataSource.getSnapshot, dataSource.getSnapshot);
   const viewport = useViewport();
   const [state, dispatch] = useReducer(shellReducer, initialShellState);
@@ -115,6 +124,7 @@ export function AppShell({ dataSource }: AppShellProps) {
       roots={snap.messages.filter((m) => m.conversationId === space.id && m.rootId === undefined)}
       breakpoint={bp}
       inert={bp === 'medium' && threadOpen}
+      drafts={drafts}
       onBack={() => dispatch({ type: 'back' })}
       onReply={(id) => dispatch({ type: 'open-thread', rootId: id })}
       onSend={(body) => dataSource.send({ conversationId: space.id }, body)}
@@ -128,6 +138,7 @@ export function AppShell({ dataSource }: AppShellProps) {
       onClose={closeThread}
       onSend={(body) => dataSource.send({ conversationId: space.id, rootId: root.id }, body)}
       announce={setAnnouncement}
+      drafts={drafts}
     />
   );
   const compactScreen = thread || pane || sidebar;

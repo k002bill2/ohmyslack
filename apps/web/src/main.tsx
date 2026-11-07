@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
+import { registerServiceWorker } from './features/pwa';
 import 'virtual:tokens.css';
 
 const container = document.getElementById('root');
@@ -12,3 +13,5 @@ createRoot(container).render(
     <App />
   </StrictMode>,
 );
+
+registerServiceWorker({ prod: import.meta.env.PROD, navigator });

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createMemoryDataSource, type DataSource } from './data';
 import { AppShell } from './features/layout';
+import type { SessionBus } from './features/sync';
 
 const DEV_SEED = {
   spaces: [
@@ -12,8 +13,23 @@ const DEV_SEED = {
   connection: 'connected',
 } as const;
 
-/** 앱 루트(개발용): 메모리 DataSource로 AppShell을 렌더한다. 운영 HTTP·WS 연결은 다음 웹 레인. */
-export function App({ dataSource }: { readonly dataSource?: DataSource }) {
-  const [source] = useState(() => dataSource ?? createMemoryDataSource(DEV_SEED));
-  return <AppShell dataSource={source} />;
+const SIGNED_OUT = { spaces: [], messages: [], connection: 'connected' } as const;
+
+/**
+ * 앱 루트(개발용): 메모리 DataSource로 AppShell을 렌더한다. 운영 HTTP·WS 연결은 다음 웹 레인.
+ * 세션 종료(로그아웃·401·계정 전환) 시 DataSource를 빈 것으로 바꾸고 AppShell을 다시 마운트해
+ * 화면 본문·초안 등 메모리 상태를 모두 버린다(FR-CLIENT-04).
+ */
+export function App({ dataSource, session }: { readonly dataSource?: DataSource; readonly session?: SessionBus }) {
+  const [source, setSource] = useState<DataSource>(() => dataSource ?? createMemoryDataSource(DEV_SEED));
+  const [generation, setGeneration] = useState(0);
+  useEffect(
+    () =>
+      session?.onEnd(() => {
+        setSource(createMemoryDataSource(SIGNED_OUT));
+        setGeneration((g) => g + 1);
+      }),
+    [session],
+  );
+  return <AppShell key={generation} dataSource={source} />;
 }
