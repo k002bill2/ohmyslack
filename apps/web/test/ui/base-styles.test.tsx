@@ -69,8 +69,10 @@ describe('auth.css', () => {
     expect(src('ui/base.css')).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
   });
 
-  it('카드는 --bg-elevated, 제목 --text-xl, 입력·버튼 최소 44px, 오류 --danger-text, 링크 --accent-text', () => {
-    expect(css).toContain('background: var(--bg-elevated)');
+  // 시안 03(W-11c): 카드·입력 면은 slate1(--bg-app), 화면 바탕은 slate2(--bg-sidebar). 이전 기대값 --bg-elevated 카드 → 시안 근거로 교체.
+  it('카드는 --bg-app(바탕 --bg-sidebar), 제목 --text-xl, 입력·버튼 최소 44px, 오류 --danger-text, 링크 --accent-text', () => {
+    expect(css).toMatch(/\.auth-card \{[^}]*background: var\(--bg-app\)/);
+    expect(css).toMatch(/\.auth-screen \{[^}]*background: var\(--bg-sidebar\)/);
     expect(css).toContain('font-size: var(--text-xl)');
     expect(css.match(/min-height: 44px/g)).toHaveLength(2);
     expect(css).toMatch(/\[role='alert'\][^{]*\{[^}]*color: var\(--danger-text\)/);
@@ -92,9 +94,10 @@ describe('auth.css 글자 대비(§7-1 1.4.3, 두 스킴)', () => {
     expect(css).toMatch(/button\[type='submit'\] \{[^}]*background: var\(--accent-bg\);\s*color: var\(--accent-text\)/);
   });
 
-  it.each(['light', 'dark'] as const)('%s: 카드·입력(bg-elevated)·버튼 위 글자 4.5:1 이상', (scheme) => {
+  it.each(['light', 'dark'] as const)('%s: 카드·입력(bg-elevated·bg-app)·버튼 위 글자 4.5:1 이상', (scheme) => {
     for (const fg of ['--text', '--text-muted', '--danger-text', '--accent-text']) {
       expect(ratio(scheme, fg, '--bg-elevated')).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(scheme, fg, '--bg-app')).toBeGreaterThanOrEqual(4.5);
     }
     expect(ratio(scheme, '--accent-text', '--accent-bg')).toBeGreaterThanOrEqual(4.5);
   });

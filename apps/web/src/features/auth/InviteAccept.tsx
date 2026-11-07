@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { INVITE_COPY, LOGIN_PATH } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
+import { AuthBrand } from './AuthBrand.js';
 import { RATE_LIMITED_TEXT } from './LoginForm.js';
 
 /** `code`: 서버 오류 본문의 `error.code`(있으면). 400 중 `invite_invalid`만 초대 무효다(Codex r3). */
@@ -58,6 +59,7 @@ function Unusable({ onGoLogin }: { readonly onGoLogin?: (() => void) | undefined
   return (
     <div className="auth-screen">
       <div className="auth-card">
+        <AuthBrand />
         <p role="alert">{INVITE_UNUSABLE_TEXT}</p>
         <p>{INVITE_COPY.unusableHint}</p>
         <a
@@ -132,8 +134,7 @@ export function InviteAccept({ readHash, clearHash, onAccept, onSuccess, display
   return (
     <div className="auth-screen">
       <form className="auth-card" onSubmit={submit}>
-        <h1>{INVITE_COPY.title}</h1>
-        <p>{INVITE_COPY.intro}</p>
+        <AuthBrand title={INVITE_COPY.title} intro={INVITE_COPY.intro} />
         <label htmlFor={emailId}>이메일</label>
         <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
         <label htmlFor={passwordId}>비밀번호</label>
