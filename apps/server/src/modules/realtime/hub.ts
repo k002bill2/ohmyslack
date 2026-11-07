@@ -259,16 +259,22 @@ export function createHub(deps: HubDeps): Hub {
         // listener 먼저: 구독을 등록한 뒤 watermark를 읽는다. 이후 live는 큐에서 replay 뒤로 밀린다(TRD §4).
         const sub: Subscription = { through: Number.MAX_SAFE_INTEGER };
         conn.subs.set(conversationId, sub);
-        const through = await syncStore.watermark();
-        if (afterCursor > through || afterCursor < (await syncStore.retentionFloor(new Date(clock())))) {
-          conn.subs.delete(conversationId);
-          send(conn, { type: 'error', code: 'cursor_expired', retryable: false, conversation_id: conversationId });
-          send(conn, { type: 'sync.required' });
-          return;
+        try {
+          const through = await syncStore.watermark();
+          if (afterCursor > through || afterCursor < (await syncStore.retentionFloor(new Date(clock())))) {
+            conn.subs.delete(conversationId);
+            send(conn, { type: 'error', code: 'cursor_expired', retryable: false, conversation_id: conversationId });
+            send(conn, { type: 'sync.required' });
+            return;
+          }
+          if (!(await replay(conn, conversationId, sub, afterCursor, through))) return;
+          sub.through = through;
+          send(conn, { type: 'conversation.subscribed', conversation_id: conversationId, through_cursor: through });
+        } catch (error) {
+          // ACK 전 실패: through=MAX 항목이 남으면 live가 조용히 버려진다. 지우고 sync.required로 넘긴다(worker F2).
+          if (conn.subs.get(conversationId) === sub) conn.subs.delete(conversationId);
+          throw error;
         }
-        if (!(await replay(conn, conversationId, sub, afterCursor, through))) return;
-        sub.through = through;
-        send(conn, { type: 'conversation.subscribed', conversation_id: conversationId, through_cursor: through });
       });
     },
     unsubscribe(conn, conversationId) {

@@ -313,6 +313,7 @@ describe('subscribe', () => {
     const t = setup();
     t.join(C1, ALICE);
     const a = t.connect(ALICE);
+    await flush(a.conn); // attach 직후 세션 재확인을 먼저 끝낸다
     t.st.peekError = new Error('db down');
     t.hub.subscribe(a.conn, C1, 0);
     await flush(a.conn);
@@ -489,6 +490,7 @@ describe('세션 만료 타이머', () => {
     vi.useFakeTimers({ now: T0 });
     const t = setup(() => Date.now());
     const a = t.connect(ALICE, { expiresAt: T0 + 1000 });
+    await flush(a.conn); // attach 직후 세션 재확인을 먼저 끝낸다
     expect(vi.getTimerCount()).toBe(1);
     t.st.sessions.delete(a.token);
     await vi.advanceTimersByTimeAsync(999);
@@ -504,16 +506,17 @@ describe('세션 만료 타이머', () => {
     vi.useFakeTimers({ now: T0 });
     const t = setup(() => Date.now());
     const a = t.connect(ALICE, { expiresAt: T0 + 1000 });
+    await flush(a.conn); // attach 직후 세션 재확인(peek 1회)
     t.st.sessions.set(a.token, authed(ALICE, a.sessionId, a.token, T0 + 5000));
     await vi.advanceTimersByTimeAsync(1000);
     await settle();
     expect(a.socket.closes).toEqual([]);
     expect(vi.getTimerCount()).toBe(1);
-    expect(t.st.peekCalls).toBe(1);
+    expect(t.st.peekCalls).toBe(2);
     t.st.sessions.delete(a.token);
     await vi.advanceTimersByTimeAsync(4000);
     await settle();
-    expect(t.st.peekCalls).toBe(2);
+    expect(t.st.peekCalls).toBe(3);
     expect(a.socket.closes).toEqual([{ code: 1008, reason: 'session_expired' }]);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -522,6 +525,7 @@ describe('세션 만료 타이머', () => {
     vi.useFakeTimers({ now: T0 });
     const t = setup(() => Date.now());
     const a = t.connect(ALICE, { expiresAt: T0 + 1000 });
+    await flush(a.conn); // attach 직후 세션 재확인을 먼저 끝낸다
     t.st.peekError = new Error('db down');
     await vi.advanceTimersByTimeAsync(1000);
     await settle();
@@ -532,12 +536,12 @@ describe('세션 만료 타이머', () => {
     vi.useFakeTimers({ now: T0 });
     const t = setup(() => Date.now());
     const far = T0 + 2 ** 31 + 10_000;
-    t.connect(ALICE, { expiresAt: far });
+    await flush(t.connect(ALICE, { expiresAt: far }).conn); // attach 직후 세션 재확인(peek 1회)
     await vi.advanceTimersByTimeAsync(2 ** 31 - 2);
-    expect(t.st.peekCalls).toBe(0);
+    expect(t.st.peekCalls).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
     await settle();
-    expect(t.st.peekCalls).toBe(1);
+    expect(t.st.peekCalls).toBe(2);
     expect(vi.getTimerCount()).toBe(1);
   });
 
@@ -558,6 +562,7 @@ describe('세션 만료 타이머', () => {
     vi.useFakeTimers({ now: T0 });
     const t = setup(() => Date.now());
     const a = t.connect(ALICE, { expiresAt: T0 - 1 });
+    await flush(a.conn); // attach 직후 세션 재확인을 먼저 끝낸다
     t.st.sessions.delete(a.token);
     await vi.advanceTimersByTimeAsync(0);
     await settle();
@@ -602,14 +607,12 @@ describe('sendError·dispose', () => {
   });
 });
 
-/**
- * 발견 후보(hub.ts 미수정, 보고용). 아래 두 테스트는 기대 동작을 적었고 현재 코드에서 실패하므로 skip한다.
- */
-describe('발견 후보: 현재 코드에서 실패(skip)', () => {
+/** worker 발견 F1·F2 회귀(리뷰 레인에서 hub.ts 수정 후 활성화). */
+describe('발견 회귀: replay 취소·실패 뒤 구독 정리', () => {
   // [F1] subscribe 태스크가 watermark/replay에서 기다리는 사이 membershipEnded가 오면 endSubscription이 구독을 지우고
   // error not_found를 보내지만, 태스크는 재확인 없이 이어서 `conversation.subscribed`를 보낸다(현재: ['error','conversation.subscribed']).
   // 클라이언트는 not_found 뒤에 ACK를 받아 구독 중이라고 믿지만 서버 subs에는 항목이 없어 live가 오지 않는다.
-  it.skip('replay 대기 중 멤버십이 끝나면 not_found만 받고 subscribed ACK는 오지 않는다', async () => {
+  it('replay 대기 중 멤버십이 끝나면 not_found만 받고 subscribed ACK는 오지 않는다', async () => {
     const t = setup();
     t.join(C1, ALICE);
     let open!: () => void;
@@ -629,7 +632,7 @@ describe('발견 후보: 현재 코드에서 실패(skip)', () => {
   // [F2] subscribe 태스크가 watermark 이후 throw(scan reject 등)하면 sync.required만 보내고 `conn.subs`에
   // `through = MAX_SAFE_INTEGER` 항목이 남는다. 그 대화의 live는 재구독 전까지 조용히 버려지고, 나중의 membershipEnded는
   // ACK한 적 없는 대화에 대해 error not_found를 보낸다(현재: ['sync.required','error']).
-  it.skip('subscribe 처리 실패 뒤 구독 항목이 남지 않는다', async () => {
+  it('subscribe 처리 실패 뒤 구독 항목이 남지 않는다', async () => {
     const t = setup();
     t.join(C1, ALICE);
     t.st.scanImpl = async () => {
