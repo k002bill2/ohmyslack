@@ -1,0 +1,184 @@
+/**
+ * 웹 디자인 토큰 — 정본: DESIGN_REFERENCE R3.1 §3-1(출처)·§3-2(타이포)·§3-3(색)·§3-4(아이콘)·§3-5(간격·모션)·§7-1(대비).
+ * 형식 계약: tools/check-design-tokens.ts 머리 주석(`tokens.colors.{light,dark}`·`fonts`·`icons`).
+ * 이 파일은 외부 import 없이 순수 상수만 둔다(체커가 tsx로 동적 import).
+ */
+
+const RADIX_SOURCE = 'https://raw.githubusercontent.com/radix-ui/colors/main/LICENSE';
+const RADIX_LICENSE = 'MIT';
+
+export type Scheme = 'light' | 'dark';
+export type ScaleName = 'slate' | 'teal' | 'green' | 'amber' | 'red';
+export type ColorRole = 'surface' | 'text' | 'nontext';
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+
+/**
+ * Radix Colors 공식 값(MIT). 원본: github.com/radix-ui/colors `src/light.ts`·`src/dark.ts` (2026-11-07 취득).
+ * 인덱스 0 = step 1. neutral = slate, accent = teal(§3-3 기본값), 상태색 green·amber·red(§3-3 역할 표).
+ */
+export const radixScales: Readonly<Record<Scheme, Readonly<Record<ScaleName, readonly string[]>>>> = Object.freeze({
+  light: {
+    slate: ['#fcfcfd', '#f9f9fb', '#f0f0f3', '#e8e8ec', '#e0e1e6', '#d9d9e0', '#cdced6', '#b9bbc6', '#8b8d98', '#80838d', '#60646c', '#1c2024'],
+    teal: ['#fafefd', '#f3fbf9', '#e0f8f3', '#ccf3ea', '#b8eae0', '#a1ded2', '#83cdc1', '#53b9ab', '#12a594', '#0d9b8a', '#008573', '#0d3d38'],
+    green: ['#fbfefc', '#f4fbf6', '#e6f6eb', '#d6f1df', '#c4e8d1', '#adddc0', '#8eceaa', '#5bb98b', '#30a46c', '#2b9a66', '#218358', '#193b2d'],
+    amber: ['#fefdfb', '#fefbe9', '#fff7c2', '#ffee9c', '#fbe577', '#f3d673', '#e9c162', '#e2a336', '#ffc53d', '#ffba18', '#ab6400', '#4f3422'],
+    red: ['#fffcfc', '#fff7f7', '#feebec', '#ffdbdc', '#ffcdce', '#fdbdbe', '#f4a9aa', '#eb8e90', '#e5484d', '#dc3e42', '#ce2c31', '#641723'],
+  },
+  dark: {
+    slate: ['#111113', '#18191b', '#212225', '#272a2d', '#2e3135', '#363a3f', '#43484e', '#5a6169', '#696e77', '#777b84', '#b0b4ba', '#edeef0'],
+    teal: ['#0d1514', '#111c1b', '#0d2d2a', '#023b37', '#084843', '#145750', '#1c6961', '#207e73', '#12a594', '#0eb39e', '#0bd8b6', '#adf0dd'],
+    green: ['#0e1512', '#121b17', '#132d21', '#113b29', '#174933', '#20573e', '#28684a', '#2f7c57', '#30a46c', '#33b074', '#3dd68c', '#b1f1cb'],
+    amber: ['#16120c', '#1d180f', '#302008', '#3f2700', '#4d3000', '#5c3d05', '#714f19', '#8f6424', '#ffc53d', '#ffd60a', '#ffca16', '#ffe7b3'],
+    red: ['#191111', '#201314', '#3b1219', '#500f1c', '#611623', '#72232d', '#8c333a', '#b54548', '#e5484d', '#ec5d5e', '#ff9592', '#ffd1d9'],
+  },
+});
+
+export interface ColorToken {
+  readonly value: string;
+  readonly role: ColorRole;
+  /** text·nontext 대비 계산 대상(같은 스킴의 surface 토큰 이름). */
+  readonly on?: string;
+  readonly scale: ScaleName;
+  readonly step: Step;
+  /** §3-3 표의 단계. step과 다르면 §7-1 대비 미달로 바꾼 것(deviation에 사유). */
+  readonly canonStep: Step;
+  readonly deviation?: string;
+  readonly source: string;
+  readonly license: string;
+}
+
+interface RoleSpec {
+  readonly scale: ScaleName;
+  readonly step: Step;
+  readonly role: ColorRole;
+  readonly on?: string;
+  /** 스킴별 단계 대체(§3-3 단계가 §7-1 대비 기준 미달인 경우만). */
+  readonly override?: Partial<Record<Scheme, { readonly step: Step; readonly reason: string }>>;
+}
+
+const BG_APP = '--bg-app';
+
+/** §3-3 역할 표(이름·스케일·단계 정본 그대로). override만 정본과 다르다 — REPORT "정본 오류" 참조. */
+const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
+  '--bg-app': { scale: 'slate', step: 1, role: 'surface' },
+  '--bg-sidebar': { scale: 'slate', step: 2, role: 'surface' },
+  '--bg-elevated': { scale: 'slate', step: 3, role: 'surface' },
+  '--bg-hover': { scale: 'slate', step: 4, role: 'surface' },
+  '--bg-active': { scale: 'slate', step: 5, role: 'surface' },
+  '--border-subtle': {
+    scale: 'slate', step: 6, role: 'nontext', on: BG_APP,
+    override: {
+      light: { step: 9, reason: 'slate6/bg-app 1.37 < 3 (§2-3 4항 보더 3:1)' },
+      dark: { step: 8, reason: 'slate6/bg-app 1.65 < 3 (§2-3 4항 보더 3:1)' },
+    },
+  },
+  '--border': {
+    scale: 'slate', step: 7, role: 'nontext', on: BG_APP,
+    override: {
+      light: { step: 9, reason: 'slate7/bg-app 1.53 < 3 (§7-1 1.4.11)' },
+      dark: { step: 8, reason: 'slate7/bg-app 2.04 < 3 (§7-1 1.4.11)' },
+    },
+  },
+  '--text-muted': { scale: 'slate', step: 11, role: 'text', on: BG_APP },
+  '--text': { scale: 'slate', step: 12, role: 'text', on: BG_APP },
+  '--accent-solid': {
+    scale: 'teal', step: 9, role: 'nontext', on: BG_APP,
+    override: { light: { step: 10, reason: 'teal9/bg-app 2.996 < 3 (§7-1 1.4.11)' } },
+  },
+  '--accent-text': {
+    scale: 'teal', step: 11, role: 'text', on: BG_APP,
+    override: { light: { step: 12, reason: 'teal11/bg-app 4.45 < 4.5 (§7-1 1.4.3)' } },
+  },
+  '--accent-bg': { scale: 'teal', step: 3, role: 'surface' },
+  '--success-text': { scale: 'green', step: 11, role: 'text', on: BG_APP },
+  '--warning-bg': { scale: 'amber', step: 3, role: 'surface' },
+  '--warning-text': {
+    scale: 'amber', step: 11, role: 'text', on: '--warning-bg',
+    override: { light: { step: 12, reason: 'amber11/amber3 4.25 < 4.5 (§7-1 1.4.3)' } },
+  },
+  '--danger-text': { scale: 'red', step: 11, role: 'text', on: BG_APP },
+  '--danger-solid': { scale: 'red', step: 9, role: 'nontext', on: BG_APP },
+  '--focus-ring': {
+    scale: 'teal', step: 8, role: 'nontext', on: BG_APP,
+    override: { light: { step: 10, reason: 'teal8/bg-app 2.30 < 3 (§7-1 1.4.11)' } },
+  },
+};
+
+/** §3-3 역할 토큰 이름(정본 표 순서). */
+export const ROLE_TOKEN_NAMES: readonly string[] = Object.freeze(Object.keys(ROLE_SPECS));
+
+function buildToken(spec: RoleSpec, scheme: Scheme): ColorToken {
+  const over = spec.override?.[scheme];
+  const step = over?.step ?? spec.step;
+  const value = radixScales[scheme][spec.scale][step - 1];
+  if (value === undefined) throw new Error(`radix ${scheme}.${spec.scale}${step} 없음`);
+  return Object.freeze({
+    value, role: spec.role, scale: spec.scale, step, canonStep: spec.step,
+    ...(spec.on === undefined ? {} : { on: spec.on }),
+    ...(over === undefined ? {} : { deviation: over.reason }),
+    source: RADIX_SOURCE, license: RADIX_LICENSE,
+  });
+}
+
+function buildScheme(scheme: Scheme): Readonly<Record<string, ColorToken>> {
+  return Object.freeze(Object.fromEntries(
+    Object.entries(ROLE_SPECS).map(([name, spec]) => [name, buildToken(spec, scheme)]),
+  ));
+}
+
+export interface ProvenanceEntry {
+  readonly name: string;
+  readonly source: string;
+  readonly license: string;
+}
+
+/** §3-1 폰트 행. 파일 동봉·@font-face는 이 모듈 범위 밖(폰트 파일 미동봉). */
+const FONTS: readonly ProvenanceEntry[] = [
+  { name: 'Pretendard', source: 'https://raw.githubusercontent.com/orioncactus/pretendard/main/LICENSE', license: 'OFL-1.1' },
+  { name: 'Noto Sans KR', source: 'https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE', license: 'OFL-1.1' },
+  { name: 'JetBrains Mono', source: 'https://raw.githubusercontent.com/JetBrains/JetBrainsMono/master/OFL.txt', license: 'OFL-1.1' },
+];
+
+const LUCIDE_SOURCE = 'https://raw.githubusercontent.com/lucide-icons/lucide/main/LICENSE';
+/** §3-4에서 ✅(확인됨)인 Lucide 이름만. ⚠️ 항목은 빌드 시 확정(REPORT 목록). */
+const ICON_NAMES = [
+  'hash', 'message-square', 'user', 'lock', 'at-sign', 'send', 'reply', 'corner-up-left',
+  'x', 'chevron-left', 'clock', 'check', 'refresh-cw', 'wifi-off', 'pencil', 'trash',
+  'ellipsis', 'search', 'settings', 'log-out', 'plus', 'smartphone',
+] as const;
+
+/** §3-2 그대로. */
+const TYPOGRAPHY: Readonly<Record<string, string>> = {
+  '--font-sans': '"Pretendard Variable", Pretendard, "Noto Sans KR", -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", sans-serif',
+  '--font-mono': '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+  '--text-xs': '0.75rem',
+  '--text-sm': '0.8125rem',
+  '--text-md': '0.9375rem',
+  '--text-lg': '1.0625rem',
+  '--text-xl': '1.25rem',
+  '--leading-body': '1.55',
+  '--leading-tight': '1.3',
+};
+
+/** §3-5 그대로. */
+const SPACE: Readonly<Record<string, string>> = {
+  '--space-1': '0.25rem', '--space-2': '0.5rem', '--space-3': '0.75rem', '--space-4': '1rem',
+  '--space-5': '1.25rem', '--space-6': '1.5rem', '--space-8': '2rem', '--space-10': '2.5rem',
+};
+const RADIUS: Readonly<Record<string, string>> = { '--radius-sm': '4px', '--radius-md': '8px', '--radius-lg': '12px' };
+const SHADOW: Readonly<Record<string, string>> = { '--shadow-popover': '0 4px 16px rgb(0 0 0 / 0.12)' };
+const MOTION: Readonly<Record<string, string>> = { '--motion-fast': '120ms', '--motion-base': '200ms' };
+/** §3-5 `prefers-reduced-motion: reduce` 값. */
+const MOTION_REDUCED: Readonly<Record<string, string>> = { '--motion-fast': '0ms', '--motion-base': '0ms' };
+
+export const tokens = Object.freeze({
+  colors: Object.freeze({ light: buildScheme('light'), dark: buildScheme('dark') }),
+  fonts: Object.freeze(FONTS.map((f) => Object.freeze({ ...f }))),
+  icons: Object.freeze(ICON_NAMES.map((name) => Object.freeze({ name, source: LUCIDE_SOURCE, license: 'ISC' }))),
+  typography: Object.freeze({ ...TYPOGRAPHY }),
+  space: Object.freeze({ ...SPACE }),
+  radius: Object.freeze({ ...RADIUS }),
+  shadow: Object.freeze({ ...SHADOW }),
+  motion: Object.freeze({ ...MOTION }),
+  motionReduced: Object.freeze({ ...MOTION_REDUCED }),
+});
