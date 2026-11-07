@@ -267,7 +267,7 @@ describe('access 레지스트리의 대화 가드 강제', () => {
     expect(routes.map((r) => r.url)).toEqual(['/z-conversation', '/z-message']);
   });
 
-  it('WS 동작 표는 W-09 전까지 비어 있다', () => {
-    expect(WS_ACTIONS).toHaveLength(0);
+  it('WS 동작 표는 W-09에서 추가한 conversation.subscribe 한 행이다(access conversation)', () => {
+    expect(WS_ACTIONS).toEqual([{ action: 'conversation.subscribe', access: 'conversation' }]);
   });
 });
