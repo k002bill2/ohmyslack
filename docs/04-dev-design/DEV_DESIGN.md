@@ -55,7 +55,7 @@ ohmyslack/
 │     │  └─ main.tsx
 │     ├─ public/
 │     │  ├─ icons/            # 독자 제작 심볼 source.svg + 아이콘 세트(정본: 디자인 §9)
-│     │  ├─ fonts/            # 폰트 서브셋 WOFF2(정본: 디자인 §3-2)
+│     │  ├─ fonts/            # 폰트 공식 웹 빌드 무수정 배치(정본: 디자인 §3-1, 서브셋 금지)
 │     │  └─ manifest.webmanifest
 │     └─ test/                # **/*.test.ts(x) (컴포넌트·로직)
 ├─ packages/
@@ -140,7 +140,7 @@ ohmyslack/
 | W-02 | 품질 스크립트 5종: `check:cleanroom`·`check:fr-coverage`·`check:log-leak`·`check:no-persist-cache`·`check:design-tokens`(정의는 5-1) | Developer | W-01 | 각 스크립트의 `tools/test/` 자체 테스트에서 위반 fixture exit 1·정상 fixture exit 0·실행 오류 fixture exit 1을 확인(Red 후 Green) | OPS-04, OPS-03, CLIENT-04 | M |
 | W-03 | 위협 모델(자산·신뢰 경계: tailnet·Serve·쿠키·CSRF·WS·SW·checkpoint) | Security | TRD R3 | 6-3 TR-SEC 표의 테스트 후보를 검토해 누락을 Jarvis에 반환 | AUTH-06, OPS-01 | S |
 | W-04 | 화면·컴포넌트 상태 명세(정본 구간별 단수·전송 상태·연결 상태·포커스 순서·S1/S3 화면 흐름) | Designer | DESIGN_REFERENCE R3 | 컴포넌트별 상태표·키보드 순서·구간·클린룸 출처 표기. 이름·문구는 정본 그대로 | CLIENT-01/02/07, MSG-02 | M |
-| W-04b | **독자 제작 에셋:** 앱 심볼 `apps/web/public/icons/source.svg`·아이콘 세트·favicon(목록 정본: 디자인 §9), 폰트 서브셋 WOFF2(정본: 디자인 §3-2) | Designer(에셋)·Developer(빌드 연결) | W-04 | 정본 목록의 파일이 모두 존재, PR 본문에 "독자 제작, 참고 출처 없음"(CLEANROOM 4-1), `check:design-tokens`·QA-FR-OPS-04 출처 검토 통과 | CLIENT-03, OPS-04 | S |
+| W-04b | **독자 제작 에셋:** 앱 심볼 `apps/web/public/icons/source.svg`·아이콘 세트·favicon(목록 정본: 디자인 §9), 폰트 공식 웹 빌드 무수정 배치(정본: 디자인 §3-1 — 자체 서브셋은 OFL Modified Version이라 ADR 없이는 금지) | Designer(에셋)·Developer(빌드 연결) | W-04 | 정본 목록의 파일이 모두 존재, PR 본문에 "독자 제작, 참고 출처 없음"(CLEANROOM 4-1), `check:design-tokens`·QA-FR-OPS-04 출처 검토 통과 | CLIENT-03, OPS-04 | S |
 | W-05 | 마이그레이션 0001: TRD §2 테이블·제약·인덱스 전부 | Developer | TRD R3, ⚖️-1 | 빈 테스트 DB에 적용, 재실행 시 이미 적용된 파일은 건너뜀. 제약 위반 fixture(교차 대화 root·답글의 답글·DM 쌍 중복·채널명 정규화 중복)가 DB에서 거부됨. 실DB(`ohmyslack`) 미사용 | (기반) | M |
 | W-05b | **초기 owner 생성(BOOT-01):** `apps/server/bin/bootstrap-owner.ts`(로컬 전용, 비노출 credential 입력) + `docs/runbooks/BOOTSTRAP_OWNER.md` | Developer(구현·런북)·Security(검토) | W-05 | `BOOT-01` 통합 테스트 통과 + 합성 환경에서 런북 1회 실행 증거 `qa/manual/QA-BOOT-01.md`(5-4) | (AUTH-01 선행) | S |
 | W-06 | **Slice A — 인증:** 초대·로그인·로그아웃·세션(정본 TRD §5)·비활성화·관리자 가드·Origin/CSRF 검증·로그인 제한 | Developer | W-05b | 6-2 AUTH-01·02·03·05·06 지정 테스트·보조 증거 통과 | AUTH-* | L |
@@ -167,7 +167,7 @@ ohmyslack/
 pnpm install --frozen-lockfile
 pnpm -r typecheck                    # tsc --noEmit, 전 패키지
 pnpm -r lint                         # eslint (B1·B7·B8 포함)
-pnpm -r test -- --coverage           # vitest: unit + 컴포넌트, JSON 결과를 reports/에 기록
+pnpm -r test --coverage              # vitest: unit + 컴포넌트, JSON 결과를 reports/에 기록
 pnpm test:int                        # 서버 통합 + e2e/ 프로토콜 E2E, TEST_DATABASE_URL 필요
 pnpm -r build
 pnpm check:cleanroom                 # CLEANROOM.md 5절의 패턴·제외 목록을 읽어 실행(종료 코드 분기)
@@ -394,6 +394,12 @@ PRD:89는 "DB 저장 → 다른 기기 **표시**"를 요구합니다. 수신 �
 |---|---|---|
 | R1 | 2026-11-07 | 최초 작성. PRD v1.1(P0 FR 33개)에 매핑. TRD·디자인 레퍼런스는 미도착이라 가정으로 표시 |
 | R3 최종안 | 2026-11-07 | R2 Must-fix 13건 반영(거절 0). PRD v1.2·TRD R3 기준으로 6-2 전 행 재작성, 전역 커서 흐름, 접근 메타 레지스트리, `check:cleanroom` 종료 코드 분기, `check:fr-coverage` 진행/판정 모드, `check:no-persist-cache` 정의, 필수 보조 증거 열, 독자 에셋 W-04b, BOOT-01, TR-SEC 보조 표, FR-SYNC-01 같은 시계 표시 측정 추가 |
+
+### R3.1 Jarvis 정합 (2026-11-07)
+- §5-1 `pnpm -r test -- --coverage` → `pnpm -r test --coverage` (pnpm 10.30.2는 `--`를 vitest에 넘겨 커버리지가 꺼짐, G0 레인 실측).
+- §2-1·W-04b 폰트: 서브셋 서술을 디자인 §3-1(공식 빌드 무수정)에 맞춤.
+- ⚖️-1 결정: (A) 채택 — shared-infra `ohmyslack_test` DB + 전용 role `ohmyslack_test`(운영 `ohmyslack` CONNECT 없음) 생성 완료. 접속 정보는 저장소 루트 `.env.test`(600, git ignore).
+- ⚖️-2(자동 E2E 없음)·⚖️-3(GitHub Actions)·⚖️-6(전 패키지 라인 80%): 권고안 채택.
 
 ## 리뷰 반영 기록
 

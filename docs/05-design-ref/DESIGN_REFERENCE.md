@@ -636,6 +636,10 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 
 ---
 
+### R3.1 Jarvis 정합 (2026-11-07)
+- ⚖️-D1 해소: TRD R3.1이 전송 응답과 `message.created` projection에 `client_message_id`를 추가했습니다. §6-3 전이 4의 "자동 접기"는 기본 경로입니다(상세: `docs/07-ui-spec/UI_STATES.md` §2-5). 본문의 "TRD R3에 없음" 서술은 이 항목으로 대체합니다.
+- §14 기본값(slate+teal, 다크 모드 MVP·OS 추종, Pretendard 무수정, Lucide) 영환님 채택(2026-11-07 "★로 P1 착수"). 앱 심볼(§14-5)은 미결정.
+
 ## 리뷰 반영 기록
 처리 합계: **Must-fix 9건 — 반영 9 · 거절 0 · 부분 0.** Should-fix 12건 반영. 자기 예고(`docs/06-reviews/Claude-Fable.md` §5) 4건 반영. R2 리뷰 원문은 수정하지 않았습니다. 아래 `file:line`은 이 문서(`docs/05-design-ref/DESIGN_REFERENCE.md`) R3 저장본 기준이며 저장 후 `grep -n`으로 대조했습니다.
 
