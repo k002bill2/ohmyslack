@@ -1,5 +1,5 @@
 import type { Account, ListState, Space } from '../../data';
-import { COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
+import { COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 
@@ -21,6 +21,8 @@ export interface SidebarProps {
   readonly onCreateChannel?: () => void;
   /** 오류 상태 「다시 시도」. */
   readonly onRetryList?: () => void;
+  /** owner 전용 하단 「멤버 관리」(`/settings/members`). role이 owner가 아니면 렌더하지 않는다. */
+  readonly onManageMembers?: () => void;
   /** 하단 「로그아웃」. */
   readonly onLogout?: () => void;
 }
@@ -92,7 +94,7 @@ function SpaceListBody(props: SidebarProps) {
 /**
  * CMP-02 Sidebar · CMP-03 SpaceList — `nav aria-label="공간"`(디자인 §7-2).
  * 상단 「채널 찾기」·「DM 시작」(+ owner 「채널 만들기」), 하단 내 계정(표시 이름 + 「로그아웃」).
- * 다음 레인(W-10h)은 하단 `.sidebar-account`에 설정·멤버 관리 진입점을 더한다.
+ * 하단 `.sidebar-account`에 owner 전용 「멤버 관리」 진입점(W-10h).
  */
 export function Sidebar(props: SidebarProps) {
   const { collapsed, account } = props;
@@ -100,17 +102,17 @@ export function Sidebar(props: SidebarProps) {
     <nav className="sidebar" aria-label="공간" data-collapsed={collapsed ? 'true' : 'false'}>
       <div className="sidebar-actions">
         {props.onBrowseChannels && (
-          <button type="button" onClick={props.onBrowseChannels}>
+          <button type="button" className="btn btn-secondary" onClick={props.onBrowseChannels}>
             {SIDEBAR_COPY.browseChannels}
           </button>
         )}
         {props.onStartDm && (
-          <button type="button" onClick={props.onStartDm}>
+          <button type="button" className="btn btn-secondary" onClick={props.onStartDm}>
             {SIDEBAR_COPY.startDm}
           </button>
         )}
         {account?.role === 'owner' && props.onCreateChannel && (
-          <button type="button" onClick={props.onCreateChannel}>
+          <button type="button" className="btn btn-secondary" onClick={props.onCreateChannel}>
             {SIDEBAR_COPY.createChannel}
           </button>
         )}
@@ -118,9 +120,16 @@ export function Sidebar(props: SidebarProps) {
       <SpaceListBody {...props} />
       {account !== undefined && (
         <div className="sidebar-account">
-          <span className="account-name">{account.displayName}</span>
+          {account.role === 'owner' && props.onManageMembers && (
+            <button type="button" className="btn btn-secondary" onClick={props.onManageMembers}>
+              {MEMBER_ADMIN_COPY.title}
+            </button>
+          )}
+          <span className="account-name" title={account.displayName}>
+            {account.displayName}
+          </span>
           {props.onLogout && (
-            <button type="button" onClick={props.onLogout}>
+            <button type="button" className="btn btn-secondary" onClick={props.onLogout}>
               {SIDEBAR_COPY.logout}
             </button>
           )}

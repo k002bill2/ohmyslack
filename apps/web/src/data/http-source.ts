@@ -531,6 +531,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
         return res.members.map((m) => ({ id: m.id, displayName: m.display_name, role: m.role }));
       }),
+    createInvite: () =>
+      attempt(async () => {
+        const res = await api.post<{ id: string; token: string; expires_at: string }>('/api/invites');
+        return { id: res.id, token: res.token, expiresAt: res.expires_at };
+      }),
+    deactivateMember: (userId) =>
+      attempt(async () => {
+        await api.post<undefined>(`/api/admin/members/${encodeURIComponent(userId)}/deactivate`);
+        return null;
+      }),
     startDm: (userId) => attempt(async () => refreshThen((await api.post<ConversationRef>('/api/dms', { user_id: userId })).id)),
     reload: () => {
       if (listState === 'error') {

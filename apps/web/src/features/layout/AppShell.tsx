@@ -1,10 +1,11 @@
-import { useEffect, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
 import { Composer, MessageItem, createDraftStore, type DraftStore } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { ConnectionBanner } from '../sync';
-import { COMPOSER_COPY, messageComposerLabel } from '../../ui/copy.js';
+import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
+import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
@@ -27,6 +28,11 @@ const PANEL_ROUTES: Readonly<Partial<Record<PanelKind, '/discover' | '/dm/new'>>
 function panelFrom(history: RouteHistory | undefined): PanelKind | null {
   const kind = history === undefined ? null : parseRoute(history.pathname()).kind;
   return kind === 'discover' ? 'browse' : kind === 'dm-new' ? 'dm' : null;
+}
+
+/** 주소가 `/settings/members`인가(새로고침 복원·뒤로가기). */
+function membersFrom(history: RouteHistory | undefined): boolean {
+  return history !== undefined && parseRoute(history.pathname()).kind === 'members';
 }
 
 /** 첫 상태: 주소가 `/c/:id`면 그 대화(새로고침 복원). */
@@ -92,6 +98,16 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const viewport = useViewport();
   const [state, dispatch] = useReducer(shellReducer, history, initialFrom);
   const [panel, setPanelState] = useState<PanelKind | null>(() => panelFrom(history));
+  const [members, setMembers] = useState(() => membersFrom(history));
+  /** MemberAdmin 요청 함수(안정 참조 — 렌더마다 목록을 다시 읽지 않게). 구현이 없으면 403과 같게 본다. */
+  const memberApi = useMemo(() => {
+    const denied = { ok: false, status: 403 } as const;
+    return {
+      load: () => dataSource.listMembers?.() ?? Promise.resolve(denied),
+      createInvite: () => dataSource.createInvite?.() ?? Promise.resolve(denied),
+      deactivate: (id: string) => dataSource.deactivateMember?.(id) ?? Promise.resolve(denied),
+    };
+  }, [dataSource]);
   const routed = useRef(false);
   const [announcement, setAnnouncement] = useState('');
   const shell = useRef<HTMLDivElement>(null);
@@ -116,14 +132,16 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   // 주소 ← 선택 대화. 첫 실행은 replace(로그인 직후 `/login` 등 정규화), 이후 선택 변경은 push(UI_STATES §3-3 T1).
   useEffect(() => {
     if (history === undefined) return;
-    const target = formatRoute(state.conversationId === null ? { kind: 'root' } : { kind: 'conversation', conversationId: state.conversationId });
+    const target = members
+      ? formatRoute({ kind: 'members' })
+      : formatRoute(state.conversationId === null ? { kind: 'root' } : { kind: 'conversation', conversationId: state.conversationId });
     const first = !routed.current;
     routed.current = true;
     // `/discover`·`/dm/new` 직접 진입은 패널 경로를 그대로 둔다.
     if (history.pathname() === target || (first && panelFrom(history) !== null)) return;
     if (first) history.replace(target);
     else history.push(target);
-  }, [history, state.conversationId]);
+  }, [history, state.conversationId, members]);
 
   // 뒤로·앞으로 → 선택 복원. 열린 공간 Dialog·화면은 닫는다.
   useEffect(
@@ -131,6 +149,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       history?.listen(() => {
         const route = parseRoute(history.pathname());
         setPanelState(panelFrom(history));
+        setMembers(route.kind === 'members');
         dispatch({ type: 'route', conversationId: route.kind === 'conversation' ? route.conversationId : null });
       }),
     [history],
@@ -165,6 +184,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       e.shiftKey ? (id) => unread.has(id) : undefined,
     );
     if (next === null) return;
+    setMembers(false);
     focusComposer.current = true;
     dispatch({ type: 'select-space', conversationId: next });
   };
@@ -186,6 +206,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   /** 생성·참여·DM 성공: 목록은 DataSource가 이미 갱신했다 → 패널 닫기 → 그 대화로 이동(구독은 `open` 효과가 기존 규칙으로). */
   const goTo = (conversationId: string) => {
     setPanel(null);
+    setMembers(false);
     focusComposer.current = true;
     dispatch({ type: 'select-space', conversationId });
   };
@@ -194,13 +215,19 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       spaces={snap.spaces}
       selectedId={state.conversationId}
       collapsed={collapsed}
-      onSelect={(id) => dispatch({ type: 'select-space', conversationId: id })}
+      onSelect={(id) => {
+        setMembers(false);
+        dispatch({ type: 'select-space', conversationId: id });
+      }}
       {...(snap.account === undefined ? {} : { account: snap.account })}
       {...(snap.listState === undefined ? {} : { listState: snap.listState })}
       {...(dataSource.discoverChannels && dataSource.joinChannel ? { onBrowseChannels: () => setPanel('browse') } : {})}
       {...(dataSource.listMembers && dataSource.startDm ? { onStartDm: () => setPanel('dm') } : {})}
       {...(dataSource.createChannel ? { onCreateChannel: () => setPanel('create') } : {})}
       {...(dataSource.reload ? { onRetryList: () => dataSource.reload?.() } : {})}
+      {...(dataSource.listMembers && dataSource.createInvite && dataSource.deactivateMember
+        ? { onManageMembers: () => setMembers(true) }
+        : {})}
       {...(dataSource.logout ? { onLogout: () => void dataSource.logout?.() } : {})}
     />
   );
@@ -213,6 +240,19 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onClose={() => setPanel(null)}
       onDone={goTo}
     />
+  );
+  const memberAdmin = members && (
+    <div className="member-admin-screen">
+      {bp === 'compact' && (
+        <button type="button" className="btn btn-secondary" onClick={() => setMembers(false)}>
+          {DIALOG_CLOSE_LABEL}
+        </button>
+      )}
+      <MemberAdmin
+        account={snap.account}
+        {...memberApi}
+      />
+    </div>
   );
   const pane = space && (
     <ConversationPane
@@ -241,7 +281,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onDiscard={discard}
     />
   );
-  const compactScreen = (bp === 'compact' && spacePanel) || thread || pane || sidebar;
+  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || sidebar;
 
   return (
     <div
@@ -256,8 +296,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {bp === 'compact' ? compactScreen : (
         <>
           {sidebar}
-          {pane}
-          {thread}
+          {memberAdmin || pane}
+          {!members && thread}
           {spacePanel}
         </>
       )}

@@ -70,6 +70,13 @@ export interface Member {
   readonly role: 'owner' | 'member';
 }
 
+/** `POST /api/invites` 2xx(원문 token은 이 응답에서 한 번만 보인다 — 호출자는 메모리에만 둔다). */
+export interface Invite {
+  readonly id: string;
+  readonly token: string;
+  readonly expiresAt: string;
+}
+
 /**
  * 공간 진입점(W-10g): 채널 만들기·찾기·참여·DM·로그아웃. 성공한 생성·참여·DM은 **목록을 다시 읽은 뒤** 대화 ID를 돌려준다
  * — 호출자는 그 ID로 이동(`open`)만 하면 기존 구독·checkpoint 규칙이 그대로 적용된다.
@@ -85,6 +92,10 @@ export interface SpacesApi {
   listMembers?(): Promise<ActionResult<readonly Member[]>>;
   /** `POST /api/dms` — 같은 상대면 서버가 기존 DM ID를 돌려준다(FR-CONV-03). */
   startDm?(userId: string): Promise<ActionResult<string>>;
+  /** `POST /api/invites`(owner, W-10h). */
+  createInvite?(): Promise<ActionResult<Invite>>;
+  /** `POST /api/admin/members/:user_id/deactivate`(owner, W-10h). 204 → ok. */
+  deactivateMember?(userId: string): Promise<ActionResult<null>>;
   /** 목록 오류 「다시 시도」 — 복귀 절차 1회. */
   reload?(): void;
   /** `POST /api/auth/logout` → 본문·checkpoint 정리 → 세션 종료. */
