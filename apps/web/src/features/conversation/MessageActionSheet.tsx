@@ -82,6 +82,8 @@ export function useLongPress(enabled: boolean, onFire: () => void) {
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
     cancel();
     if (!enabled || e.button !== 0 || e.isPrimary === false) return;
+    // portal(삭제 확인 Dialog 등)의 합성 이벤트는 React 트리로 올라온다 — DOM상 항목 안에서 시작한 누르기만.
+    if (!(e.target instanceof Node) || !e.currentTarget.contains(e.target)) return;
     if (e.target instanceof Element && e.target.closest(IGNORE_TARGETS) !== null) return;
     origin.current = { x: e.clientX, y: e.clientY };
     window.addEventListener('scroll', cancel, true);

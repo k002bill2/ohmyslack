@@ -216,6 +216,19 @@ describe('compact 액션 시트 — 「메시지 작업」 버튼(키보드·스
     expect(document.activeElement).toBe(trigger);
   });
 
+  it('삭제 확인 Dialog 안에서 길게 눌러도 시트가 겹쳐 열리지 않는다(portal 이벤트 버블링)', () => {
+    vi.useFakeTimers();
+    renderItem();
+    fireEvent.click(screen.getByRole('button', { name: ACTIONS }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: MESSAGE_ACTION_COPY.delete }));
+    expect(screen.getByRole('dialog', { name: DELETE_MESSAGE_COPY.title })).toBeTruthy();
+    press(screen.getByText(DELETE_MESSAGE_COPY.body));
+    advance(600);
+    const dialogs = screen.getAllByRole('dialog');
+    expect(dialogs).toHaveLength(1);
+    expect(screen.getByRole('dialog', { name: DELETE_MESSAGE_COPY.title })).toBeTruthy();
+  });
+
   it('남의 메시지는 수정·삭제 없이 답글·취소만', async () => {
     const user = userEvent.setup();
     renderItem({ selfId: 'u9' });
