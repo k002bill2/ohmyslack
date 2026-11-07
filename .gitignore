@@ -1,8 +1,7 @@
-.env
-.env.*
-!.env.example
 node_modules/
 dist/
+reports/
 coverage/
+dev/
+*.tsbuildinfo
 .DS_Store
-*.log
