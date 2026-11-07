@@ -110,4 +110,22 @@ describe('미지 작성자 이름 재조회(W-10k A)', () => {
     for (let i = 0; i < 6; i += 1) await flush();
     expect(ds.getSnapshot().messages[0]?.author).toBe('새멤버');
   });
+  it('재조회 중 도착한 다른 미지 작성자: 응답에 없으면 후속 조회 1회로 채운다(Codex r1 P2)', async () => {
+    const { server, ds } = setup();
+    let calls = 0;
+    server.on(`GET /api/conversations/${CONV}/members`, () => {
+      calls += 1;
+      const late = calls > 1 ? [{ id: LATE, display_name: '늦게' }] : [];
+      return { status: 200, body: { members: [{ id: NEWBIE, display_name: '새멤버' }, ...late] } };
+    });
+    await ds.start();
+    ds.open?.(CONV);
+    await flush();
+    const base = calls;
+    server.socket.push({ type: 'message.created', change_id: 1, conversation_id: CONV, message: message(1, { author_id: NEWBIE }) });
+    server.socket.push({ type: 'message.created', change_id: 2, conversation_id: CONV, message: message(2, { author_id: LATE }) });
+    for (let i = 0; i < 10; i += 1) await flush();
+    expect(calls - base).toBe(2);
+    expect(ds.getSnapshot().messages.map((m) => m.author)).toEqual(['새멤버', '늦게']);
+  });
 });

@@ -76,6 +76,8 @@ export function createProbe(deps: ProbeDeps): Probe {
   let skipped = { invalid: 0, alreadyInDom: 0, evicted: 0 };
 
   const finish = (id: string, e: Entry, raf: number) => {
+    // reset()·퇴출 뒤 이미 예약된 rAF가 옛 항목을 기록하지 않게 현재 항목과 동일성 확인(Codex r1 P2).
+    if (entries.get(id) !== e) return;
     entries.delete(id);
     if (e.emit === undefined || e.commit === undefined) return;
     hist.ws.record(e.ws - e.created);

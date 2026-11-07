@@ -180,16 +180,33 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   };
 
   /** 처음 보는 author_id면 그 대화 멤버를 1회 in-flight로 다시 읽는다(초기 이력·sync·WS·답글 공통). */
+  /** 재조회 진행 중에 발견한 다른 미지 ID(대화별). 응답 뒤에도 이름이 없으면 1회 후속 조회한다(Codex r1 P2). */
+  const waitingAuthors = new Map<string, ReadonlySet<string>>();
+
   const noteAuthor = (view: MessageView) => {
     const id = view.author_id;
-    if (names.has(id) || triedAuthors.has(id) || authorFetches.has(view.conversation_id)) return;
+    const conv = view.conversation_id;
+    if (names.has(id) || triedAuthors.has(id)) return;
+    if (authorFetches.has(conv)) {
+      waitingAuthors.set(conv, new Set([...(waitingAuthors.get(conv) ?? []), id]));
+      return;
+    }
     triedAuthors.add(id);
-    const run = fetchNames(view.conversation_id)
+    const run = fetchNames(conv)
       .catch((e: unknown) => {
         if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
       })
-      .finally(() => authorFetches.delete(view.conversation_id));
-    authorFetches.set(view.conversation_id, run);
+      .finally(() => {
+        authorFetches.delete(conv);
+        const waiting = [...(waitingAuthors.get(conv) ?? [])].filter((w) => !names.has(w) && !triedAuthors.has(w));
+        waitingAuthors.delete(conv);
+        const next = waiting[0];
+        if (next === undefined || ended) return;
+        // 남은 ID는 한 번에 묶는다 — 후속 조회 1회가 모두를 시도한 것으로 친다.
+        waiting.slice(1).forEach((w) => triedAuthors.add(w));
+        noteAuthor({ ...view, author_id: next });
+      });
+    authorFetches.set(conv, run);
   };
 
   const foldView = (changeId: number, view: MessageView) => {

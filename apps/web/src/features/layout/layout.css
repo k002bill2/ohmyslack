@@ -520,6 +520,8 @@ body {
 }
 .thread-medium {
   overflow-y: auto;
+  /* 메인 작성기(sticky, z-index 1)보다 위에 겹친다(Codex r1 P2). */
+  z-index: 2;
 }
 .thread-header {
   display: flex;

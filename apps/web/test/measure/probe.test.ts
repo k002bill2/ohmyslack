@@ -112,4 +112,15 @@ describe('W-10k C 측정 probe', () => {
     expect(s.stages.ws.n).toBe(0);
     h.stop();
   });
+  it('reset() 뒤 이미 예약된 rAF는 표본을 기록하지 않는다(Codex r1 P2)', async () => {
+    const h = harness();
+    h.probe.mark('ws', 'r1', CREATED);
+    h.probe.mark('emit', 'r1', CREATED);
+    addItem('r1');
+    await Promise.resolve();
+    h.probe.reset();
+    h.flushRaf();
+    expect(h.probe.summary().stages.raf.n).toBe(0);
+    h.stop();
+  });
 });
