@@ -1,8 +1,11 @@
 import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runMigrateCli } from '../../bin/lib/migrate-cli.js';
+import { defaultDeps, runMigrateCli } from '../../bin/lib/migrate-cli.js';
 import { pipedIo, type CapturedIo } from '../auth/bootstrap-harness.js';
 import { createTestSchema, type TestSchema } from '../support/test-db.js';
 
@@ -26,9 +29,10 @@ function schemaUrl(name: string): string {
   return parsed.toString();
 }
 
-async function run(argv: readonly string[]): Promise<{ code: number; io: CapturedIo }> {
+async function run(argv: readonly string[], migrationsDir?: string): Promise<{ code: number; io: CapturedIo }> {
   const io = pipedIo('');
-  const code = await runMigrateCli(argv, { DATABASE_URL: databaseUrl }, io);
+  const deps = migrationsDir === undefined ? defaultDeps : { ...defaultDeps, migrationsDir };
+  const code = await runMigrateCli(argv, { DATABASE_URL: databaseUrl }, io, deps);
   return { code, io };
 }
 
@@ -97,6 +101,25 @@ describe('migrate CLI (실DB, 격리 스키마)', () => {
       expect(io.out()).toBe('');
       expect(io.err()).toMatch(/^MIGRATE FAILED migration_error$/m);
       assertNoSecrets(io.err());
+    }
+  });
+
+  it('적용된 파일보다 앞선 미적용 파일이 생기면 dry-run도 실제 적용과 같이 migration_error(Codex P2)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'migrate-cli-'));
+    try {
+      await writeFile(join(dir, '0002_later.sql'), 'CREATE TABLE later_t (id int)');
+      expect((await run([], dir)).code).toBe(0);
+      await writeFile(join(dir, '0001_earlier.sql'), 'CREATE TABLE earlier_t (id int)');
+      for (const argv of [['--dry-run'], []]) {
+        const { code, io } = await run(argv, dir);
+        expect(code).toBe(1);
+        expect(io.out()).toBe('');
+        expect(io.err()).toContain('0001_earlier.sql');
+        expect(io.err()).toMatch(/^MIGRATE FAILED migration_error$/m);
+      }
+      expect(await ledgerCount()).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

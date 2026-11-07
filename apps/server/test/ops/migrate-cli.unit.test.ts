@@ -64,6 +64,13 @@ describe('redactSecrets', () => {
     expect(redacted).toContain('connect failed');
   });
 
+  it('쿼리 user/password와 pg 인증 오류의 user "<이름>"도 지운다(Codex P2)', () => {
+    const url = `postgres://127.0.0.1/db?user=${USER}&password=${SECRET}`;
+    expect(checkLoopbackUrl(url)).toEqual({ ok: true });
+    noLeak(redactSecrets(`password authentication failed for user "${USER}" (${SECRET})`, url));
+    expect(redactSecrets('password authentication failed for user "pguser_env"', 'postgres://127.0.0.1/db')).not.toContain('pguser_env');
+  });
+
   it('URL이 해석되지 않아도 원문은 지운다', () => {
     expect(redactSecrets('x host=1 y', 'host=1')).toBe('x [redacted] y');
   });

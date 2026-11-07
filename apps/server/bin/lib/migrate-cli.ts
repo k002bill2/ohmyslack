@@ -28,7 +28,7 @@ const HOST_OVERRIDES = ['host', 'hostaddr'] as const;
 const USAGE = '사용법: migrate [--dry-run] (접속은 환경변수 DATABASE_URL만)';
 const REDACTED = '[redacted]';
 
-const defaultDeps: MigrateCliDeps = {
+export const defaultDeps: MigrateCliDeps = {
   openPool: (url) => new pg.Pool({ connectionString: url, max: 1 }),
 };
 
@@ -50,17 +50,21 @@ export function checkLoopbackUrl(raw: string): UrlCheck {
 function credentials(raw: string): readonly string[] {
   try {
     const url = new URL(raw);
-    return [url.password, url.username, decodeURIComponent(url.password), decodeURIComponent(url.username)];
+    const query = ['user', 'password'].flatMap((key) => url.searchParams.getAll(key));
+    return [url.password, url.username, decodeURIComponent(url.password), decodeURIComponent(url.username), ...query];
   } catch {
     return [];
   }
 }
 
-/** 오류 문구에서 접속 문자열 원문·사용자명·비밀번호·postgres URL 패턴을 지운다. */
+/**
+ * 오류 문구에서 접속 문자열 원문·사용자명·비밀번호(userinfo와 쿼리 user/password)·postgres URL 패턴을 지운다.
+ * PGUSER 등 URL 밖에서 온 사용자명도 pg 인증 오류의 `user "<이름>"` 형태로 나올 수 있어 함께 가린다.
+ */
 export function redactSecrets(text: string, rawUrl: string): string {
   const needles = [rawUrl, ...credentials(rawUrl)].filter((part) => part !== '').sort((a, b) => b.length - a.length);
   const stripped = needles.reduce((acc, needle) => acc.split(needle).join(REDACTED), text);
-  return stripped.replace(/postgres(?:ql)?:\/\/\S+/gi, REDACTED);
+  return stripped.replace(/postgres(?:ql)?:\/\/\S+/gi, REDACTED).replace(/user "[^"]*"/g, `user "${REDACTED}"`);
 }
 
 function errorCode(error: unknown): string {
@@ -100,6 +104,9 @@ async function pendingFiles(client: pg.ClientBase, dir: string): Promise<{ pendi
       if (sha !== row.sha256) throw new MigrationError(`적용된 마이그레이션 내용이 바뀌었습니다: ${row.name}`);
     }
     const applied = new Set(rows.map((row) => row.name));
+    const lastApplied = rows.map((row) => row.name).sort().at(-1);
+    const late = files.find((file) => !applied.has(file.name) && lastApplied !== undefined && file.name < lastApplied);
+    if (late !== undefined) throw new MigrationError(`이미 적용된 마이그레이션보다 앞선 미적용 파일: ${late.name}`);
     return { pending: files.filter((file) => !applied.has(file.name)).map((file) => file.name), total: rows.length };
   } finally {
     await client.query('ROLLBACK').catch(() => undefined);
