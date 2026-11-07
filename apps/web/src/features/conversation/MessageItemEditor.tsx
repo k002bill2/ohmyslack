@@ -70,6 +70,7 @@ export function MessageEditor({ initial, onSave, onCancel }: MessageEditorProps)
     <div className="msg-editor">
       <textarea
         ref={input}
+        className="field"
         aria-label={MESSAGE_ACTION_COPY.edit}
         value={text}
         readOnly={saving}

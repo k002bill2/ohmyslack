@@ -159,6 +159,7 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
     <div className="composer">
       <textarea
         ref={area}
+        className="field composer-input"
         aria-label={label}
         placeholder={placeholder}
         value={text}
@@ -224,7 +225,9 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
       <p className={overLimit ? 'composer-limit' : 'visually-hidden'} aria-live="polite">
         {counterAnnouncement(length, MESSAGE_BODY_MAX_CODE_POINTS)}
       </p>
-      <button type="button" aria-label="전송" disabled={!canSend(text)} onClick={send} />
+      <button type="button" className="btn btn-primary composer-send" aria-label="전송" disabled={!canSend(text)} onClick={send}>
+        전송
+      </button>
     </div>
   );
 }

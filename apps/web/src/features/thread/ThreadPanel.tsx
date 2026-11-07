@@ -104,7 +104,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
       onKeyDown={onKeyDown}
     >
       <div className="thread-header">
-        <button type="button" onClick={onClose}>
+        <button type="button" className="btn btn-secondary" onClick={onClose}>
           {variant === 'compact' ? '뒤로' : '닫기'}
         </button>
       </div>
