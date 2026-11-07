@@ -13,6 +13,8 @@ export interface Space {
   readonly unreadCount: number;
   readonly mentionCount: number;
   readonly unreadThreadCount: number;
+  /** `unread_threads[]` 중 아직 새 답글이 남은 스레드 root id(CMP-14 「새 답글」, W-10i). */
+  readonly unreadThreadRoots?: readonly string[];
 }
 
 export interface Message {
@@ -30,6 +32,8 @@ export interface Message {
   readonly authorId?: string;
   readonly clientMessageId?: string;
   readonly deleted?: boolean;
+  /** 서버 `edited_at`(있으면 「(수정됨)」, W-10i). */
+  readonly editedAt?: string;
 }
 
 /** 디자인 §6-4 연결 상태 4종. */
@@ -113,6 +117,10 @@ export interface DataSource extends SpacesApi {
   /** 실패·확인 중 전송 항목 다시 시도/삭제(W-10a 전송 FSM). 메모리 구현은 없음. */
   retry?(clientMessageId: string): void;
   discard?(clientMessageId: string): void;
+  /** `PATCH /api/messages/:id`(본인 메시지, W-10i). 2xx면 화면 상태에 이미 반영됐다. */
+  editMessage?(messageId: string, body: string): Promise<ActionResult<null>>;
+  /** `DELETE /api/messages/:id`(본인 메시지, W-10i). 2xx면 자리표시자로 이미 바뀌었다. */
+  deleteMessage?(messageId: string): Promise<ActionResult<null>>;
 }
 
 export interface MemoryDataSource extends DataSource {

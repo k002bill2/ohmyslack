@@ -1,6 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT } from '../../ui/copy.js';
-import { Composer, MessageItem, type DraftStore, type MessageItemData } from '../conversation';
+import { Composer, MessageItem, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -17,6 +17,8 @@ export interface ThreadPanelProps {
   /** 실패 답글 「다시 시도」·「삭제」(client_message_id). */
   readonly onRetry?: (clientMessageId: string) => void;
   readonly onDiscard?: (clientMessageId: string) => void;
+  /** 본인 메시지 수정·삭제(W-10i). 원문·답글 모두 같은 규칙. */
+  readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete'>;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -55,8 +57,8 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard }: ThreadPanelProps) {
-  const actions = { ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }) };
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions }: ThreadPanelProps) {
+  const actions = { ...(onRetry === undefined ? {} : { onRetry }), ...(onDiscard === undefined ? {} : { onDiscard }), ...messageActions };
   const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
 
@@ -66,6 +68,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.defaultPrevented) return;
+    // portal(삭제 확인 Dialog 등)에서 React 트리로 전파된 키는 처리하지 않는다(Codex r1 P2).
+    if (!(e.target instanceof Node) || container.current?.contains(e.target) !== true) return;
     // 디자인 §7-4 순위 1: 조합 중에는 앱이 어떤 키도 처리하지 않는다.
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (e.key === 'Tab' && variant === 'medium' && container.current !== null) {
@@ -105,7 +109,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
         </button>
       </div>
       <ul className="thread-root">
-        <MessageItem message={root} {...actions} />
+        {/* 원문이 바뀌면 다시 마운트 — 편집·삭제 확인 상태가 다른 메시지로 이어지지 않게(Codex r1 P1). */}
+        <MessageItem key={root.id} message={root} {...actions} />
       </ul>
       {replies.length === 0 ? (
         <p className="thread-empty">{THREAD_EMPTY_TEXT}</p>

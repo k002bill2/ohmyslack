@@ -6,6 +6,7 @@
  */
 import type {
   ConversationRef,
+  MessageDeleteResponse,
   ConversationsResponse,
   DiscoverResponse,
   MeResponse,
@@ -85,7 +86,15 @@ function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: Readonly
     unreadCount: caughtUp ? 0 : c.unread_count,
     mentionCount: c.mention_count,
     unreadThreadCount: Math.max(0, c.unread_thread_count - threadsRead),
+    unreadThreadRoots: unreadRoots(c, reads),
   };
+}
+
+/** 새 답글이 남은 스레드 root id(CMP-14): `unread_reply_count > 0`이고 로컬 읽음 위치가 마지막 답글에 닿지 않은 것(W-10i). */
+function unreadRoots(c: Summary, reads: ReadonlyMap<string, number>): readonly string[] {
+  return c.unread_threads
+    .filter((t) => t.unread_reply_count > 0 && (reads.get(readKey(c.id, t.root_message_id)) ?? 0) < t.last_reply_seq)
+    .map((t) => t.root_message_id);
 }
 
 export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
@@ -595,6 +604,24 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       return resume();
     },
     resume,
+    editMessage: (messageId, body) =>
+      attempt(async () => {
+        const res = await api.patch<MessageWriteResponse>(`/api/messages/${encodeURIComponent(messageId)}`, { body });
+        if (!ended) {
+          fold = foldMessage(fold, res.change_id, res.message, author);
+          emit();
+        }
+        return null;
+      }),
+    deleteMessage: (messageId) =>
+      attempt(async () => {
+        const res = await api.del<MessageDeleteResponse>(`/api/messages/${encodeURIComponent(messageId)}`);
+        if (!ended) {
+          fold = foldDeleted(fold, res);
+          emit();
+        }
+        return null;
+      }),
     retry: (clientMessageId) => sendController.retry(clientMessageId),
     discard: (clientMessageId) => sendController.discard(clientMessageId),
     async logout() {

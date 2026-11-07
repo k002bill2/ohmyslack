@@ -29,6 +29,7 @@ function toMessage(view: MessageView, prev: Message | undefined, author: AuthorN
     authorId: view.author_id,
     clientMessageId: view.client_message_id,
     deleted: view.deleted_at !== null,
+    ...(view.edited_at === null ? {} : { editedAt: view.edited_at }),
   };
 }
 

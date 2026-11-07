@@ -20,3 +20,37 @@
 .composer-limit {
   color: var(--danger-text);
 }
+/* W-10i 메시지 액션·수정됨·삭제 자리표시자·CMP-14(UI_STATES §2-5·§2-7, D §6-3). 투명도 대신 muted 색. */
+.msg-edited {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-inline-start: 4px;
+}
+.msg-deleted {
+  margin: 0;
+  font-style: italic;
+  color: var(--text-muted);
+}
+.msg-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+.msg-editor textarea {
+  width: 100%;
+  font: inherit;
+}
+.thread-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-text);
+}
+.thread-summary-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-solid);
+}
+.thread-summary-new {
+  font-weight: 600;
+}
