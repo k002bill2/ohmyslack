@@ -1,0 +1,31 @@
+{
+  "name": "ohmyslack",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.30.2",
+  "engines": {
+    "node": ">=26.13.0 <27"
+  },
+  "scripts": {
+    "verify": "tsx tools/bin/verify.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint tools eslint.config.js vitest.config.ts vitest.int.config.ts",
+    "test": "vitest run --config vitest.config.ts",
+    "test:int": "tsx tools/bin/assert-test-db.ts && vitest run --config vitest.int.config.ts --passWithNoTests",
+    "check:cleanroom": "tsx tools/bin/check-cleanroom.ts",
+    "check:no-persist-cache": "tsx tools/bin/check-no-persist-cache.ts",
+    "check:design-tokens": "tsx tools/bin/check-design-tokens.ts",
+    "check:fr-coverage": "tsx tools/bin/check-fr-coverage.ts",
+    "check:log-leak": "tsx tools/bin/check-log-leak.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
+    "eslint": "10.14.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}

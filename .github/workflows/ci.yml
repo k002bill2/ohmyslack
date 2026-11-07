@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        # shared-infra 운영 major와 동일(DEV_DESIGN §5-2, postgres:15-alpine)
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: ohmyslack_test
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          POSTGRES_DB: ohmyslack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ohmyslack_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://ohmyslack_test:ci-only-not-a-secret@127.0.0.1:5432/ohmyslack_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
