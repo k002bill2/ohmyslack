@@ -1,0 +1,22 @@
+/* 대화 기능 정적 스타일(UI_STATES §2-5·§2-6, 디자인 §3-2). 인라인 style 금지(CSP style-src 'self'). */
+.msg-body {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.msg-paragraph {
+  margin: 0;
+}
+.msg-code {
+  font-family: var(--font-mono);
+  overflow-x: auto;
+  margin: 0;
+}
+.msg-status {
+  color: var(--text-muted);
+}
+.msg-failed {
+  border-left: 2px solid var(--danger-solid);
+}
+.composer-limit {
+  color: var(--danger-text);
+}
