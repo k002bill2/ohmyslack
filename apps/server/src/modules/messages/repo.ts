@@ -134,15 +134,34 @@ async function insertMentions(db: Queryable, messageId: string, userIds: readonl
   ]);
 }
 
-const sameSet = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
+/**
+ * 재시도 mention 비교. 저장 행은 생성 시점 필터 결과이므로 요청 원본과 직접 비교하지 않는다:
+ * 저장 행 ⊆ 요청 집합이고, 요청에만 있는 ID 중 생성 시점에 이미 활성 참여자였던 사람이 없으면 같은 요청이다
+ * (생성 뒤 나간 사람·새로 들어온 사람 때문에 같은 재시도가 409가 되지 않는다).
+ */
+async function sameMentions(client: pg.PoolClient, original: MessageRecord, requested: readonly string[]): Promise<boolean> {
+  const requestSet = new Set(requested);
+  if (!original.mentionUserIds.every((id) => requestSet.has(id))) return false;
+  const extra = [...requestSet].filter((id) => !original.mentionUserIds.includes(id));
+  if (extra.length === 0) return true;
+  const eligible = await client.query(
+    `SELECT 1 FROM conversation_members cm JOIN users u ON u.id = cm.user_id
+     WHERE cm.conversation_id = $1 AND cm.left_at IS NULL AND u.status = 'active' AND u.id = ANY($2::uuid[]) AND u.id <> $3
+       AND cm.joined_at <= $4`,
+    [original.conversationId, extra, original.authorId, original.createdAt],
+  );
+  return (eligible.rowCount ?? 0) === 0;
+}
 
-/** 같은 멱등 키 재시도: 같은 payload(본문·thread_root_id·정규화된 mention 집합)면 원래 결과, 아니면 충돌. */
+/**
+ * 같은 멱등 키 재시도: 같은 payload(본문·thread_root_id·mention 집합)면 원래 메시지(현재 상태), 아니면 충돌.
+ * 수정·삭제된 메시지는 최초 본문·mention을 보존하지 않으므로(스키마 변경 없음) thread_root_id만 비교한다.
+ */
 async function replay(client: pg.PoolClient, existingId: string, msg: NewMessage): Promise<SendResult> {
   const original = await load(client, existingId);
-  if (original === undefined) return { kind: 'conflict' };
-  const mentions = await filterMentions(client, msg.conversationId, msg.mentionUserIds, msg.authorId);
-  const same = original.body === msg.body && original.threadRootId === msg.threadRootId && sameSet(original.mentionUserIds, mentions);
-  if (!same) return { kind: 'conflict' };
+  if (original === undefined || original.threadRootId !== msg.threadRootId) return { kind: 'conflict' };
+  const mutated = original.editedAt !== null || original.deletedAt !== null;
+  if (!mutated && (original.body !== msg.body || !(await sameMentions(client, original, msg.mentionUserIds)))) return { kind: 'conflict' };
   const change = await client.query<{ id: string }>("SELECT change_id::text AS id FROM conversation_changes WHERE message_id = $1 AND op = 'create'", [
     existingId,
   ]);

@@ -67,4 +67,26 @@ describe('멱등 전송', () => {
     expect(await count('SELECT count(*) AS n FROM messages')).toBe(1);
     expect(await count('SELECT last_seq AS n FROM conversations WHERE id = $1', [general])).toBe(1);
   });
+
+  it('재시도 비교는 생성 뒤 멤버십·수정과 무관하다: mention 대상이 나간 뒤·수정된 뒤 같은 재시도는 200', async () => {
+    const a = await as(ctx.app, 'a');
+    const l = await as(ctx.app, 'l');
+    const general = await createChannel(ctx.app, a, 'general');
+    await req(ctx.app, 'POST', `/api/conversations/${general}/join`, l);
+    const payload = { client_message_id: randomUUID(), body: '@l', mention_user_ids: [ctx.ids.l, ctx.ids.c] };
+    const first = await sendRaw(ctx.app, a, general, payload);
+    expect(first.statusCode).toBe(201);
+    expect(first.json<{ mention_user_ids: string[] }>().mention_user_ids).toEqual([ctx.ids.l]);
+    // L이 나가고 C가 들어온 뒤에도 같은 요청은 같은 결과.
+    expect((await req(ctx.app, 'DELETE', `/api/conversations/${general}/membership`, l)).statusCode).toBe(204);
+    await req(ctx.app, 'POST', `/api/conversations/${general}/join`, await as(ctx.app, 'c'));
+    expect((await sendRaw(ctx.app, a, general, payload)).statusCode).toBe(200);
+    // 수정 뒤 최초 요청 재시도도 200(원래 메시지, 현재 상태).
+    const id = first.json<{ message: { id: string } }>().message.id;
+    expect((await req(ctx.app, 'PATCH', `/api/messages/${id}`, a, { body: '수정됨' })).statusCode).toBe(200);
+    const retry = await sendRaw(ctx.app, a, general, payload);
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json<{ message: { id: string } }>().message.id).toBe(id);
+    expect(await count('SELECT count(*) AS n FROM messages')).toBe(1);
+  });
 });

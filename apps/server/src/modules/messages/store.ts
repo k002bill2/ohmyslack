@@ -29,7 +29,9 @@ export interface NewMessage {
 
 export type SendResult =
   | { readonly kind: 'created' | 'replayed'; readonly message: MessageRecord; readonly changeId: number }
-  | { readonly kind: 'conflict' | 'not_member' | 'bad_root' };
+  | { readonly kind: 'conflict' }
+  | { readonly kind: 'not_member' }
+  | { readonly kind: 'bad_root' };
 
 export interface MessageEdit {
   readonly id: string;
@@ -41,7 +43,8 @@ export interface MessageEdit {
 
 export type WriteResult =
   | { readonly kind: 'ok'; readonly message: MessageRecord; readonly changeId: number }
-  | { readonly kind: 'not_found' | 'forbidden' };
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'forbidden' };
 
 /** 메시지 → 대화 해석 결과(B2: `message` 메타 라우트가 assertAccess 입력으로 쓴다). */
 export interface MessageLocator {

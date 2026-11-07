@@ -72,7 +72,14 @@ function writeResponse(outcome: WriteOutcome): MessageWriteResponse {
   return { message: toView(outcome.message), seq: outcome.message.seq, change_id: outcome.changeId, mention_user_ids: [...outcome.message.mentionUserIds] };
 }
 
-function pageRequest(q: { before_seq?: number; after_seq?: number; around_seq?: number; limit?: number }): PageRequest {
+interface PageQuery {
+  readonly before_seq?: number | undefined;
+  readonly after_seq?: number | undefined;
+  readonly around_seq?: number | undefined;
+  readonly limit?: number | undefined;
+}
+
+function pageRequest(q: PageQuery): PageRequest {
   return {
     limit: q.limit ?? HISTORY_LIMIT_MAX,
     ...(q.before_seq === undefined ? {} : { beforeSeq: q.before_seq }),
