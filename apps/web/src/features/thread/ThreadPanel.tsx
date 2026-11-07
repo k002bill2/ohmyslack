@@ -68,6 +68,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.defaultPrevented) return;
+    // portal(삭제 확인 Dialog 등)에서 React 트리로 전파된 키는 처리하지 않는다(Codex r1 P2).
+    if (!(e.target instanceof Node) || container.current?.contains(e.target) !== true) return;
     // 디자인 §7-4 순위 1: 조합 중에는 앱이 어떤 키도 처리하지 않는다.
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (e.key === 'Tab' && variant === 'medium' && container.current !== null) {
@@ -107,7 +109,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
         </button>
       </div>
       <ul className="thread-root">
-        <MessageItem message={root} {...actions} />
+        {/* 원문이 바뀌면 다시 마운트 — 편집·삭제 확인 상태가 다른 메시지로 이어지지 않게(Codex r1 P1). */}
+        <MessageItem key={root.id} message={root} {...actions} />
       </ul>
       {replies.length === 0 ? (
         <p className="thread-empty">{THREAD_EMPTY_TEXT}</p>
