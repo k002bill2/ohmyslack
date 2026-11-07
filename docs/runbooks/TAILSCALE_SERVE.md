@@ -21,7 +21,7 @@
 
 명령 문법은 작성 시점 기억에 근거한 **예시**입니다. 실행 전 TRD §9의 공식 문서
 (Serve CLI: https://tailscale.com/docs/reference/tailscale-cli/serve, 예시: https://tailscale.com/docs/reference/examples/serve)와
-설치된 `tailscale version`의 `tailscale serve --help` 출력으로 대조합니다(**확인 필요**).
+설치된 버전의 도움말로 대조합니다(**확인 필요**): **[조회·승인 필요]** `tailscale version`, **[조회·승인 필요]** `tailscale serve --help`.
 
 ## 0. 전제와 금지 사항
 
@@ -50,6 +50,8 @@
    lsof -nP -iTCP -sTCP:LISTEN | grep -E ':<port>|:5432'
    ```
    기대: 두 줄 모두 `127.0.0.1:<port>`·`127.0.0.1:5432`. `*:`·`0.0.0.0:`·`[::]:`·LAN IP가 보이면 중단합니다.
+   일반 사용자 권한의 `lsof`는 다른 사용자(root 등) 프로세스 소켓을 보여주지 않을 수 있습니다(**확인 필요**). "보이지 않음" 판정은
+   **[조회·승인 필요]** `sudo lsof -nP -iTCP -sTCP:LISTEN` 또는 **[조회·승인 필요]** `netstat -anv -p tcp | grep LISTEN`으로 보강합니다.
 5. **[조회·승인 필요]** 로컬 응답 확인: `curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>/`
 
 ## 2. Serve HTTPS 설정 (예시 — 실행하지 않음)
@@ -85,6 +87,7 @@
 | A3 | 노드 공유(share) | **[조회·승인 필요]** 관리 콘솔에서 이 맥 노드의 Share 상태 | 외부 공유 0건. 공유된 노드는 Serve 주소에 닿을 수 있음(TM-NET-04) |
 | A4 | ACL 정책 | **[조회·승인 필요]** 관리 콘솔 Access controls | 이 맥 443 접근 허용 대상이 본인 기기·본인 계정뿐. 기본 allow-all이면 단일 사용자 tailnet에 한해 허용, 사용자·공유가 늘기 전 좁힘 |
 | A5 | 이 맥에 들어온 공유 노드 | **[조회·승인 필요]** `tailscale status`에서 타 tailnet 공유 노드 표시 | 0건 또는 본인 소유만 |
+| A7 | Funnel 정책 차단 | **[조회·승인 필요]** 관리 콘솔 Access controls의 nodeAttrs | 이 노드에 `funnel` 속성 미부여(정책 수준 차단, 문법 **확인 필요**) |
 | A6 | 키 만료·태그 | **[조회·승인 필요]** 관리 콘솔 | 이 맥 노드 키 만료 시점 기록(만료 시 접속 불가 — 7절) |
 
 ACL 수정·공유 해제는 **[변경·승인 필요]**입니다. 타인 기기 추가는 별도 승인 전까지 하지 않습니다.
@@ -101,15 +104,15 @@ ACL 수정·공유 해제는 **[변경·승인 필요]**입니다. 타인 기기
 | 로그아웃 시 | 중지(사용자 세션 종속) | 중지 |
 | 비밀 로딩 | plist에 비밀 값을 넣지 않음. 래퍼 스크립트가 권한 600 파일에서 로드(**설계 확인 필요**) | 사람이 셸에서 로드 |
 | 잠자기 | 막지 못함 — 전원 설정 별도 | 막지 못함 |
-| 감사·롤백 | `launchctl bootout`으로 즉시 중지, plist 삭제로 원복 | 프로세스 종료 |
+| 감사·롤백 | **[변경·승인 필요]** `launchctl bootout`으로 즉시 중지, plist 삭제로 원복 | 프로세스 종료 |
 
 **★ 권고: A. launchd 사용자 에이전트(LaunchAgent).** 이유:
-1. 재부팅·크래시 후에도 사람 개입 없이 같은 명령·같은 바인드(127.0.0.1)로 기동돼, 수동 기동 때 생기는 인자 실수(LAN 바인드 등) 여지가 줄어듭니다.
+1. 크래시 후, 그리고 재부팅 뒤 **로그인 후** 자동으로 같은 명령·같은 바인드(127.0.0.1)로 기동돼, 수동 기동 때 생기는 인자 실수(LAN 바인드 등) 여지가 줄어듭니다.
 2. 사용자 권한으로 돌아 LaunchDaemon(root)보다 권한이 작고, 비밀 파일 접근 범위가 영환님 계정으로 한정됩니다.
-3. `launchctl bootout` 한 줄로 즉시 멈추고 plist 삭제로 완전히 원복됩니다.
+3. **[변경·승인 필요]** `launchctl bootout` 한 줄로 즉시 멈추고 plist 삭제로 완전히 원복됩니다.
 
 잠자기는 두 방식 모두 별도입니다. 전원 연결 시 시스템 잠자기를 끄는 설정(시스템 설정 > 에너지, 또는 `pmset -c sleep 0`)은 **[변경·승인 필요]**이며 디스플레이 잠자기는 유지해도 됩니다.
-적용(plist 작성·`launchctl bootstrap gui/$(id -u) <plist>`·전원 설정)은 W-06 서버 시작 명령 확정 후, 영환님 승인으로 진행합니다. 이 문서에 plist 본문은 싣지 않습니다(진입점 미확정).
+적용(plist 작성·**[변경·승인 필요]** `launchctl bootstrap gui/$(id -u) <plist>`·전원 설정)은 W-06 서버 시작 명령 확정 후, 영환님 승인으로 진행합니다. 이 문서에 plist 본문은 싣지 않습니다(진입점 미확정).
 
 ## 6. 롤백 (Serve 해제)
 
@@ -124,10 +127,10 @@ ACL 수정·공유 해제는 **[변경·승인 필요]**입니다. 타인 기기
 다른 기기에서 접속이 안 될 때 위에서부터 확인합니다(모두 **[조회·승인 필요]**).
 
 1. 맥이 켜져 있고 깨어 있는가(잠자기·로그아웃·전원).
-2. 앱 프로세스가 살아 있는가: `lsof -nP -iTCP -sTCP:LISTEN | grep ':<port>'` → `127.0.0.1:<port>` 1줄.
-3. 로컬 응답: `curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>/`.
-4. Tailscale 연결: `tailscale status`(이 맥과 접속 기기가 online인지, 노드 키 만료 여부).
-5. Serve 설정: `tailscale serve status`(대상이 `127.0.0.1:<port>`인지).
+2. 앱 프로세스가 살아 있는가: **[조회·승인 필요]** `lsof -nP -iTCP -sTCP:LISTEN | grep ':<port>'` → `127.0.0.1:<port>` 1줄.
+3. 로컬 응답: **[조회·승인 필요]** `curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>/`.
+4. Tailscale 연결: **[조회·승인 필요]** `tailscale status`(이 맥과 접속 기기가 online인지, 노드 키 만료 여부).
+5. Serve 설정: **[조회·승인 필요]** `tailscale serve status`(대상이 `127.0.0.1:<port>`인지).
 6. 접속 기기에서 `https://<tailnet-host>/` — 인증서 오류면 HTTPS 인증서 설정 확인(**확인 필요**).
 7. 앱 로그인 실패면 Tailscale이 아니라 앱 인증 문제입니다(로그인 제한 S1, 비밀번호 복구는 `docs/runbooks/BOOTSTRAP_OWNER.md` 3절).
 8. 점검 중 금지 사항(0절)이 하나라도 발견되면 원인 조사보다 6절 롤백이 먼저입니다.
