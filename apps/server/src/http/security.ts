@@ -59,6 +59,13 @@ export function registerRequestGuards(app: FastifyInstance, options: SecurityOpt
     }
     return undefined;
   });
+  // 업그레이드 요청은 http 응답 수명주기 밖이라, 위 가드가 @fastify/websocket의 onRequest보다 먼저 응답하면
+  // 플러그인의 소켓 정리가 돌지 않아 raw 소켓이 남는다(W-09b P3). 일반 응답으로 끝난 업그레이드는 여기서 닫는다.
+  // 업그레이드에 성공한 요청은 hijack되어 onResponse가 돌지 않는다.
+  // `upgrade`는 Node http 파서가 'upgrade' 이벤트로 넘긴 요청에 세우는 런타임 필드다(@types/node 미선언).
+  app.addHook('onResponse', async (request: FastifyRequest) => {
+    if ((request.raw as { readonly upgrade?: boolean }).upgrade === true) request.raw.socket.destroy();
+  });
 }
 
 /** S6 헤더는 모든 응답, S5 `Cache-Control: no-store`는 `/api/**` 응답에 붙인다. */

@@ -40,7 +40,7 @@ export interface MessagesService {
 
 const notFound = (): HttpError => new HttpError(404, 'not_found');
 
-function written(result: WriteResult): { readonly message: MessageRecord; readonly changeId: number } {
+function written(result: WriteResult): { readonly message: MessageRecord; readonly changeId: number; readonly root?: MessageRecord } {
   if (result.kind === 'forbidden') throw new HttpError(403, 'forbidden');
   if (result.kind === 'not_found') throw notFound();
   return result;
@@ -50,6 +50,14 @@ function written(result: WriteResult): { readonly message: MessageRecord; readon
 export function createMessagesService(deps: MessagesServiceDeps): MessagesService {
   const { store, conversations, events, clock } = deps;
   const now = (): Date => new Date(clock());
+  /**
+   * 답글 생성·삭제 뒤 원문의 현재 상태(root_reply_count)를 같은 change_id의 updated로 알린다(TRD §4).
+   * sync scan도 원문을 답글의 change_id로 접어 싣으므로 replay와 live가 같은 커서를 쓴다. 답글 이벤트 **뒤**에 발행한다.
+   * 이미 삭제된 원문은 보내지 않는다: replay도 삭제 원문은 message.deleted(수 없음)로 내므로 updated로 되살리지 않는다.
+   */
+  const emitRoot = (changeId: number, root: MessageRecord | undefined): void => {
+    if (root !== undefined && root.deletedAt === null) events.updated({ changeId, message: root });
+  };
 
   return {
     async resolveAccess(userId, messageId, action) {
@@ -63,7 +71,10 @@ export function createMessagesService(deps: MessagesServiceDeps): MessagesServic
       if (result.kind === 'conflict') throw new HttpError(409, 'idempotency_conflict');
       if (result.kind === 'bad_root') throw new HttpError(400, 'invalid_thread_root');
       if (result.kind === 'not_member') throw notFound();
-      if (result.kind === 'created') events.created({ changeId: result.changeId, message: result.message });
+      if (result.kind === 'created') {
+        events.created({ changeId: result.changeId, message: result.message });
+        emitRoot(result.changeId, result.root);
+      }
       return { message: result.message, changeId: result.changeId, created: result.kind === 'created' };
     },
     async edit(editorId, messageId, body, mentionUserIds) {
@@ -72,7 +83,7 @@ export function createMessagesService(deps: MessagesServiceDeps): MessagesServic
       return { ...result, created: false };
     },
     async remove(actorId, messageId) {
-      const result = written(await store.remove(messageId, actorId, now()));
+      const { root, ...result } = written(await store.remove(messageId, actorId, now()));
       const { message } = result;
       events.deleted({
         changeId: result.changeId,
@@ -81,6 +92,7 @@ export function createMessagesService(deps: MessagesServiceDeps): MessagesServic
         seq: message.seq,
         deletedAt: message.deletedAt ?? now(),
       });
+      emitRoot(result.changeId, root);
       return { ...result, created: false };
     },
     history: (conversationId, page) => store.history(conversationId, page),

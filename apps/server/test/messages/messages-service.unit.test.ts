@@ -173,6 +173,64 @@ describe('messages 서비스: edit·remove', () => {
   });
 });
 
+describe('messages 서비스: 답글 쓰기 → 원문 root_reply_count 팬아웃(TRD §4)', () => {
+  const reply = record({ id: 'r1', seq: 4, threadRootId: 'm1', rootReplyCount: null });
+
+  /** 이벤트 발행 순서를 한 배열로 기록한다. */
+  function ordered(events: ReturnType<typeof createMessageEvents>): string[] {
+    const log: string[] = [];
+    events.on('created', (e) => log.push(`created:${e.message.id}:${e.changeId}`));
+    events.on('updated', (e) => log.push(`updated:${e.message.id}:${e.changeId}:${e.message.rootReplyCount}`));
+    events.on('deleted', (e) => log.push(`deleted:${e.messageId}:${e.changeId}`));
+    return log;
+  }
+
+  function withLog() {
+    const base = setup();
+    const events = createMessageEvents();
+    const log = ordered(events);
+    const conversations = { assertAccess: async () => ({}) } as unknown as ConversationsService;
+    const store = {
+      send: async () => base.fake.sendResult,
+      remove: async () => base.fake.writeResult,
+    } as unknown as MessagesStore;
+    return { fake: base.fake, log, service: createMessagesService({ store, conversations, events, clock: () => NOW }) };
+  }
+
+  it('답글 created → created(답글) 다음 updated(원문)를 같은 changeId로, 응답에는 root가 섞이지 않는다', async () => {
+    const { service, fake, log } = withLog();
+    fake.sendResult = { kind: 'created', message: reply, changeId: 11, root: record({ rootReplyCount: 1 }) };
+    expect(await service.send('u1', 'c1', { ...input, threadRootId: 'm1' })).toEqual({ message: reply, changeId: 11, created: true });
+    expect(log).toEqual(['created:r1:11', 'updated:m1:11:1']);
+  });
+
+  it('답글 replayed → 이벤트 없음', async () => {
+    const { service, fake, log } = withLog();
+    fake.sendResult = { kind: 'replayed', message: reply, changeId: 11 };
+    await service.send('u1', 'c1', { ...input, threadRootId: 'm1' });
+    expect(log).toEqual([]);
+  });
+
+  it('답글 remove → deleted(답글) 다음 updated(원문), 응답에 root 없음 / 원문 remove는 updated 없음 / 삭제된 원문은 updated 없음', async () => {
+    const { service, fake, log } = withLog();
+    const tomb = { ...reply, body: null, deletedAt: DELETED_AT };
+    fake.writeResult = { kind: 'ok', message: tomb, changeId: 12, root: record({ rootReplyCount: 0 }) };
+    const out = await service.remove('u1', 'r1');
+    expect(out).not.toHaveProperty('root');
+    expect(log).toEqual(['deleted:r1:12', 'updated:m1:12:0']);
+
+    log.length = 0;
+    fake.writeResult = { kind: 'ok', message: record({ body: null, deletedAt: DELETED_AT }), changeId: 13 };
+    await service.remove('u1', 'm1');
+    expect(log).toEqual(['deleted:m1:13']);
+
+    log.length = 0;
+    fake.writeResult = { kind: 'ok', message: tomb, changeId: 14, root: record({ body: null, deletedAt: DELETED_AT, rootReplyCount: 0 }) };
+    await service.remove('u1', 'r1');
+    expect(log).toEqual(['deleted:r1:14']);
+  });
+});
+
 describe('messages 서비스: 접근·조회', () => {
   it('resolveAccess: 메시지 → 대화로 assertAccess 위임, 없는 메시지 404, 비참여자 404', async () => {
     const { service, fake, access } = setup();

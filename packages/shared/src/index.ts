@@ -13,3 +13,4 @@ export * from './conversations.js';
 export * from './messages.js';
 export * from './sync.js';
 export * from './realtime.js';
+export * from './metrics.js';
