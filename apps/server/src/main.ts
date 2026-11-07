@@ -1,6 +1,6 @@
 import pg from 'pg';
 import { buildApp } from './app.js';
-import { assertLoopbackBind, parsePort } from './bind.js';
+import { listenLoopback, parsePort, resolveListenHost } from './bind.js';
 import { createPgAuthStore } from './modules/auth/index.js';
 import { createPgConversationsStore } from './modules/conversations/index.js';
 import { createPgMembersStore } from './modules/members/index.js';
@@ -14,7 +14,7 @@ function required(name: string): string {
   return value;
 }
 
-const host = assertLoopbackBind(process.env.HOST);
+resolveListenHost(process.env);
 const port = parsePort(required('PORT'));
 const pool = new pg.Pool({ connectionString: required('DATABASE_URL') });
 const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: createPgAuthStore(pool),
@@ -23,4 +23,4 @@ const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: cre
   messagesStore: createPgMessagesStore(pool),
   syncStore: createPgSyncStore(pool),
 });
-await app.listen({ host, port });
+await listenLoopback(app, process.env, port);
