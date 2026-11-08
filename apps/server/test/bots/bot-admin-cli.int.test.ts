@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runBotAdmin } from '../../src/modules/bots/index.js';
 import { dumpAllRows, pipedIo, type CapturedIo } from '../auth/bootstrap-harness.js';
 import { botFixture, type BotFixture } from './bot-harness.js';
+import { setupConvInt, teardownConvInt } from '../conversations/conv-int-harness.js';
 
 /** 봇 관리 로컬 명령(정본: TRD §5-2 1·2·5항, ADR-001). 원격 생성 경로 부재 단언은 통합 레인 범위. */
 let fx: BotFixture;
@@ -153,5 +154,18 @@ describe('bot-admin 사용법 오류', () => {
     const { code, io } = await run('token', 'issue', '--bot', 'ghost');
     expect(code).toBe(1);
     expect(io.err()).toContain('no_such_bot');
+  });
+});
+
+describe('원격 생성 경로 없음(TRD §5-2 1항)', () => {
+  it('모든 저장소를 붙인 메인 앱의 레지스트리에 봇 경로·bot 메타 라우트가 0개다', async () => {
+    const ctx = await setupConvInt();
+    try {
+      const routes = ctx.app.accessRoutes;
+      expect(routes.length).toBeGreaterThan(10);
+      expect(routes.filter((r) => /bot/i.test(r.url) || r.access === 'bot')).toEqual([]);
+    } finally {
+      await teardownConvInt(ctx);
+    }
   });
 });

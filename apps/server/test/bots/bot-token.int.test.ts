@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliRefusal } from '../../bin/lib/cli.js';
 import { BOT_TOKEN_PREFIX } from '../../src/modules/bots/index.js';
+import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
+import { createPgAuthStore } from '../../src/modules/auth/index.js';
+import { createOpsLogger } from '../../src/modules/ops/logger.js';
 import { dumpAllRows } from '../auth/bootstrap-harness.js';
+import { HOST, testApp } from '../support/auth-app.js';
 import { botFixture, type BotFixture } from './bot-harness.js';
 
 /** 봇 토큰 저장·검증·폐기·회전·비활성화·발급 상한(정본: TRD §5-2 2항, ADR-001). WS close 연결은 다음 레인 범위. */
@@ -130,5 +134,37 @@ describe('발급 상한(봇당 미폐기 2개)', () => {
 
   it('사람 계정 id로는 발급할 수 없다', async () => {
     await expect(fx.service.issueToken(fx.ownerId, 'a')).rejects.toMatchObject({ code: 'no_such_bot' });
+  });
+});
+
+describe('메인 리스너는 Authorization 헤더로 인증하지 않는다(TRD §5-2 3항, B9)', () => {
+  it('유효한 봇 토큰·봇 토큰 카나리아를 Bearer로 보내도 사람 API는 401이고 로그에 원문이 남지 않는다', async () => {
+    const issued = await fx.service.issueToken(botId, 'adapter');
+    const canary = LOG_CANARIES.bot ?? '';
+    expect(canary.startsWith(BOT_TOKEN_PREFIX)).toBe(true);
+    const logs: string[] = [];
+    const app = testApp({
+      authStore: createPgAuthStore(fx.schema.pool),
+      // stdout에도 써서 check:log-leak(int 로그 스캔)이 봇 토큰 카나리아를 실제로 검사하게 한다.
+      logger: { log: (fields) => (createOpsLogger().log(fields), createOpsLogger((line) => logs.push(line)).log(fields)) },
+    });
+    try {
+      for (const bearer of [issued.token, canary]) {
+        for (const url of ['/api/me', '/api/sessions']) {
+          const res = await app.inject({ method: 'GET', url, headers: { host: HOST, authorization: `Bearer ${bearer}` } });
+          expect(res.statusCode, `${url}`).toBe(401);
+          expect(res.body.includes(bearer)).toBe(false);
+        }
+      }
+      const joined = logs.join('\n');
+      expect(logs.length).toBeGreaterThan(0);
+      expect(joined.includes(issued.token)).toBe(false);
+      expect(joined.includes(canary)).toBe(false);
+      // 메인 리스너 요청은 봇 토큰 사용으로 기록되지 않는다(verifyToken 미호출).
+      const used = await fx.schema.pool.query('SELECT last_used_at FROM bot_tokens WHERE id = $1', [issued.tokenId]);
+      expect(used.rows[0]?.last_used_at).toBeNull();
+    } finally {
+      await app.close();
+    }
   });
 });
