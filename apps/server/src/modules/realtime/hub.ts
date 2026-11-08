@@ -15,15 +15,28 @@ export interface HubSocket {
   close(code?: number, reason?: string): void;
 }
 
+/**
+ * 허브가 쓰는 인증 면(사람 세션 또는 봇 토큰). `peek`은 비연장 확인, `session.id`는 연결 식별자(세션 ID·봇 토큰 ID)다.
+ * 봇 리스너는 봇 토큰을 이 면으로 감싸 같은 허브(전달 재확인·멤버십·sweep)를 재사용한다(TRD §5-2 2·6항).
+ */
+export interface HubAuth {
+  peek(token: string): Promise<{ readonly session: { readonly id: string; readonly expiresAt: Date } } | undefined>;
+  liveSessionIds?: AuthService['liveSessionIds'];
+}
+
 export interface HubDeps {
-  readonly auth: AuthService;
+  readonly auth: HubAuth;
   readonly conversations: ConversationsService;
   readonly syncStore: SyncStore;
-  readonly authEvents: AuthEvents;
+  readonly authEvents: Pick<AuthEvents, 'onSessionRevoked'>;
   readonly conversationEvents: ConversationEvents;
   readonly messageEvents: MessageEvents;
   readonly readEvents: ReadEvents;
   readonly clock: () => number;
+  /** sweep 주기(기본 SESSION_SWEEP_MS). 봇 리스너는 2초(TRD §5-2 2항 5초 보장 여유). */
+  readonly sweepMs?: number;
+  /** 인증이 끝나 닫을 때(sweep·재확인·폐기 이벤트)의 close 사유 고정값. 생략하면 사람 WS 사유(session_ended·session_revoked). */
+  readonly endReason?: string;
 }
 
 interface Subscription {
@@ -92,6 +105,8 @@ function replayFrame(changeId: number, m: MessageRecord): WsServerFrame {
  */
 export function createHub(deps: HubDeps): Hub {
   const { auth, conversations, syncStore, clock } = deps;
+  const sweepMs = deps.sweepMs ?? SESSION_SWEEP_MS;
+  const sweepReason = deps.endReason ?? 'session_ended';
   const conns = new Set<Connection>();
   /** 대기 중인 다음 sweep(실행 중에는 undefined). 연결이 0이면 멈춘다. */
   let sweepTimer: ReturnType<typeof setTimeout> | undefined;
@@ -130,7 +145,7 @@ export function createHub(deps: HubDeps): Hub {
     } catch {
       return;
     }
-    for (const conn of targets) if (!alive.has(conn.sessionId)) close(conn, WS_CLOSE_POLICY, 'session_ended');
+    for (const conn of targets) if (!alive.has(conn.sessionId)) close(conn, WS_CLOSE_POLICY, sweepReason);
   };
 
   /** 다음 sweep을 예약한다. 일괄 조회가 없거나 연결이 0이거나 이미 예약·실행 중이면 아무것도 하지 않는다. */
@@ -143,7 +158,7 @@ export function createHub(deps: HubDeps): Hub {
         sweeping = false;
         scheduleSweep();
       });
-    }, SESSION_SWEEP_MS);
+    }, sweepMs);
     sweepTimer.unref?.();
   };
 
@@ -163,7 +178,7 @@ export function createHub(deps: HubDeps): Hub {
   const sessionAlive = async (conn: Connection): Promise<boolean> => {
     const found = await auth.peek(conn.token);
     if (found === undefined || found.session.id !== conn.sessionId) {
-      close(conn, WS_CLOSE_POLICY, 'session_ended');
+      close(conn, WS_CLOSE_POLICY, sweepReason);
       return false;
     }
     return true;
@@ -244,7 +259,7 @@ export function createHub(deps: HubDeps): Hub {
     deps.readEvents.onUpdated(onRead),
     deps.authEvents.onSessionRevoked((ids) => {
       const revoked = new Set(ids);
-      for (const conn of [...conns]) if (revoked.has(conn.sessionId)) close(conn, WS_CLOSE_POLICY, 'session_revoked');
+      for (const conn of [...conns]) if (revoked.has(conn.sessionId)) close(conn, WS_CLOSE_POLICY, deps.endReason ?? 'session_revoked');
     }),
     deps.conversationEvents.onMembershipEnded((conversationId, userId) => {
       for (const conn of conns) if (conn.userId === userId) endSubscription(conn, conversationId);

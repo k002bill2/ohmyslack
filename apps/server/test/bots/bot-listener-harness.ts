@@ -1,7 +1,16 @@
 import { request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { FastifyInstance } from 'fastify';
-import { buildBotApp, createBotEvents, createBotService, listenBot, type BotService, type CreatedBot } from '../../src/modules/bots/index.js';
+import {
+  buildBotApp,
+  createBotEvents,
+  createBotService,
+  listenBot,
+  type BotEvents,
+  type BotService,
+  type CreatedBot,
+} from '../../src/modules/bots/index.js';
+import { createPgSyncStore } from '../../src/modules/sync/index.js';
 import { HOST } from '../support/auth-app.js';
 import { setupConvInt, teardownConvInt, type ConvIntContext } from '../conversations/conv-int-harness.js';
 
@@ -15,6 +24,13 @@ export interface BotListenerContext {
   readonly tokenId: string;
   readonly botPort: number;
   readonly mainPort: number;
+  /** 봇 서비스가 발행하는 같은 프로세스 close 이벤트(봇 WS가 구독). */
+  readonly botEvents: BotEvents;
+}
+
+export interface BotListenerOptions {
+  /** true면 봇 WS가 같은 프로세스 close 이벤트를 구독하지 않는다(CLI 별도 프로세스 경로 = sweep만 재현). */
+  readonly sweepOnly?: boolean;
 }
 
 export interface HttpResult {
@@ -23,19 +39,27 @@ export interface HttpResult {
   readonly json: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
-export async function setupBotListener(): Promise<BotListenerContext> {
+export async function setupBotListener(options: BotListenerOptions = {}): Promise<BotListenerContext> {
   const conv = await setupConvInt();
-  const service = createBotService({ pool: conv.schema.pool, events: createBotEvents() });
+  const botEvents = createBotEvents();
+  const service = createBotService({ pool: conv.schema.pool, events: botEvents });
   const bot = await service.createBot({ displayName: 'Listener Bot', slug: 'listener-bot' });
   const issued = await service.issueToken(bot.botUserId, 'adapter');
   const services = conv.app.domainServices;
   if (services === undefined) throw new Error('도메인 서비스 없음');
-  const botApp = buildBotApp({ bots: service, ...services, logger: { log: () => undefined } });
+  const realtime = {
+    syncStore: createPgSyncStore(conv.schema.pool),
+    conversationEvents: conv.app.conversationEvents,
+    messageEvents: conv.app.messageEvents,
+    readEvents: conv.app.readEvents,
+    ...(options.sweepOnly === true ? {} : { botEvents }),
+  };
+  const botApp = buildBotApp({ bots: service, ...services, logger: { log: () => undefined }, realtime });
   const env = { HOST: '127.0.0.1' };
   const botAddress = await listenBot(botApp, env, 0);
   await conv.app.listen({ host: '127.0.0.1', port: 0 });
   const mainPort = (conv.app.server.address() as AddressInfo).port;
-  return { conv, botApp, service, bot, token: issued.token, tokenId: issued.tokenId, botPort: botAddress.port, mainPort };
+  return { conv, botApp, service, bot, token: issued.token, tokenId: issued.tokenId, botPort: botAddress.port, mainPort, botEvents };
 }
 
 export async function teardownBotListener(ctx: BotListenerContext | undefined): Promise<void> {
