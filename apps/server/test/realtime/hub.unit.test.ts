@@ -59,7 +59,7 @@ function record(conversationId: string, over: Partial<MessageRecord> = {}): Mess
 function authed(userId: string, sessionId: string, token: string, expiresAt: number): Authenticated {
   return {
     token,
-    user: { id: userId, emailNorm: `${userId}@x.test`, displayName: 'u', passwordHash: 'h', status: 'active', role: 'member' },
+    user: { id: userId, emailNorm: `${userId}@x.test`, displayName: 'u', kind: 'human', passwordHash: 'h', status: 'active', role: 'member' },
     session: { id: sessionId, userId, tokenHash: 'th', createdAt: new Date(T0), lastSeenAt: new Date(T0), expiresAt: new Date(expiresAt), revokedAt: null },
   };
 }

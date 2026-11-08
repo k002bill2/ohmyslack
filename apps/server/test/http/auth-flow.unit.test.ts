@@ -28,7 +28,7 @@ afterEach(async () => {
 
 function setup(status: 'active' | 'disabled' = 'active'): FastifyInstance {
   store = createMemoryAuthStore();
-  store.users.set(USER_ID, { id: USER_ID, emailNorm: 'a@ohmy.test', displayName: 'A', passwordHash: hash, status, role: 'owner' });
+  store.users.set(USER_ID, { id: USER_ID, emailNorm: 'a@ohmy.test', displayName: 'A', kind: 'human', passwordHash: hash, status, role: 'owner' });
   now = Date.UTC(2026, 10, 7);
   app = testApp({ authStore: store, clock: () => now });
   return app;

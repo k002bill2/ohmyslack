@@ -53,7 +53,7 @@ function membersSpy(): MembersSpy {
 
 function baseApp(): FastifyInstance {
   const auth = createMemoryAuthStore();
-  auth.users.set(OWNER_ID, { id: OWNER_ID, emailNorm: 'o@ohmy.test', displayName: 'O', passwordHash: hash, status: 'active', role: 'owner' });
+  auth.users.set(OWNER_ID, { id: OWNER_ID, emailNorm: 'o@ohmy.test', displayName: 'O', kind: 'human', passwordHash: hash, status: 'active', role: 'owner' });
   app = testApp({ authStore: auth });
   return app;
 }
@@ -143,7 +143,7 @@ describe('H-1 · account 라우트도 레지스트리가 가드 표식을 강제
 describe('H-2 · owner 자기 비활성화 판정은 UUID 대소문자를 무시한다', () => {
   async function ownerSession(): Promise<{ readonly a: FastifyInstance; readonly spy: MembersSpy; readonly cookie: string; readonly csrf: string }> {
     const auth = createMemoryAuthStore();
-    auth.users.set(OWNER_ID, { id: OWNER_ID, emailNorm: 'o@ohmy.test', displayName: 'O', passwordHash: hash, status: 'active', role: 'owner' });
+    auth.users.set(OWNER_ID, { id: OWNER_ID, emailNorm: 'o@ohmy.test', displayName: 'O', kind: 'human', passwordHash: hash, status: 'active', role: 'owner' });
     const spy = membersSpy();
     const a = testApp({ authStore: auth, membersStore: spy.store });
     app = a;

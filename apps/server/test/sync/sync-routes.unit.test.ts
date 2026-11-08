@@ -54,6 +54,7 @@ async function setup() {
     id,
     emailNorm: email,
     displayName: email,
+    kind: 'human',
     passwordHash: storedHash,
     status: 'active',
     role: 'member',

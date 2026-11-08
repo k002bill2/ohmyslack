@@ -54,7 +54,7 @@ function memoryMembers(auth: MemoryAuthStore): Fixture {
         const inv = [...invites.values()].find((i) => usable(i, tokenHash, now));
         if (inv === undefined || [...auth.users.values()].some((u) => u.emailNorm === member.emailNorm)) return { ok: false };
         invites.set(inv.id, { ...inv, used: true });
-        auth.users.set(member.id, { ...member, status: 'active', role: 'member' });
+        auth.users.set(member.id, { ...member, kind: 'human', status: 'active', role: 'member' });
         return { ok: true };
       },
       async listActiveMembers() {
@@ -81,7 +81,7 @@ interface Sess {
 }
 
 function user(id: string, email: string, role: 'owner' | 'member'): UserRecord {
-  return { id, emailNorm: email, displayName: email, passwordHash: storedHash, status: 'active', role };
+  return { id, emailNorm: email, displayName: email, kind: 'human', passwordHash: storedHash, status: 'active', role };
 }
 
 async function signIn(app: ReturnType<typeof testApp>, email: string): Promise<Sess> {

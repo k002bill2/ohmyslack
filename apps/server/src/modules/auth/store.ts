@@ -1,12 +1,25 @@
 /** auth 서비스가 쓰는 저장소 경계. 운영은 `repo.ts`(pg), 단위 테스트는 메모리 구현을 쓴다. */
-export interface UserRecord {
+interface UserRecordBase {
   readonly id: string;
   readonly emailNorm: string;
   readonly displayName: string;
-  readonly passwordHash: string;
   readonly status: 'active' | 'disabled';
   readonly role: 'owner' | 'member';
 }
+
+/** 사람 계정: 해시가 항상 있다(DB CHECK `(kind='human') = (password_hash IS NOT NULL)`, TRD §2). */
+export interface HumanUserRecord extends UserRecordBase {
+  readonly kind: 'human';
+  readonly passwordHash: string;
+}
+
+/** 봇 계정(TRD §5-2): 해시가 없고 이메일 로그인·세션 경로가 없다. */
+export interface BotUserRecord extends UserRecordBase {
+  readonly kind: 'bot';
+  readonly passwordHash: null;
+}
+
+export type UserRecord = HumanUserRecord | BotUserRecord;
 
 export interface SessionRecord {
   readonly id: string;
