@@ -169,3 +169,22 @@ export async function touchLiveToken(
   const row = res.rows[0];
   return row === undefined ? undefined : { botUserId: row.bot_user_id, tokenId: row.id };
 }
+
+/**
+ * `GET /api/bot/v1/me`(TRD §5-2 6·8항): owner = 봇이 속한 워크스페이스의 활성 owner, 대화 = **활성(left_at IS NULL)** 참여만.
+ * 비활성 봇은 토큰 검증에서 이미 걸러지므로 여기서는 보지 않는다.
+ */
+export async function botMe(db: Db, botUserId: string): Promise<{ readonly ownerUserId: string | undefined; readonly conversationIds: readonly string[] }> {
+  const owner = await db.query<{ user_id: string }>(
+    `SELECT wm.user_id FROM workspace_members bm
+       JOIN workspace_members wm ON wm.workspace_id = bm.workspace_id AND wm.role = 'owner'
+       JOIN users u ON u.id = wm.user_id AND u.status = 'active'
+      WHERE bm.user_id = $1 ORDER BY wm.user_id LIMIT 1`,
+    [botUserId],
+  );
+  const convs = await db.query<{ conversation_id: string }>(
+    'SELECT conversation_id FROM conversation_members WHERE user_id = $1 AND left_at IS NULL ORDER BY conversation_id',
+    [botUserId],
+  );
+  return { ownerUserId: owner.rows[0]?.user_id, conversationIds: convs.rows.map((r) => r.conversation_id) };
+}

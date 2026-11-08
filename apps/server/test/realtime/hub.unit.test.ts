@@ -207,12 +207,12 @@ describe('subscribe', () => {
     const edited = record(C1, { seq: 2, editedAt: new Date(T0 + 1) });
     const deleted = record(C1, { seq: 3, body: null, deletedAt: new Date(T0 + 2) });
     t.st.changes.push(
-      { changeId: 2, message: record(C1) }, // after 이하: 재생 제외
-      { changeId: 4, message: created },
-      { changeId: 5, message: record(C2) }, // 다른 대화: 제외
-      { changeId: 7, message: edited },
-      { changeId: 9, message: deleted },
-      { changeId: 11, message: record(C1) }, // watermark 초과: 제외
+      { op: 'create' as const, changeId: 2, message: record(C1) }, // after 이하: 재생 제외
+      { op: 'create' as const, changeId: 4, message: created },
+      { op: 'create' as const, changeId: 5, message: record(C2) }, // 다른 대화: 제외
+      { op: 'create' as const, changeId: 7, message: edited },
+      { op: 'create' as const, changeId: 9, message: deleted },
+      { op: 'create' as const, changeId: 11, message: record(C1) }, // watermark 초과: 제외
     );
     const a = t.connect(ALICE);
     t.hub.subscribe(a.conn, C1, 3);
@@ -237,7 +237,7 @@ describe('subscribe', () => {
     const t = setup();
     t.join(C1, ALICE);
     t.st.pageSize = 2;
-    for (const id of [1, 2, 3, 4, 5]) t.st.changes.push({ changeId: id, message: record(C1, { seq: id }) });
+    for (const id of [1, 2, 3, 4, 5]) t.st.changes.push({ op: 'create' as const, changeId: id, message: record(C1, { seq: id }) });
     const a = t.connect(ALICE);
     t.hub.subscribe(a.conn, C1, 0);
     await flush(a.conn);
@@ -352,7 +352,7 @@ describe('live fanout', () => {
   it('replay 도중 도착한 live는 ACK 뒤에 전달되고, through 이하 live는 중복 전달되지 않는다', async () => {
     const t = setup();
     t.join(C1, ALICE);
-    t.st.changes.push({ changeId: 8, message: record(C1) });
+    t.st.changes.push({ op: 'create' as const, changeId: 8, message: record(C1) });
     let open!: () => void;
     t.st.watermarkGate = new Promise<void>((resolve) => {
       open = resolve;

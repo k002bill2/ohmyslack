@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { SYNC_RETENTION_DAYS, SYNC_RETENTION_ROWS } from '../../shared.js';
+import { SYNC_RETENTION_DAYS, SYNC_RETENTION_ROWS, type SyncChangeOp } from '../../shared.js';
 import { MESSAGE_COLUMNS, toRecord, type MessageRow } from '../messages/index.js';
 import type { FoldedChange, ReadMergeResult, ReadTarget, SyncStore } from './store.js';
 
@@ -13,7 +13,7 @@ const RETENTION_FLOOR_SQL = `SELECT GREATEST(
     COALESCE((SELECT max(change_id) FROM conversation_changes WHERE created_at < $1::timestamptz - make_interval(days => $3::int)), 0),
     0)::text AS floor`;
 
-const SCAN_SQL = `SELECT change_id::text AS change_id, conversation_id, message_id FROM conversation_changes
+const SCAN_SQL = `SELECT change_id::text AS change_id, conversation_id, message_id, op FROM conversation_changes
   WHERE change_id > $1 AND change_id <= $2 ORDER BY change_id LIMIT $3`;
 
 const ACTIVE_OF_SQL = `SELECT conversation_id FROM conversation_members
@@ -51,6 +51,7 @@ interface ScanRow {
   change_id: string;
   conversation_id: string;
   message_id: string;
+  op: SyncChangeOp;
 }
 
 export function createPgSyncStore(pool: pg.Pool): SyncStore {
@@ -70,7 +71,12 @@ export function createPgSyncStore(pool: pg.Pool): SyncStore {
       const conversationIds = [...new Set(scanned.map((r) => r.conversation_id))];
       const active = new Set((await pool.query<{ conversation_id: string }>(ACTIVE_OF_SQL, [userId, conversationIds])).rows.map((r) => r.conversation_id));
       const latest = new Map<string, number>();
-      for (const row of scanned) if (active.has(row.conversation_id)) latest.set(row.message_id, Number(row.change_id));
+      const ops = new Map<string, SyncChangeOp>();
+      for (const row of scanned) {
+        if (!active.has(row.conversation_id)) continue;
+        latest.set(row.message_id, Number(row.change_id));
+        ops.set(row.message_id, row.op);
+      }
       if (latest.size === 0) return { scannedThrough, changes: [] };
       // 답글 변경은 원문의 root_reply_count도 바꾸므로 원문의 현재 상태도 함께 싣는다(답글의 최신 change_id로, Codex r1 P2).
       const loaded = await pool.query<MessageRow>(
@@ -85,7 +91,7 @@ export function createPgSyncStore(pool: pg.Pool): SyncStore {
         if (replyChange > (latest.get(reply.threadRootId) ?? 0)) latest.set(reply.threadRootId, replyChange);
       }
       const changes = rows
-        .map((message): FoldedChange => ({ changeId: latest.get(message.id) ?? 0, message }))
+        .map((message): FoldedChange => ({ changeId: latest.get(message.id) ?? 0, op: ops.get(message.id) ?? 'edit', message }))
         .sort((x, y) => x.changeId - y.changeId);
       return { scannedThrough, changes };
     },

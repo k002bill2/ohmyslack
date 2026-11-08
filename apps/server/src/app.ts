@@ -11,17 +11,17 @@ import { createAuthService, primeDummyHash } from './modules/auth/service.js';
 import type { AuthStore } from './modules/auth/store.js';
 import { createConversationEvents, type ConversationEvents } from './modules/conversations/events.js';
 import { registerConversationRoutes } from './modules/conversations/routes.js';
-import { createConversationsService } from './modules/conversations/service.js';
+import { createConversationsService, type ConversationsService } from './modules/conversations/service.js';
 import type { ConversationsStore } from './modules/conversations/store.js';
 import { createMessageEvents, type MessageEvents } from './modules/messages/events.js';
 import { registerMessageRoutes } from './modules/messages/routes.js';
-import { createMessagesService } from './modules/messages/service.js';
+import { createMessagesService, type MessagesService } from './modules/messages/service.js';
 import type { MessagesStore } from './modules/messages/store.js';
 import { registerMemberRoutes } from './modules/members/routes.js';
 import type { MembersStore } from './modules/members/store.js';
 import { createReadEvents, type ReadEvents } from './modules/sync/events.js';
 import { registerSyncRoutes } from './modules/sync/routes.js';
-import { createSyncService } from './modules/sync/service.js';
+import { createSyncService, type SyncService } from './modules/sync/service.js';
 import type { SyncStore } from './modules/sync/store.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
 import { registerRealtime, type RealtimeOptions } from './modules/realtime/index.js';
@@ -81,7 +81,15 @@ declare module 'fastify' {
     readonly conversationEvents: ConversationEvents;
     readonly messageEvents: MessageEvents;
     readonly readEvents: ReadEvents;
+    /** 대화·메시지·sync 서비스(저장소가 모두 주어졌을 때만). 봇 리스너가 같은 인스턴스를 공유한다(TRD §5-2 6항). */
+    readonly domainServices: DomainServices | undefined;
   }
+}
+
+export interface DomainServices {
+  readonly conversations: ConversationsService;
+  readonly messages: MessagesService;
+  readonly sync: SyncService;
 }
 
 /** 알 수 없는 옵션(예: 쿠키 Secure 해제 시도)은 조용히 무시하지 않고 기동을 거부한다(NC-08). */
@@ -153,12 +161,26 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   app.get('/api/healthz', { config: { access: 'public' } }, async () => ({ status: 'ok' as const }));
   const webDistDir = options.webDistDir;
   if (webDistDir !== undefined) app.register(async (scope) => registerStatic(scope, webDistDir));
+  const conversations =
+    options.conversationsStore === undefined
+      ? undefined
+      : createConversationsService({ store: options.conversationsStore, events: conversationEvents, clock });
+  const messages =
+    conversations === undefined || options.messagesStore === undefined
+      ? undefined
+      : createMessagesService({ store: options.messagesStore, conversations, events: messageEvents, clock });
+  const sync =
+    messages === undefined || options.syncStore === undefined ? undefined : createSyncService({ store: options.syncStore, events: readEvents, clock });
+  app.decorate(
+    'domainServices',
+    options.authStore === undefined || conversations === undefined || messages === undefined || sync === undefined
+      ? undefined
+      : Object.freeze({ conversations, messages, sync }),
+  );
   if (options.authStore !== undefined) {
     const store = options.authStore;
     const limiter = options.limiter ?? createLoginLimiter(clock);
     const membersStore = options.membersStore;
-    const conversationsStore = options.conversationsStore;
-    const messagesStore = options.messagesStore;
     const syncStore = options.syncStore;
     app.register(async (scope) => {
       // 더미 해시를 준비 단계에서 선계산해 첫 로그인의 미존재 계정 응답 시간이 튀지 않게 한다(NC-17).
@@ -166,14 +188,12 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       const auth = createAuthService({ store, limiter, events: authEvents, clock });
       registerAuthRoutes(scope, auth);
       if (membersStore !== undefined) registerMemberRoutes(scope, { auth, store: membersStore, events: authEvents, clock });
-      if (conversationsStore !== undefined) {
-        const conversations = createConversationsService({ store: conversationsStore, events: conversationEvents, clock });
+      if (conversations !== undefined) {
         registerConversationRoutes(scope, { auth, conversations });
-        if (messagesStore !== undefined) {
-          const messages = createMessagesService({ store: messagesStore, conversations, events: messageEvents, clock });
+        if (messages !== undefined) {
           registerMessageRoutes(scope, { auth, conversations, messages });
-          if (syncStore !== undefined) {
-            registerSyncRoutes(scope, { auth, conversations, sync: createSyncService({ store: syncStore, events: readEvents, clock }) });
+          if (sync !== undefined && syncStore !== undefined) {
+            registerSyncRoutes(scope, { auth, conversations, sync });
             const deps = { auth, conversations, syncStore, authEvents, conversationEvents, messageEvents, readEvents, clock };
             await registerRealtime(scope, { ...deps, allowedOrigin, ...(options.realtime === undefined ? {} : { options: options.realtime }) });
           }

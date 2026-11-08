@@ -14,3 +14,4 @@ export * from './messages.js';
 export * from './sync.js';
 export * from './realtime.js';
 export * from './metrics.js';
+export * from './bots.js';

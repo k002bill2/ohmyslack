@@ -43,6 +43,8 @@ export interface BotService {
   listBots(): Promise<readonly repo.BotRow[]>;
   findBotIdBySlug(slug: string): Promise<string | undefined>;
   verifyToken(raw: string): Promise<{ readonly botUserId: string; readonly tokenId: string } | undefined>;
+  /** 봇 리스너 `GET me`: 워크스페이스 활성 owner와 활성 참여 대화 id(TRD §5-2 6항). */
+  me(botUserId: string): Promise<{ readonly ownerUserId: string | undefined; readonly conversationIds: readonly string[] }>;
 }
 
 export interface BotServiceDeps {
@@ -169,5 +171,6 @@ export function createBotService(deps: BotServiceDeps): BotService {
       if (!hasBotTokenShape(raw)) return undefined;
       return repo.touchLiveToken(pool, hashBotToken(raw), now());
     },
+    me: (botUserId) => repo.botMe(pool, botUserId),
   };
 }
