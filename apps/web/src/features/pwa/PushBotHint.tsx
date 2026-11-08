@@ -8,7 +8,7 @@ import { PushSettings, type PushEnv, type PushServerApi } from './PushSettings.j
  */
 let dismissed = false;
 
-/** 테스트용: 닫음 표시를 되돌린다. */
+/** 닫음 표시를 되돌린다 — 세션 종료(로그아웃·401) 시 LiveApp이 부른다(다음 사용자에게 안내가 다시 보이게). */
 export function resetPushBotHint(): void {
   dismissed = false;
 }

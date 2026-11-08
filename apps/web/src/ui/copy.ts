@@ -253,6 +253,11 @@ export const CONVERSATION_DESIGN_COPY = {
   messageActions: '메시지 작업',
 } as const;
 
+/** 알림 탭 위치 복원(W-23 Codex P2-3): 대상 메시지가 불러온 범위에 없을 때 짧은 안내. */
+export const MESSAGE_ANCHOR_COPY = {
+  notFound: '메시지를 찾을 수 없습니다',
+} as const;
+
 /** 나간 채널(UI_STATES §2-3 SpaceListItem·§2-5 ConversationHeader·MessageList 「나간 채널」 행 문구 그대로, W-10j). */
 export const LEFT_CHANNEL_COPY = {
   leave: DIALOG_TITLES.leaveChannel,

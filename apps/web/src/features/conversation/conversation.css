@@ -549,3 +549,14 @@
   margin-top: var(--space-2);
   border-color: var(--border);
 }
+/* 알림 탭 위치 복원(W-23 Codex P2-3): 대상 메시지를 잠깐 강조. 모션은 토큰(감소 모드 0ms) + 명시적 해제. */
+.msg-item[data-highlighted="true"] {
+  background: var(--accent-bg);
+  box-shadow: inset 3px 0 0 var(--accent-solid);
+  transition: background-color var(--motion-base);
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-item[data-highlighted="true"] {
+    transition: none;
+  }
+}

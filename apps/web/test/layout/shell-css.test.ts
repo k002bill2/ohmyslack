@@ -29,3 +29,11 @@ describe('카드 셸 열 폭(시안 01·09)', () => {
     expect(item).toContain('padding: 0 var(--space-1)');
   });
 });
+
+describe('알림 탭 대상 없음 안내(W-23b Codex 확인 라운드 P2)', () => {
+  it('스레드 패널은 자체 스크롤이라 안내를 위쪽 sticky로 고정한다 — 맨 아래로 이동한 뒤에도 보이게', () => {
+    const rule = last('.thread-panel > .message-anchor-notice');
+    expect(rule).toContain('position: sticky');
+    expect(rule).toContain('top: 0');
+  });
+});
