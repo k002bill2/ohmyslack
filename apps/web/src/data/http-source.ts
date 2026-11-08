@@ -22,7 +22,7 @@ import type {
 } from '../../../../packages/shared/src/index.js';
 import { createSendController, type PendingMessage, type PostResult } from '../features/conversation';
 import { adoptAccount, clearCheckpoints, readCheckpoint, writeCheckpoint, type SessionBus, type StorageLike } from '../features/sync';
-import { createApi, HttpStatusError, NetworkError, type FetchLike } from './api.js';
+import { createApi, HttpStatusError, isUnreachable, NetworkError, type FetchLike } from './api.js';
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
 import { createRealtimeClient, type SocketLike } from './realtime.js';
@@ -324,6 +324,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     onNetwork: (ok) => {
       failures = ok ? 0 : failures + 1;
       if (failures >= OFFLINE_AFTER_FAILURES) setConnection('offline');
+      // C7: 끊김 중 일반 요청이 서버 응답을 받으면 복귀 절차(따라잡기)를 시작한다 — 끊김에서 바로 연결됨으로 가지 않는다(F-8, Codex r1 P2).
+      else if (ok && connection === 'offline' && !resuming && !ended && isOnline()) void resume();
     },
   });
 
@@ -772,14 +774,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     } catch (e) {
       if (gen !== generation || ended) return false;
       // 목록을 아직 한 번도 받지 못했으면 사이드바 오류 상태(UI_STATES §2-3 「오류」 + 「다시 시도」).
-      if (listState !== 'ready' && (!(e instanceof NetworkError) || retried)) {
+      if (listState !== 'ready' && (!isUnreachable(e) || retried)) {
         listState = 'error';
         emit();
       }
-      // 서버 불가: 최신으로 표시하지 않는다. 네트워크 오류가 1회뿐이면 한 번 더 시도해 끊김 판정을 확정한다.
+      // 서버 불가(네트워크 오류·게이트웨이 응답, F-8): 최신으로 표시하지 않는다. 1회뿐이면 한 번 더 시도해 끊김 판정을 확정한다.
       // 재시도는 복귀 절차당 1회 — 중간 HTTP 성공이 실패 횟수를 초기화해도 무한 재호출하지 않는다(Codex r1 P2).
-      if (e instanceof NetworkError && !retried) return resume(true);
-      if (e instanceof NetworkError) setConnection('offline');
+      if (isUnreachable(e) && !retried) return resume(true);
+      if (isUnreachable(e)) setConnection('offline');
       return false;
     } finally {
       if (gen === generation) {
