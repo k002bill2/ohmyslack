@@ -19,7 +19,8 @@ export function usePinBottom(ref: RefObject<HTMLElement | null>, conversationKey
   const observed = useRef<{ el: HTMLElement; ro: ResizeObserver } | null>(null);
   const follow = () => {
     const el = ref.current;
-    if (el !== null && pinned.current) el.scrollTop = el.scrollHeight;
+    // 알림 탭 대상 강조 중(message-anchor.ts)에는 따라 내려가지 않는다 — scrollIntoView의 scroll 이벤트가 오기 전 재렌더로 되돌리지 않게.
+    if (el !== null && pinned.current && el.querySelector('[data-highlighted="true"]') === null) el.scrollTop = el.scrollHeight;
   };
   useLayoutEffect(() => {
     pinned.current = true;

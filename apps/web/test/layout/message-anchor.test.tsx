@@ -104,6 +104,30 @@ describe('알림 탭 위치 복원', () => {
     expect(history.entries()).toEqual([`/c/${C1}?thread=${M1}`]);
   });
 
+  it('강조 중에는 하단 고정(usePinBottom)이 목록을 맨 아래로 되돌리지 않는다', () => {
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+    const log: string[] = [];
+    Object.defineProperty(Element.prototype, 'scrollTop', {
+      configurable: true,
+      get: () => 0,
+      set(this: Element) {
+        if (this.classList.contains('message-list')) log.push('scrollTop');
+      },
+    });
+    scrollIntoView.mockImplementation(() => log.push('scrollIntoView'));
+    try {
+      const ds = createMemoryDataSource(seed());
+      render(<AppShell dataSource={ds} history={createMemoryHistory(`/c/${C1}#message-${M2}`)} />);
+      // 다음 스냅샷(새 메시지 등)으로 다시 렌더돼도 강조 동안은 따라 내려가지 않는다.
+      act(() => ds.setConnection('connected'));
+      expect(log).toContain('scrollIntoView');
+      expect(log.slice(log.indexOf('scrollIntoView') + 1)).not.toContain('scrollTop');
+    } finally {
+      if (desc === undefined) delete (Element.prototype as unknown as Record<string, unknown>).scrollTop;
+      else Object.defineProperty(Element.prototype, 'scrollTop', desc);
+    }
+  });
+
   it('불러온 범위에 없으면: 맨 아래 + 「메시지를 찾을 수 없습니다」, 잠시 후 안내 사라짐', () => {
     const { history, view } = open(`/c/${C1}#message-${MISSING}`);
     expect(screen.queryByText(MESSAGE_ANCHOR_COPY.notFound)).toBeNull();
