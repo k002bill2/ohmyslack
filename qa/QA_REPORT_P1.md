@@ -32,7 +32,7 @@
 | 1b | QA-FR-CLIENT-07 판정 FAIL | 작성기 포커스 링 정본 위반(F-4) | 2px 링 + 2px 오프셋 구현 후 재검증(멘션 후보 선택 포함, 두 번째 사용자 필요) | Developer → QA |
 | 2 | QA-FR-CLIENT-02 미검증 | 데스크톱 22조합·compact 이동 통과, iPhone S2 전송·S4·S6 통과(9절) | ① 640.5·1023.5px 실제 렌더 ② iPhone 길게 누르기 수정·삭제 ③ 가상 키보드 가림(F-6 연관) | ① QA ② ③ 영환님(실기, 실제 손가락) |
 | 3 | ~~QA-FR-CLIENT-03~~ **닫힘** | 9절: 홈 화면 추가·standalone 로그인·강제 종료 후 재실행 세션 유지·S6 → PASS | — | — |
-| 4 | QA-FR-CLIENT-04 미검증 | macOS Safari·iOS Safari·웹 앱에서 로그아웃 후 뒤로·앞으로·복원·재실행 본문 재노출 없음(9절) | iPhone 실기 저장소 검사(Web Inspector) | 영환님(실기) |
+| 4 | QA-FR-CLIENT-04 미검증 | macOS Safari·iOS Safari·웹 앱에서 로그아웃 후 뒤로·앞으로·복원·재실행 본문 재노출 없음(9절) | iOS Safari 탭·macOS Safari 저장소 검사는 3차(2026-11-09)에서 기대와 일치. 남은 것: 홈 화면 웹 앱 저장소(Web Inspector)·웹 앱 가장자리 뒤로 제스처 | 영환님(실기) |
 | 5 | QA-FR-MSG-08 파일 없음 | 미실행 — iPhone 미러링은 Mac 키보드 입력이라 iOS 소프트 키보드 한글 조합 재현 불가(9절) | 디자인 §7-4 7항목 × iOS Safari·웹 앱(실제 소프트 키보드), macOS Safari·Chrome | 영환님(실기 IME) |
 | 6 | ~~QA-FR-SYNC-04~~ **닫힘** | 9절: Mac 읽음 → iPhone 웹 앱 본문 1.1s·스레드/멘션 1.5s, iOS Safari 1.35s(≤ 2s), 스레드 unread 본문 수 미합산 → PASS | — | — |
 | 7 | ~~QA-FR-SYNC-07 미검증~~ → **PASS**(HEAD `e13db55`, 9절) | F-5 수정(PR #2) 후 실기 재검증: 5분 3초 복귀 시 「최신 상태 확인 중…」·보류·한 번에 반영, 「다시 연결 중…」 미표시. 서버 다운 상태 복귀 시 최신으로 표시하지 않음 | 없음 — HEAD 서버 복구 후 수렴·F-8은 `aa43d83` 실기에서 확인(복구 약 8s, 재시도 중복 없음). 복구 중 「최신 상태 확인 중…」 중간 상태만 캡처 간격으로 미관찰 | — |
