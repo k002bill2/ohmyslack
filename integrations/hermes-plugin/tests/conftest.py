@@ -72,6 +72,7 @@ class FakeBotServer:
         self.patches: list[tuple[str, dict]] = []
         self.sockets: list[web.WebSocketResponse] = []
         self.ws_connects = 0
+        self.subscribes = 0
         self.base = ""
         self._runner: Optional[web.AppRunner] = None
 
@@ -158,6 +159,7 @@ class FakeBotServer:
         async for msg in ws:
             frame = msg.json()
             if frame.get("type") == "conversation.subscribe":
+                self.subscribes += 1
                 after = frame["after_cursor"]
                 for cid, conv, m in [c for c in self.changes if c[0] > after and c[1] == frame["conversation_id"]]:
                     await ws.send_json({"type": "message.created", "conversation_id": conv, "change_id": cid, "message": m})

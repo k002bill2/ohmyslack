@@ -213,7 +213,11 @@ class OhmySlackAdapter(BasePlatformAdapter):
             elif kind == "conversation.subscribed":
                 await self._flush_backlog()
             elif kind == "sync.required":
+                # 서버가 구독을 지웠다(hub replay 실패) → REST catch-up 후 참여 대화를 다시 구독한다(Codex r3 P1).
                 await self._catch_up(self._watermark)
+                for cid in self._conversation_ids:
+                    await ws.send_json({"type": "conversation.subscribe", "conversation_id": cid,
+                                        "after_cursor": self._watermark})
                 await self._flush_backlog()
             elif kind == "error" and frame.get("code") == "cursor_expired":
                 raise CursorExpired(410, "/ws")
@@ -281,14 +285,17 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return
         if self._dedup.is_duplicate(mid):
             return
+        if aux_root:
+            # 답글 변경에 동반된 원문 projection은 실행·집계 대상이 아니다(Codex r3 P2). 원문 생성 변경과
+            # 구분할 수 없으므로 같은 페이지의 원문 생성은 다음 live/catch-up에서 다시 보지 않게 된다(REPORT §6).
+            return
         if m.get("edited_at") is not None:
             # sync change에는 op가 없다 — 수정 projection은 새 지시로 실행하지 않는다(WS message.updated와 동일).
             self._remember(mid)
             return
         created = _epoch(m.get("created_at"))
         if created is None or self._clock() - created > BACKLOG_LIMIT_SECONDS:
-            if not aux_root:
-                self._backlog[conversation_id] = self._backlog.get(conversation_id, 0) + 1
+            self._backlog[conversation_id] = self._backlog.get(conversation_id, 0) + 1
             self._remember(mid)
             return
         thread_id = str(m.get("thread_root_id") or mid)

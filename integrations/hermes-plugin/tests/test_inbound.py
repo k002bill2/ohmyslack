@@ -302,3 +302,13 @@ async def test_catch_up_does_not_run_edits_or_count_aux_root(server, make_adapte
     await wait_for(lambda: server.sockets)
     assert [e.message_id for e in adapter.events] == [reply["id"]]
     assert _posts_ok(server) == []  # 원문 projection은 밀린 지시로 세지 않음
+
+
+async def test_sync_required_resubscribes(server, make_adapter):
+    adapter = make_adapter()
+    assert await adapter.connect()
+    await wait_for(lambda: server.sockets)
+    before = len([r for r in server.requests if r[1] == "/api/bot/v1/sync"])
+    await server.sockets[0].send_json({"type": "sync.required"})
+    await wait_for(lambda: len([r for r in server.requests if r[1] == "/api/bot/v1/sync"]) > before)
+    await wait_for(lambda: server.subscribes >= 2)
