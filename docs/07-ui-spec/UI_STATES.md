@@ -203,7 +203,7 @@
 | 오디오 준비 | mime `audio/mpeg`, 만료 전 | 재생 버튼·길이(`duration_ms`)·진행 막대 | 버튼 이름(재생·일시정지) — (정본 없음 → §8 Q-H3), 길이는 텍스트 | 재생·일시정지·탐색 | 재생 실패 |
 | 오디오 재생 실패 | `<audio>` error 또는 401·404 | 경고 아이콘 + 실패 문구 — (정본 없음 → §8 Q-H3) | `role="status"` | 「다시 시도」 | 재시도 성공 → 오디오 준비 |
 | 이미지 | mime `image/png`·`image/jpeg`·`image/webp` | 썸네일(가로 넘침 0, 최대 폭은 D §5 정본) | `alt` — (정본 없음 → §8 Q-H3) | 탭 → CMP-18 Dialog 확대 | — |
-| 만료 자리표시자 | `deleted_at` 또는 `expires_at` 경과 | muted 자리표시자 문구 — (정본 없음 → §8 Q-H3) | 텍스트 | 없음 | 없음(최종 상태) |
+| 만료 자리표시자 | 첨부 projection `expired = true`(바이트 삭제 또는 `expires_at` 경과, T §4) | muted 자리표시자 문구 — (정본 없음 → §8 Q-H3) | 텍스트 | 없음 | 없음(최종 상태) |
 
 지정 테스트(보조): `apps/web/test/conversation/attachments/audio-attachment.test.tsx`(DD 6-2 FR-OPS-05). 실기: `QA-FR-OPS-05`(iPhone PWA, 잠금 화면 재생 여부 기록).
 
@@ -317,7 +317,7 @@
 | 구독됨 | 서버 구독 등록 2xx | 이 기기에서 알림을 받는 중이라는 표시 + 끄기 버튼 | 끄기 → 서버 `DELETE` + `unsubscribe()` |
 | 등록 실패 | 서버 4xx·5xx | 오류 + 「다시 시도」 | 「다시 시도」 |
 
-- 알림 탭 → payload의 `conversation_id`·`thread_root_id`로 라우팅한다(URL이 상태, §3-3).
+- 알림 탭 → payload의 `conversation_id`·`thread_root_id`·`message_id`로 라우팅하고 해당 메시지 위치를 연다(URL이 상태, §3-3, T §6-2).
 - 알림 문구는 서비스 워커 고정이며 메시지 본문을 표시하지 않는다(T §6-2, 고정 문구·잠금 화면 정책 → §8 Q-H5).
 - 지정 테스트(보조) `apps/web/test/pwa/push-handler.test.ts`(DD 6-2 FR-CLIENT-05), 실기 `QA-FR-CLIENT-05`.
 

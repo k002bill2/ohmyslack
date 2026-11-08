@@ -125,7 +125,7 @@ Endpoint는 same-origin `/api/ws`입니다. handshake에서 cookie session, 정�
 |---|---|
 | `conversation.subscribe` | client→server: `conversation_id`, `after_cursor`(마지막 완료된 sync checkpoint) |
 | `conversation.subscribed` | server→client: `conversation_id`, `through_cursor` ACK |
-| `message.created` | server→client: `conversation_id`, `change_id`, `message{id,seq,author_id,author_kind,client_message_id,thread_root_id,body,created_at,mention_user_ids,root_reply_count?,attachments[{id,mime,byte_size,duration_ms?,width?,height?}]}`; `author_kind`는 `users.kind`에서 서버가 채움(이력·sync projection 동일) |
+| `message.created` | server→client: `conversation_id`, `change_id`, `message{id,seq,author_id,author_kind,client_message_id,thread_root_id,body,created_at,mention_user_ids,root_reply_count?,attachments[{id,mime,byte_size,duration_ms?,width?,height?,expires_at,expired:boolean}]}`; `author_kind`는 `users.kind`에서 서버가 채움(이력·sync projection 동일). 첨부 projection은 바이트 삭제 후에도 메타데이터를 유지하며 `expires_at`(보존 기한)과 `expired`(바이트 삭제됨 = `deleted_at` 존재 또는 `expires_at` 경과)를 이력·sync·이벤트에 공통으로 싣습니다. `expired=true`면 바이트 라우트는 404이고 웹은 만료 자리표시자를 그립니다(UI_STATES §2-5) |
 | `message.updated` | server→client: `conversation_id`, `change_id`, 현재 message projection(`author_kind`·`attachments` 포함) 및 `mention_user_ids` |
 | `message.deleted` | server→client: `conversation_id`, `change_id`, `message_id`, `seq`, `deleted_at`; body·mention 없음 |
 | `read.updated` | server→client: `conversation_id`, `thread_root_id?`, `last_read_seq`, `updated_at`; null root은 본문 읽음 |
@@ -199,7 +199,7 @@ TR-SEC 추가 행(R3.3, ADR-001): **TR-SEC-13** 봇 토큰 경계(§5-2) — 토
 3. **봇 리스너**: 별도 Fastify 인스턴스가 `127.0.0.1:<BOT_PORT>`에만 바인드합니다(bind 가드 재사용). Tailscale Serve 설정에 넣지 않습니다. 등록 라우트는 `/api/bot/v1/**`뿐이며 Host 허용목록은 `127.0.0.1:<BOT_PORT>`·`localhost:<BOT_PORT>`입니다. 메인 리스너는 `Authorization` 헤더를 인증에 쓰지 않습니다.
 4. **CSRF·Origin 예외 범위**: 봇 리스너에서만 CSRF 헤더·Origin 일치 검사를 적용하지 않습니다. 근거: 쿠키를 인증에 쓰지 않으므로 브라우저 자동 자격 증명 첨부가 없습니다. 대신 **`Origin` 또는 `Cookie` 헤더가 있는 요청은 400으로 거부**(브라우저발 요청 차단)합니다. 메인 리스너의 기존 규칙(security.ts 전역 훅, accountGuard CSRF)은 바꾸지 않습니다.
 5. **멤버십 상한**: 봇은 ① 봇 생성 시 CLI가 만드는 owner와의 DM ② owner가 웹에서 명시적으로 봇을 추가한 채널(P1)에만 참여합니다. 봇 토큰으로 `POST /api/dms`·채널 참여·멤버 목록 조회는 등록하지 않습니다. 접근 검사는 기존 `assertAccess` 단일 경계를 그대로 씁니다.
-6. **봇 라우트(최소)**: `GET /api/bot/v1/me`(봇 id, owner_user_id, 참여 대화 id 목록), `GET /api/bot/v1/conversations/{id}/messages`, `GET /api/bot/v1/messages/{root_id}/replies`, `POST /api/bot/v1/conversations/{id}/messages`, `PATCH /api/bot/v1/messages/{id}`, `GET /api/bot/v1/sync`, `POST /api/bot/v1/attachments`, `GET /api/bot/v1/attachments/{id}`, `PUT /api/bot/v1/read-state`, WS `/api/bot/v1/ws`. 요청·응답 스키마는 사람 라우트와 같은 shared zod 스키마입니다.
+6. **봇 라우트(최소)**: `GET /api/bot/v1/me`(봇 id, owner_user_id, 참여 대화 id 목록), `GET /api/bot/v1/conversations/{id}/messages`, `GET /api/bot/v1/messages/{root_id}/replies`, `POST /api/bot/v1/conversations/{id}/messages`, `PATCH /api/bot/v1/messages/{id}`, `GET /api/bot/v1/sync`, `GET /api/bot/v1/sync/snapshot`(사람 `GET /api/sync/snapshot`과 같은 계약·`assertAccess`), `POST /api/bot/v1/attachments`, `GET /api/bot/v1/attachments/{id}`, `PUT /api/bot/v1/read-state`, WS `/api/bot/v1/ws`. 요청·응답 스키마는 사람 라우트와 같은 shared zod 스키마입니다. **최초 연결·cursor 만료(410) 복구**는 사람 기기와 같은 절차(§3 snapshot·§4 복귀 순서)를 봇 라우트로 수행합니다: `GET /api/bot/v1/me`로 참여 대화 확인 → 대화별 `GET /api/bot/v1/sync/snapshot`으로 `snapshot_cursor` 확보 → 그 cursor부터 `GET /api/bot/v1/sync` 페이지 catch-up → WS 구독. 복구 중 받은 지시는 ADR-001 D-7의 밀린 메시지 처리 상한(15분)을 그대로 적용합니다.
 7. **rate limit(봇 토큰별, 메모리)**: 메시지 생성 30건/분, 수정 60건/분, 첨부 업로드 10건/분·100 MiB/일. 초과 시 429, 저장 0.
 8. **작성자 종류 노출**: 모든 메시지 projection에 `author_kind`를 싣습니다. 어댑터의 owner 판정은 `GET /api/bot/v1/me`의 `owner_user_id`와 서버가 채운 `author_id` 비교로 합니다(본문 내용으로 판정 금지).
 
@@ -224,7 +224,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 ### 6-2. Web Push (R3.3, ADR-001 §3-i, PRD FR-CLIENT-05)
 
 - 범위: 사람 계정의 구독 기기에 ① Jarvis DM의 새 최상위 메시지·자기 스레드 답글 ② 자기 멘션을 보냅니다. 자기 메시지·이미 읽은 대화는 보내지 않습니다. 같은 대화 알림은 60초 안에 1건으로 묶습니다(`Topic` 헤더로 교체).
-- payload: `{v:1, kind:"message", conversation_id, thread_root_id?, from_bot:boolean}`만 보냅니다. **본문·대화 이름·작성자 이름 미포함.** 표시 문구는 SW 고정(「새 메시지가 있습니다」, Jarvis DM이면 「Jarvis」)입니다. iOS는 silent push 금지이므로 SW는 `event.waitUntil(showNotification())`를 반드시 호출합니다.
+- payload: `{v:1, kind:"message", conversation_id, message_id, thread_root_id?, from_bot:boolean}`만 보냅니다(식별자만, 본문 없음). 알림 탭 시 SW는 `message_id`(답글이면 `thread_root_id`의 스레드 안 `message_id`) 위치로 대화를 엽니다 — 알림 뒤 메시지가 더 쌓여도 해당 브리핑을 찾을 수 있게 하기 위함입니다(PRD S8). **본문·대화 이름·작성자 이름 미포함.** 표시 문구는 SW 고정(「새 메시지가 있습니다」, Jarvis DM이면 「Jarvis」)입니다. iOS는 silent push 금지이므로 SW는 `event.waitUntil(showNotification())`를 반드시 호출합니다.
 - VAPID: P-256 키쌍을 로컬 명령 `apps/server/bin/vapid-keygen.ts`로 생성합니다. 개인키는 서버 비밀 파일(600, 저장소 밖)·환경 변수 경로로만 주입하고, 미설정 시 push 기능만 비활성(기동은 계속)하며 `/api/push/vapid-public-key`는 404입니다. `sub`는 `mailto:` 실제 주소(공백·꺾쇠 금지)입니다. 키 회전 = 전 구독 재등록(`vapid_key_id`로 구분).
 - 전송: 서버 → push service outbound HTTPS. `TTL` 헤더 필수(제안 86400). 404·410 응답 시 구독을 삭제합니다. endpoint는 https + 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com`)만 등록합니다.
 - 근거 URL: https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/ , https://webkit.org/blog/12945/meet-web-push/ , RFC 8030·8291·8292.

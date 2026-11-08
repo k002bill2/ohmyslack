@@ -119,7 +119,7 @@ ohmyslack/
 | `attachment` (R3.3) | 첨부 ID → `attachments` 서비스가 첨부의 대화 해석 → `assertAccess` | `GET /api/attachments/{id}`(Range 지원, 정본: TRD §6-1). 업로드 `POST /api/attachments?conversation_id=`는 `conversation` 메타 | 비참여자 404, 비활성 401 |
 | `bot` (R3.3) | 봇 리스너 전용. Bearer 토큰 → 봇 계정, 대화 단위 동작은 같은 `assertAccess` | `/api/bot/v1/**` 전체와 WS `/api/bot/v1/ws`(목록 정본: TRD §5-2) | 봇은 참여 대화만(그 밖은 404·이벤트 0), 폐기·회전된 토큰 401, 봇 토큰으로 사람 API·사람 쿠키로 봇 API 401(FR-BOT-02·03) |
 
-- 레지스트리 테스트는 위 표를 하드코딩하지 않습니다. 서버를 띄워 실제 등록된 라우트·WS 동작을 수집하고, ① 메타 누락 ② `conversation`·`message` 메타인데 `assertAccess` 호출 기록이 없는 처리기 ③ 매트릭스 행위자(비참여자 C·나간 사용자·비활성 계정·참여 비작성자, R3.3 추가 봇(참여 대화만)·폐기 토큰 봇) 기대 결과 불일치 중 하나라도 있으면 실패합니다. R3.3 메타 2종은 `apps/server/src/http/access.ts`의 union과 레지스트리 테스트를 같은 PR(W-18)에서 함께 고칩니다.
+- 레지스트리 테스트는 위 표를 하드코딩하지 않습니다. 서버를 띄워 실제 등록된 라우트·WS 동작을 수집하고, ① 메타 누락 ② `conversation`·`message`·`attachment` 메타인데 `assertAccess` 호출 기록이 없는 처리기 ③ 매트릭스 행위자(비참여자 C·나간 사용자·비활성 계정·참여 비작성자, R3.3 추가 봇(참여 대화만)·폐기 토큰 봇) 기대 결과 불일치 중 하나라도 있으면 실패합니다. R3.3 메타 2종은 `apps/server/src/http/access.ts`의 union과 레지스트리 테스트를 같은 PR(W-18)에서 함께 고칩니다.
 - TRD에 새 라우트가 추가되면 메타 선언 없이는 서버가 기동하지 않게 합니다(등록 헬퍼가 `access` 누락 시 throw).
 
 ## 3. 단계(P0–P4)와 종료 게이트
