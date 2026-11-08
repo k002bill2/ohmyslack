@@ -166,6 +166,41 @@ describe('FR-MSG-10 제한된 서식', () => {
     });
   });
 
+  it('FR-MSG-10 굵게 안 링크 모양 글자의 백틱은 코드 구분자다(굵게 안은 링크 미해석, Codex r3 P2)', () => {
+    expect(parseBody('**a [`**`](https://a.co) b**')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [
+        [
+          {
+            kind: 'strong',
+            // 굵게 안은 자동 링크까지 적용(기존 규칙).
+            children: [
+              { kind: 'text', text: 'a [' },
+              { kind: 'code', text: '**' },
+              { kind: 'text', text: '](' },
+              { kind: 'link', text: 'https://a.co', href: 'https://a.co/' },
+              { kind: 'text', text: ') b' },
+            ],
+          },
+        ],
+      ],
+    });
+    // 링크 글자 안 굵게는 백틱을 일반 문자로 보고 닫는다.
+    expect(parseBody('[**a `**` b**](https://a.co)')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [
+        [
+          {
+            kind: 'link',
+            text: 'a `` b**',
+            href: 'https://a.co/',
+            children: [{ kind: 'strong', children: [{ kind: 'text', text: 'a `' }] }, { kind: 'text', text: '` b**' }],
+          },
+        ],
+      ],
+    });
+  });
+
   it('FR-MSG-10 펜스 안은 서식 해석 0', () => {
     expect(parseBody('```\n# 제목\n**x** `y` [a](https://a.co)\n- b\n```')).toEqual([
       { kind: 'code', text: '# 제목\n**x** `y` [a](https://a.co)\n- b' },

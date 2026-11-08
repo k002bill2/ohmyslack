@@ -151,67 +151,41 @@ function badUrlCharFinder(text: string): Finder {
 
 const BAD_URL_CHAR: ReadonlySet<string> = new Set([...'()[]<>"`']);
 
-interface LinkFinders {
-  readonly open: Finder;
-  readonly close: Finder;
-  readonly paren: Finder;
-  readonly bad: Finder;
-}
-
-function linkFinders(line: string): LinkFinders {
-  return {
-    open: stringFinder(line, '['),
-    close: stringFinder(line, ']'),
-    paren: stringFinder(line, ')'),
-    bad: badUrlCharFinder(line),
-  };
-}
-
 /**
- * 실제로 인라인 코드로 해석될 구간 표시(Codex r2 P2). 줄 본문(top) 파싱과 같은 순서로 자동 링크·마크다운 링크를 건너뛰므로
- * 링크 글자 안 백틱(코드 구분자 아님)은 짝짓지 않는다. 굵게는 열지 않는다 — 굵게 안에서도 백틱 짝짓기는 같다. O(n).
+ * 굵게 닫는 `**` 찾기(Codex r1·r2·r3 P2). 줄 본문에서 연 굵게 안에서는 링크를 해석하지 않으므로 백틱은 굵게 시작 뒤부터 둘씩 짝지어진다.
+ * 그래서 후보 `**`가 인라인 코드 밖인지는 「시작~후보 사이 백틱 수가 짝수」 또는 「후보 뒤에 백틱이 없어 짝이 안 닫힘」으로 정해지고,
+ * 이는 줄 앞부터 센 백틱 수의 홀짝 2종으로 나뉜다. 홀짝별 Finder를 미리 두어 시작 위치마다 다시 훑지 않는다(O(n)).
+ * 링크 글자 안 백틱은 코드 구분자가 아니므로(label 모드) 마스크 없이 찾는다.
  */
-function codeSpanMask(line: string, autolinks: ReadonlyMap<number, number>): Uint8Array {
-  const mask = new Uint8Array(line.length);
-  const links = linkFinders(line);
-  const tick = stringFinder(line, '`');
-  let i = 0;
-  while (i < line.length) {
-    const autolinkEnd = autolinks.get(i);
-    if (autolinkEnd !== undefined) {
-      i = autolinkEnd;
-      continue;
-    }
-    const ch = line.charAt(i);
-    if (ch === '`') {
-      const close = tick(i + 1);
-      if (close === -1) break;
-      mask.fill(1, i, close + 1);
-      i = close + 1;
-      continue;
-    }
-    const link = ch === '[' ? linkTarget(links, line, i, line.length) : undefined;
-    i = link === undefined ? i + 1 : link.paren + 1;
-  }
-  return mask;
+interface StrongClose {
+  readonly byParity: readonly [Finder, Finder];
+  readonly plain: Finder;
+  /** 위치 앞 백틱 수의 홀짝(0·1). */
+  readonly parity: (at: number) => 0 | 1;
 }
 
-/** 인라인 코드 구간 밖의 `**` 위치(Codex r1 P2: `**a `**` b**`). stringFinder와 같은 기억 규칙. */
-function strongCloseFinder(line: string, mask: Uint8Array): Finder {
-  let from0 = Number.POSITIVE_INFINITY;
-  let pos = -1;
-  return (from) => {
-    if (from >= from0 && (pos === -1 || from <= pos)) return pos;
-    from0 = from;
-    pos = -1;
-    for (let i = line.indexOf('**', from); i !== -1; i = line.indexOf('**', i + 1)) {
-      if (mask[i] === 0 && mask[i + 1] === 0) {
-        pos = i;
-        break;
+function strongCloseFinders(line: string): StrongClose {
+  const ticks = new Uint32Array(line.length + 1);
+  for (let i = 0; i < line.length; i += 1) ticks[i + 1] = (ticks[i] ?? 0) + (line.charCodeAt(i) === 0x60 ? 1 : 0);
+  const lastTick = line.lastIndexOf('`');
+  const parity = (at: number): 0 | 1 => ((ticks[at] ?? 0) & 1) as 0 | 1;
+  const finder = (p: 0 | 1): Finder => {
+    let from0 = Number.POSITIVE_INFINITY;
+    let pos = -1;
+    return (from) => {
+      if (from >= from0 && (pos === -1 || from <= pos)) return pos;
+      from0 = from;
+      pos = -1;
+      for (let i = line.indexOf('**', from); i !== -1; i = line.indexOf('**', i + 1)) {
+        if (i > lastTick || parity(i) === p) {
+          pos = i;
+          break;
+        }
       }
-    }
-    return pos;
+      return pos;
+    };
   };
+  return { byParity: [finder(0), finder(1)], plain: stringFinder(line, '**'), parity };
 }
 
 /** 줄 전체 자동 링크의 시작 → 끝 위치(Codex r1 P2: URL 안 `**`·`[`는 서식이 아니라 URL 일부). linkify 출력을 이어 붙이면 입력과 같다. */
@@ -225,11 +199,15 @@ function autolinkSpans(line: string): ReadonlyMap<number, number> {
   return spans;
 }
 
-interface Scan extends LinkFinders {
+interface Scan {
   readonly line: string;
   readonly index: MentionIndex;
-  readonly stars: Finder;
+  readonly stars: StrongClose;
   readonly tick: Finder;
+  readonly open: Finder;
+  readonly close: Finder;
+  readonly paren: Finder;
+  readonly bad: Finder;
   readonly autolinks: ReadonlyMap<number, number>;
 }
 
@@ -243,14 +221,16 @@ interface Hit {
 }
 
 function createScan(line: string, index: MentionIndex): Scan {
-  const autolinks = autolinkSpans(line);
   return {
-    ...linkFinders(line),
     line,
     index,
-    stars: strongCloseFinder(line, codeSpanMask(line, autolinks)),
+    stars: strongCloseFinders(line),
     tick: stringFinder(line, '`'),
-    autolinks,
+    open: stringFinder(line, '['),
+    close: stringFinder(line, ']'),
+    paren: stringFinder(line, ')'),
+    bad: badUrlCharFinder(line),
+    autolinks: autolinkSpans(line),
   };
 }
 
@@ -270,7 +250,8 @@ function codeAt(s: Scan, i: number, to: number): Hit | undefined {
 
 /** `**x**`: 첫 닫는 `**`까지, 안쪽 첫·끝 글자가 공백이면 서식 아님(CommonMark flanking 관념의 단순화). */
 function strongAt(s: Scan, i: number, to: number, mode: Mode): Hit | undefined {
-  const close = s.stars(i + 2);
+  const find = mode === 'label' ? s.stars.plain : s.stars.byParity[s.stars.parity(i + 2)];
+  const close = find(i + 2);
   if (close === -1 || close + 2 > to || close === i + 2) return undefined;
   if (SPACE.test(s.line.charAt(i + 2)) || SPACE.test(s.line.charAt(close - 1))) return undefined;
   const children: readonly Inline[] =
@@ -278,25 +259,20 @@ function strongAt(s: Scan, i: number, to: number, mode: Mode): Hit | undefined {
   return { node: { kind: 'strong', children }, end: close + 2 };
 }
 
-/** `[글자](http(s)://…)`: 글자 안 `[` 없음, URL은 첫 `)`까지이고 공백·괄호 없음, 스킴은 safeLinkHref. 글자는 파싱하지 않는다. */
-function linkTarget(f: LinkFinders, line: string, i: number, to: number): { readonly close: number; readonly paren: number; readonly href: string } | undefined {
-  const close = f.close(i + 1);
-  if (close === -1 || close + 1 >= to || close === i + 1 || line.charAt(close + 1) !== '(') return undefined;
-  const nested = f.open(i + 1);
-  if (nested !== -1 && nested < close) return undefined;
-  const paren = f.paren(close + 2);
-  if (paren === -1 || paren >= to || paren === close + 2) return undefined;
-  const bad = f.bad(close + 2);
-  if (bad !== -1 && bad < paren) return undefined;
-  const href = safeLinkHref(line.slice(close + 2, paren));
-  return href === undefined ? undefined : { close, paren, href };
-}
-
+/** `[글자](http(s)://…)`: 글자 안 `[` 없음, URL은 첫 `)`까지이고 공백·괄호 없음, 스킴은 safeLinkHref. */
 function linkAt(s: Scan, i: number, to: number): Hit | undefined {
-  const target = linkTarget(s, s.line, i, to);
-  if (target === undefined) return undefined;
-  const children = parseRange(s, i + 1, target.close, 'label');
-  return { node: { kind: 'link', text: visibleText(children), href: target.href, children }, end: target.paren + 1 };
+  const close = s.close(i + 1);
+  if (close === -1 || close + 1 >= to || close === i + 1 || s.line.charAt(close + 1) !== '(') return undefined;
+  const nested = s.open(i + 1);
+  if (nested !== -1 && nested < close) return undefined;
+  const paren = s.paren(close + 2);
+  if (paren === -1 || paren >= to || paren === close + 2) return undefined;
+  const bad = s.bad(close + 2);
+  if (bad !== -1 && bad < paren) return undefined;
+  const href = safeLinkHref(s.line.slice(close + 2, paren));
+  if (href === undefined) return undefined;
+  const children = parseRange(s, i + 1, close, 'label');
+  return { node: { kind: 'link', text: visibleText(children), href, children }, end: paren + 1 };
 }
 
 function visibleText(parts: readonly Inline[]): string {
