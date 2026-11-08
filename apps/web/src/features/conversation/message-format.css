@@ -1,0 +1,30 @@
+/* FR-MSG-10 제한된 서식(ADR-001 §3-f, UI_STATES §2-5). 토큰만 사용. */
+.msg-body .msg-inline-code {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.msg-body .msg-heading {
+  margin: var(--space-2) 0 var(--space-1);
+  line-height: var(--leading-tight);
+}
+.msg-body .msg-h {
+  font-weight: 700;
+}
+.msg-body .msg-h1 {
+  font-size: var(--text-xl);
+}
+.msg-body .msg-h2 {
+  font-size: var(--text-lg);
+}
+.msg-body .msg-h3 {
+  font-size: var(--text-md);
+}
+.msg-body .msg-list {
+  margin: var(--space-1) 0;
+  padding-inline-start: var(--space-6);
+}
