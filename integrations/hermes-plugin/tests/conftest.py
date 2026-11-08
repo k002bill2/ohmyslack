@@ -77,6 +77,10 @@ class FakeBotServer:
         self.sockets: list[web.WebSocketResponse] = []
         self.ws_connects = 0
         self.subscribes = 0
+        self.uploads: list[dict] = []  # 업로드 요청 기록(content_type·conversation_id·size·status)
+        self.upload_status: list[int] = []  # 다음 업로드 응답 상태를 순서대로 강제(예: [429], [413])
+        self.blobs: dict[str, tuple[str, bytes]] = {}  # 다운로드용 첨부 id → (mime, bytes)
+        self.downloads: list[str] = []
         self.base = ""
         self._runner: Optional[web.AppRunner] = None
 
@@ -159,6 +163,31 @@ class FakeBotServer:
         msg["client_message_id"] = payload["client_message_id"]
         return web.json_response({"message": msg, "seq": 1, "change_id": self.add(msg), "mention_user_ids": []})
 
+    async def upload(self, request):
+        self._log(request)
+        data = await request.read()
+        rec = {"content_type": request.headers.get("Content-Type"), "size": len(data),
+               "conversation_id": request.query.get("conversation_id")}
+        if self.upload_status:
+            status = self.upload_status.pop(0)
+            self.uploads.append({**rec, "_status": status})
+            headers = {"Retry-After": "1"} if status == 429 else {}
+            return web.json_response({"error": "error"}, status=status, headers=headers)
+        aid = str(uuid.uuid4())
+        self.uploads.append({**rec, "_status": 201, "attachment_id": aid})
+        return web.json_response({"attachment_id": aid, "attachment": {
+            "id": aid, "mime": rec["content_type"], "byte_size": len(data), "expires_at": iso(0), "expired": False}},
+            status=201)
+
+    async def download(self, request):
+        self._log(request)
+        aid = request.match_info["aid"]
+        self.downloads.append(aid)
+        if aid not in self.blobs:
+            return web.json_response({"error": "not_found"}, status=404)
+        mime, data = self.blobs[aid]
+        return web.Response(body=data, content_type=mime)
+
     async def patch(self, request):
         self._log(request)
         self.patches.append((request.match_info["mid"], await request.json()))
@@ -188,7 +217,7 @@ class FakeBotServer:
         return ws
 
     async def start(self) -> None:
-        app = web.Application()
+        app = web.Application(client_max_size=11 * 1024 * 1024)
         p = "/api/bot/v1"
         app.router.add_get(f"{p}/me", self.me)
         app.router.add_get(f"{p}/sync", self.sync)
@@ -196,6 +225,8 @@ class FakeBotServer:
         app.router.add_post(f"{p}/conversations/{{cid}}/messages", self.post)
         app.router.add_patch(f"{p}/messages/{{mid}}", self.patch)
         app.router.add_get(f"{p}/ws", self.ws)
+        app.router.add_post(f"{p}/attachments", self.upload)
+        app.router.add_get(f"{p}/attachments/{{aid}}", self.download)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         site = web.TCPSite(self._runner, "127.0.0.1", 0)

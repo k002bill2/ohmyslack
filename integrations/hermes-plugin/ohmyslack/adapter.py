@@ -11,8 +11,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
+import stat
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -25,7 +28,8 @@ from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.platforms.helpers import MessageDeduplicator
 
-from .client import BotApiError, BotAuthError, BotClient, CursorExpired, new_session, validate_bot_url
+from .client import (ATTACHMENT_MAX_BYTES, BotApiError, BotAuthError, BotClient, CursorExpired, new_session,
+                     validate_bot_url)
 from .cursor import CursorState, CursorStore, RECENT_IDS_MAX
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,11 @@ SNAPSHOT_MAX_PAGES = 50
 BACKOFF_START, BACKOFF_CAP = 2.0, 60.0
 BACKLOG_NOTICE = "오프라인 동안 받은 {n}건은 처리하지 않았습니다"
 ATTACHMENT_FALLBACK = "(첨부 전송은 아직 지원하지 않습니다)"
+# 허용목록(shared/attachments.ts ATTACHMENT_MIMES, ADR-001 §3-g): 확장자 → MIME. 서버가 매직 바이트로 다시 판정한다.
+VOICE_TYPES = {".mp3": "audio/mpeg"}
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+INBOUND_IMAGE_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+ATTACHMENTS_PER_MESSAGE_MAX = 4  # shared/attachments.ts
 SYNC_OPS = frozenset({"create", "edit", "delete"})  # shared/sync.ts SYNC_CHANGE_OPS
 WS_CLOSE_TOKEN_INVALID = 1008  # 토큰 폐기·봇 비활성화·회전(token_revoked·session_ended) — 재연결하지 않는다
 
@@ -55,6 +64,54 @@ def _epoch(iso: Any) -> Optional[float]:
         return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+def read_attachment_file(path: Any, allowed: dict[str, str],
+                         declared_mime: Optional[str] = None) -> Optional[tuple[bytes, str, str]]:
+    """Hermes가 넘긴 경로를 첨부로 읽는다 → (바이트, MIME, 파일명). 허용 밖·상한 초과·링크·비정규 파일은 None.
+
+    심볼릭 링크는 따라가지 않고(O_NOFOLLOW), 연 fd를 fstat해 정규 파일·크기를 확인한 뒤 상한+1바이트까지만 읽는다
+    (검사와 읽기 사이 파일 교체·성장도 막는다). base `validate_media_delivery_path`를 거치지 않는 호출 경로의 이중 방어.
+    """
+    try:
+        name = os.path.basename(os.fspath(path))
+    except TypeError:
+        return None
+    mime = allowed.get(os.path.splitext(name)[1].lower())
+    if mime is None or (declared_mime and declared_mime.lower() != mime):
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except (OSError, ValueError):
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > ATTACHMENT_MAX_BYTES or info.st_size == 0:
+            return None
+        chunks: list[bytes] = []
+        remaining = ATTACHMENT_MAX_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(remaining, 1024 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    if not data or len(data) > ATTACHMENT_MAX_BYTES:
+        return None
+    return data, mime, name
+
+
+def _is_uuid(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return False
+    return True
 
 
 def default_cursor_path() -> Path:
@@ -314,15 +371,46 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._root_of[mid] = thread_id
         source = self.build_source(chat_id=conversation_id, chat_type="dm", user_id=str(m["author_id"]),
                                    thread_id=thread_id, message_id=mid)
-        event = MessageEvent(text=str(m["body"]), message_type=MessageType.TEXT, user_id=str(m["author_id"]),
-                             source=source, raw_message=m, message_id=mid)
         try:
+            # 다운로드는 dedup 해제 보호 구간 안: 취소되면 discard 후 재연결 catch-up에서 다시 받는다.
+            media_urls, media_types = await self._cache_inbound_images(m)
+            event = MessageEvent(text=str(m["body"]), user_id=str(m["author_id"]), source=source, raw_message=m,
+                                 message_id=mid, media_urls=media_urls, media_types=media_types,
+                                 message_type=MessageType.PHOTO if media_urls else MessageType.TEXT)
             await self.handle_message(event)
         except BaseException:
             # 인계 실패: 중복 방지 등록을 풀고 커서도 전진시키지 않는다 → 재연결 catch-up에서 재전달.
             self._dedup.discard(mid)
             raise
         self._remember(mid)
+
+    async def _cache_inbound_images(self, m: dict) -> tuple[list[str], list[str]]:
+        """사람 메시지의 이미지 첨부를 봇 토큰으로 받아 Hermes 이미지 캐시에 둔다. 실패한 첨부는 건너뛴다(텍스트는 전달).
+
+        오디오 첨부는 아직 Hermes에 넘기지 않는다(남은 작업). 로그에는 첨부 ID·예외 종류만 싣는다.
+        """
+        from gateway.platforms.base import cache_image_from_bytes_async
+        urls: list[str] = []
+        types: list[str] = []
+        attachments = m.get("attachments") or ()
+        for att in list(attachments)[:ATTACHMENTS_PER_MESSAGE_MAX]:
+            if not isinstance(att, dict):
+                continue
+            aid, mime = str(att.get("id") or ""), str(att.get("mime") or "")
+            ext = INBOUND_IMAGE_EXT.get(mime)
+            if ext is None or att.get("expired") or not _is_uuid(aid) or self._client is None:
+                continue
+            try:
+                data = await self._client.download_attachment(aid)
+                path = await cache_image_from_bytes_async(data, ext=ext)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — 첨부 하나의 실패로 지시 전달을 막지 않는다
+                logger.warning("ohmyslack: inbound attachment %s skipped (%s)", aid, type(exc).__name__)
+                continue
+            urls.append(path)
+            types.append(mime)
+        return urls, types
 
     def _remember(self, mid: str) -> None:
         self._recent = (self._recent + (mid,))[-RECENT_IDS_MAX:]
@@ -411,21 +499,75 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return SendResult(success=True, message_id=str(message_id))
 
     async def _attachment_fallback(self, method: str, chat_id: str, caption: Optional[str],
-                                   reply_to: Optional[str], metadata: Optional[dict]) -> SendResult:
-        # 경로·캡션·토큰은 로그에 남기지 않는다(W-21 전까지 첨부 미지원).
-        logger.warning("ohmyslack: %s is not supported yet; sending text fallback", method)
+                                   reply_to: Optional[str], metadata: Optional[dict], *,
+                                   reason: str = "is not supported yet") -> SendResult:
+        # 경로·캡션·토큰은 로그에 남기지 않는다(reason은 고정 문구만).
+        logger.warning("ohmyslack: %s %s; sending text fallback", method, reason)
         text = f"{caption}\n{ATTACHMENT_FALLBACK}" if caption else ATTACHMENT_FALLBACK
         return await self.send(chat_id, text, reply_to=reply_to, metadata=metadata)
 
+    async def _send_attachment(self, method: str, allowed: dict[str, str], chat_id: str, path: Any,
+                               caption: Optional[str], reply_to: Optional[str], metadata: Optional[dict],
+                               declared_mime: Optional[str]) -> SendResult:
+        """업로드 → `attachment_ids`로 메시지 생성(본문 = caption, 없으면 파일명).
+
+        업로드 전·업로드 실패는 텍스트 대체. 업로드 성공 뒤 메시지 생성 실패는 대체 게시하지 않고 실패만 돌려준다
+        (연결 오류면 이미 생성됐을 수 있어 중복이 된다). 결속되지 못한 첨부는 서버가 1시간 뒤 정리한다.
+        """
+        if self._client is None:
+            return SendResult(success=False, error="ohmyslack: not connected", retryable=True, error_kind="transient")
+        loaded = await asyncio.to_thread(read_attachment_file, path, allowed, declared_mime)
+        if loaded is None:
+            return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata,
+                                                   reason="file rejected (type, size or not a regular file)")
+        data, mime, name = loaded
+        try:
+            uploaded = await self._client.upload_attachment(str(chat_id), data, mime)
+        except BotAuthError:
+            return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
+        except (BotApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning("ohmyslack: %s upload failed (%s)", method,
+                           exc.status if isinstance(exc, BotApiError) else type(exc).__name__)
+            return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata,
+                                                   reason="upload failed")
+        attachment_id = str(uploaded.get("attachment_id") or "")
+        if not _is_uuid(attachment_id):
+            return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata,
+                                                   reason="upload response invalid")
+        root = self._thread_root(reply_to, metadata)
+        chunks = self.truncate_message(caption or name, self.MAX_MESSAGE_LENGTH) or [name]
+        ids: list[str] = []
+        try:
+            for i, chunk in enumerate(chunks):
+                res = await self._client.post_message(str(chat_id), chunk, thread_root_id=root,
+                                                      attachment_ids=[attachment_id] if i == 0 else None)
+                ids.append(str((res.get("message") or {}).get("id") or ""))
+        except BotAuthError:
+            return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
+        except BotApiError as exc:
+            limited = exc.status == 429
+            return self._failed_send(ids, f"ohmyslack: HTTP {exc.status}", retryable=False, total=len(chunks),
+                                     retry_after=exc.retry_after, kind="rate_limited" if limited else "unknown")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            return self._failed_send(ids, f"ohmyslack: {type(exc).__name__}", retryable=False, kind="transient",
+                                     total=len(chunks))
+        for mid in ids:
+            if root:
+                self._root_of[mid] = root
+        return SendResult(success=True, message_id=ids[0] if ids else None,
+                          continuation_message_ids=tuple(ids) if len(ids) > 1 else ())
+
     async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, metadata=None, **kwargs):
-        return await self._attachment_fallback("send_voice", chat_id, caption, reply_to, metadata)
+        return await self._send_attachment("send_voice", VOICE_TYPES, chat_id, audio_path, caption, reply_to,
+                                           metadata, kwargs.get("mime_type"))
 
     async def send_document(self, chat_id, file_path, caption=None, file_name=None, reply_to=None,
                             metadata=None, **kwargs):
         return await self._attachment_fallback("send_document", chat_id, caption, reply_to, metadata)
 
     async def send_image_file(self, chat_id, image_path, caption=None, reply_to=None, metadata=None, **kwargs):
-        return await self._attachment_fallback("send_image_file", chat_id, caption, reply_to, metadata)
+        return await self._send_attachment("send_image_file", IMAGE_TYPES, chat_id, image_path, caption, reply_to,
+                                           metadata, kwargs.get("mime_type"))
 
     async def send_video(self, chat_id, video_path, caption=None, reply_to=None, metadata=None, **kwargs):
         return await self._attachment_fallback("send_video", chat_id, caption, reply_to, metadata)
