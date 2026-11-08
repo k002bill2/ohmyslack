@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PUSH_SETTINGS_COPY } from '../../ui/copy.js';
 import { detectInstallMode, InstallHint } from './install.js';
+import { ensureActiveWorker, type RegistrationLike } from './sw-ready.js';
 
 /**
  * CMP-30 PushSettings(W-23, UI_STATES §2-10, TRD §6-2). 브라우저 API·서버 호출은 주입한다(테스트).
@@ -45,7 +46,7 @@ export type PushState = 'loading' | 'unsupported' | 'ios-install' | 'default' | 
 /** 이 탭의 서버 구독 id(endpoint별). 새로 고치면 사라지고, 다음 진입 때 upsert로 다시 받는다. */
 let knownSubscription: { readonly endpoint: string; readonly id: string } | null = null;
 
-/** 테스트용: 메모리 구독 id를 비운다. */
+/** 메모리 구독 id를 비운다(세션 종료 시 LiveApp, 테스트). */
 export function resetPushMemory(): void {
   knownSubscription = null;
 }
@@ -66,7 +67,11 @@ export function browserPushEnv(): PushEnv {
     supported,
     permission: () => Notification.permission,
     requestPermission: () => Notification.requestPermission(),
-    pushManager: async () => (await navigator.serviceWorker.ready).pushManager as unknown as PushManagerLike,
+    pushManager: async () => {
+      const registration = await navigator.serviceWorker.ready;
+      await ensureActiveWorker(registration as unknown as RegistrationLike);
+      return registration.pushManager as unknown as PushManagerLike;
+    },
   };
 }
 

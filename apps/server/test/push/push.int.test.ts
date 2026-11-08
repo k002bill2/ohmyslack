@@ -130,6 +130,27 @@ describe('FR-CLIENT-05 Web Push', () => {
     expect(await subscriptionCount(c)).toBe(0);
   });
 
+  it('같은 endpoint·같은 키 재등록은 last_success_at을 유지하고, 키(p256dh·auth)가 바뀌면 NULL로 초기화한다', async () => {
+    const c = (ctx = await setupPushInt());
+    const a = await as(c.conv.app, 'a');
+    const d = device();
+    await subscribe(c, a, d);
+    const at = new Date('2026-11-09T00:00:00Z');
+    await c.conv.schema.pool.query('UPDATE push_subscriptions SET last_success_at = $1', [at]);
+    const lastSuccess = async (): Promise<Date | null> =>
+      (await c.conv.schema.pool.query<{ last_success_at: Date | null }>('SELECT last_success_at FROM push_subscriptions')).rows[0]
+        ?.last_success_at ?? null;
+
+    await subscribe(c, a, d); // 앱 재실행마다 같은 구독을 다시 upsert한다(PushSettings init).
+    expect((await lastSuccess())?.toISOString()).toBe(at.toISOString());
+
+    const rotated = device(); // 같은 endpoint, 새 키.
+    const res = await req(c.conv.app, 'POST', '/api/push/subscriptions', a, subscriptionBody(rotated, d.endpoint));
+    expect(res.statusCode).toBe(201);
+    expect(await lastSuccess()).toBeNull();
+    expect(await subscriptionCount(c)).toBe(1);
+  });
+
   it('자기 메시지는 보내지 않는다', async () => {
     const c = (ctx = await setupPushInt());
     const a = await as(c.conv.app, 'a');

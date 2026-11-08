@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSwHandlers, routeRequest } from '../../../src/features/pwa';
 import { CONV, ME, flush, message, setup } from '../../sync/fake-server.js';
-import { fakeCacheStorage, fetchEvent, request } from '../../pwa/fakes.js';
+import { fakeCacheStorage, fakeLifecycle, fetchEvent, request } from '../../pwa/fakes.js';
 import { attachment } from './fixtures.js';
 
 const ORIGIN = 'https://app.test';
@@ -20,7 +20,7 @@ describe('SW: 첨부 경로 우회', () => {
     expect(routeRequest(request(`/api/attachments?conversation_id=${CONV}`, { method: 'POST' }), ORIGIN, shell)).toBe('bypass');
     const { storage, stores } = fakeCacheStorage();
     const fetcher = vi.fn(async () => new Response('x'));
-    const sw = createSwHandlers({ storage, fetcher, entries: [], origin: ORIGIN });
+    const sw = createSwHandlers({ storage, lifecycle: fakeLifecycle(), fetcher, entries: [], origin: ORIGIN });
     const ev = fetchEvent(request(`/api/attachments/${id}`));
     sw.onFetch(ev);
     expect(ev.respondWith).not.toHaveBeenCalled();

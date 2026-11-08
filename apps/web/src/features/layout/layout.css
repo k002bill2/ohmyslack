@@ -982,3 +982,17 @@ body {
 .shortcut-row dd {
   margin: 0;
 }
+/* 알림 탭 대상 메시지를 찾지 못함(W-23 Codex P2-3) — 헤더 아래 짧은 안내. */
+.message-anchor-notice {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* 스레드 패널은 자체 스크롤이라 대상 없음 처리로 맨 아래로 간 뒤에도 안내가 보이게 위쪽에 고정(Codex 확인 라운드 P2). */
+.thread-panel > .message-anchor-notice {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}

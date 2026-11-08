@@ -20,7 +20,8 @@ interface SwScope {
   addEventListener(type: 'push', listener: (event: PushEventLike) => void): void;
   addEventListener(type: 'notificationclick', listener: (event: NotificationClickEventLike) => void): void;
   readonly registration: { showNotification(title: string, options: object): Promise<void> };
-  readonly clients: ClientsLike;
+  readonly clients: ClientsLike & { claim(): Promise<void> };
+  skipWaiting(): Promise<void>;
 }
 
 if ('ServiceWorkerGlobalScope' in globalThis) {
@@ -39,6 +40,7 @@ if ('ServiceWorkerGlobalScope' in globalThis) {
   };
   const handlers = createSwHandlers({
     storage,
+    lifecycle: { skipWaiting: () => scope.skipWaiting(), claimClients: () => scope.clients.claim() },
     fetcher: (request) => fetch(request as unknown as Request),
     entries: parsePrecacheManifest(BUILD_MANIFEST),
     origin: globalThis.location.origin,

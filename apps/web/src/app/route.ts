@@ -66,6 +66,8 @@ export interface RouteHistory {
   pathname(): string;
   /** 현재 쿼리(`?thread=…` 포함, W-10i). 없으면 쿼리를 읽지 않는다. */
   search?(): string;
+  /** 현재 해시(`#message-…` 포함, 알림 탭 위치 복원). 없으면 해시를 읽지 않는다. */
+  hash?(): string;
   push(path: string): void;
   replace(path: string): void;
   /** 뒤로·앞으로(`popstate`) 때 호출. 해제 함수를 돌려준다. */
@@ -76,6 +78,7 @@ export interface RouteHistory {
 export const browserHistory: RouteHistory = Object.freeze({
   pathname: () => location.pathname,
   search: () => location.search,
+  hash: () => location.hash,
   push: (path: string) => history.pushState(null, '', path),
   replace: (path: string) => history.replaceState(null, '', path),
   listen(onPop: () => void) {
@@ -91,16 +94,27 @@ export interface MemoryHistory extends RouteHistory {
   back(): void;
 }
 
+/** 항목에서 `#…`를 뗀다(경로·쿼리 해석용). */
+function withoutHash(entry: string): string {
+  const at = entry.indexOf('#');
+  return at < 0 ? entry : entry.slice(0, at);
+}
+
 /** 테스트 주입용 메모리 히스토리. */
 export function createMemoryHistory(initial = '/'): MemoryHistory {
   let stack: readonly string[] = [initial];
   let index = 0;
   const listeners = new Set<() => void>();
   return {
-    pathname: () => (stack[index] ?? '/').split('?')[0] ?? '/',
+    pathname: () => withoutHash(stack[index] ?? '/').split('?')[0] ?? '/',
     search: () => {
-      const entry = stack[index] ?? '/';
+      const entry = withoutHash(stack[index] ?? '/');
       const at = entry.indexOf('?');
+      return at < 0 ? '' : entry.slice(at);
+    },
+    hash: () => {
+      const entry = stack[index] ?? '/';
+      const at = entry.indexOf('#');
       return at < 0 ? '' : entry.slice(at);
     },
     push(path) {
