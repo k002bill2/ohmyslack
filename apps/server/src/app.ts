@@ -25,6 +25,7 @@ import { registerSyncRoutes } from './modules/sync/routes.js';
 import { createSyncService, type SyncService } from './modules/sync/service.js';
 import type { SyncStore } from './modules/sync/store.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
+import { createPushService, registerPushRoutes, type PushOptions, type PushService, type PushStore } from './modules/push/index.js';
 import { registerRealtime, type RealtimeOptions } from './modules/realtime/index.js';
 import { registerStatic } from './static/index.js';
 
@@ -48,6 +49,10 @@ export interface AppOptions {
   readonly readEvents?: ReadEvents;
   /** 첨부 저장소(TRD §6-1). messagesStore와 함께 주어질 때만 첨부 라우트를 등록한다. */
   readonly attachmentsStore?: AttachmentsStore;
+  /** Web Push 구독 저장소(TRD §6-2). authStore와 함께 주어질 때만 push 라우트·전송을 켠다. */
+  readonly pushStore?: PushStore;
+  /** VAPID 설정·전송 함수·예약 주입. config가 없으면 push 비활성(라우트 404). */
+  readonly push?: PushOptions;
   readonly clock?: () => number;
   readonly limiter?: LoginLimiter;
   readonly authEvents?: AuthEvents;
@@ -70,6 +75,8 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'syncStore',
   'readEvents',
   'attachmentsStore',
+  'pushStore',
+  'push',
   'clock',
   'limiter',
   'authEvents',
@@ -87,6 +94,8 @@ declare module 'fastify' {
     readonly readEvents: ReadEvents;
     /** 대화·메시지·sync 서비스(저장소가 모두 주어졌을 때만). 봇 리스너가 같은 인스턴스를 공유한다(TRD §5-2 6항). */
     readonly domainServices: DomainServices | undefined;
+    /** push 서비스(pushStore·authStore가 주어졌을 때만). */
+    readonly pushService: PushService | undefined;
   }
 }
 
@@ -187,6 +196,17 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       ? undefined
       : Object.freeze({ conversations, messages, sync, ...(attachments === undefined ? {} : { attachments }) }),
   );
+  const push =
+    options.authStore === undefined || options.pushStore === undefined
+      ? undefined
+      : createPushService({ store: options.pushStore, logger, clock, ...options.push });
+  app.decorate('pushService', push);
+  if (push !== undefined) {
+    // 커밋 후 이벤트에서 예약만 한다(메시지 생성 경로는 전송을 기다리지 않는다). 세션 폐기 시 그 기기의 구독을 지운다.
+    messageEvents.on('created', (event) => push.onMessageCreated(event));
+    authEvents.onSessionRevoked((ids) => push.onSessionsRevoked(ids));
+    app.addHook('onClose', async () => push.idle());
+  }
   if (options.authStore !== undefined) {
     const store = options.authStore;
     const limiter = options.limiter ?? createLoginLimiter(clock);
@@ -197,6 +217,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       await primeDummyHash();
       const auth = createAuthService({ store, limiter, events: authEvents, clock });
       registerAuthRoutes(scope, auth);
+      if (push !== undefined) registerPushRoutes(scope, { auth, push });
       if (membersStore !== undefined) registerMemberRoutes(scope, { auth, store: membersStore, events: authEvents, clock });
       if (conversations !== undefined) {
         registerConversationRoutes(scope, { auth, conversations });

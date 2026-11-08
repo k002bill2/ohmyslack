@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
 import type { UploadFn } from '../conversation/attachments/composer-upload.js';
@@ -9,7 +9,7 @@ import { ConnectionBanner } from '../sync';
 import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
-import { InstallCard, useInstallPrompt } from '../pwa';
+import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
 import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
@@ -112,6 +112,8 @@ function ConversationPane(props: {
   /** 본문 `@이름` 토큰 근거(대화 멤버 이름)와 내 표시 이름(「나를 멘션」 판정). */
   readonly mentionNames?: readonly string[];
   readonly selfName?: string;
+  /** 헤더 아래 안내(Jarvis DM 알림 1회 안내, W-23 ★Q-H4). */
+  readonly notice?: ReactNode;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
@@ -165,6 +167,7 @@ function ConversationPane(props: {
           </button>
         )}
       </header>
+      {props.notice}
       {membership && left ? (
         <LeftChannelNotice onRejoin={membership.onRejoin} />
       ) : roots.length === 0 ? (
@@ -251,6 +254,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | null>(null);
 
   const space = snap.spaces.find((s) => s.id === state.conversationId);
+  const pushEnv = useMemo(() => (dataSource.push ? browserPushEnv() : null), [dataSource.push]);
   const root = snap.messages.find((m) => m.id === state.threadRootId && m.conversationId === state.conversationId);
   // 나간 채널은 스레드도 닫힌 것으로 본다 — 답글 작성기로 나간 채널에 보내지 않게(Codex r1 P2).
   const threadOpen = space !== undefined && root !== undefined && space.left !== true;
@@ -424,6 +428,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         : {})}
       {...(dataSource.logout ? { onLogout: () => void dataSource.logout?.() } : {})}
       {...(dataSource.joinChannel ? { onRejoin: rejoin } : {})}
+      {...(pushEnv !== null && dataSource.push ? { pushSettings: <PushSettings env={pushEnv} server={dataSource.push} /> } : {})}
     />
   );
   const spacePanel = panel !== null && (
@@ -452,6 +457,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const pane = space && (
     <ConversationPane
       space={space}
+      {...(space.bot === true && pushEnv !== null && dataSource.push ? { notice: <PushBotHint env={pushEnv} server={dataSource.push} /> } : {})}
       roots={snap.messages.filter((m) => m.conversationId === space.id && m.rootId === undefined)}
       breakpoint={bp}
       inert={bp === 'medium' && threadOpen}

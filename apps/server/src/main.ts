@@ -8,6 +8,7 @@ import { createPgConversationsStore } from './modules/conversations/index.js';
 import { createPgMembersStore } from './modules/members/index.js';
 import { createPgMessagesStore } from './modules/messages/index.js';
 import { createOpsLogger } from './modules/ops/logger.js';
+import { createPgPushStore, loadPushConfig } from './modules/push/index.js';
 import { createPgSyncStore } from './modules/sync/index.js';
 import { resolveWebDistDir } from './static/index.js';
 
@@ -27,12 +28,16 @@ const webDistDir = resolveWebDistDir(process.env);
 const pool = new pg.Pool({ connectionString: required('DATABASE_URL') });
 const logger = createOpsLogger();
 const syncStore = createPgSyncStore(pool);
+// PUSH_VAPID_KEY_FILE·PUSH_VAPID_SUBJECT 미설정·형식 위반이면 push만 비활성(기동 계속, TRD §6-2).
+const pushConfig = loadPushConfig(process.env, logger);
 const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: createPgAuthStore(pool),
   membersStore: createPgMembersStore(pool),
   conversationsStore: createPgConversationsStore(pool),
   messagesStore: createPgMessagesStore(pool),
   syncStore,
   attachmentsStore: createPgAttachmentsStore(pool),
+  pushStore: createPgPushStore(pool),
+  push: pushConfig === undefined ? {} : { config: pushConfig },
   logger,
   ...(webDistDir === undefined ? {} : { webDistDir }),
 });

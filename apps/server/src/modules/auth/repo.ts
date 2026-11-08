@@ -89,7 +89,12 @@ export function createPgAuthStore(pool: pg.Pool): AuthStore {
       ]);
     },
     async revokeSession(id, revokedAt) {
-      await pool.query('UPDATE sessions SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL', [id, revokedAt]);
+      // 로그아웃·세션 폐기 시 그 기기의 push 구독도 함께 지운다(TRD §2 push_subscriptions, §6-2).
+      await pool.query(
+        `WITH revoked AS (UPDATE sessions SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL RETURNING id)
+         DELETE FROM push_subscriptions WHERE session_id = $1`,
+        [id, revokedAt],
+      );
     },
     async listLiveSessions(userId, now) {
       const res = await pool.query<SessionRow>(

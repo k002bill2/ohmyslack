@@ -23,3 +23,29 @@
   font-weight: 600;
   cursor: pointer;
 }
+
+/* CMP-30 PushSettings·Jarvis DM 1회 안내(W-23). 색·간격·반경은 기존 토큰만. */
+.push-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.push-settings > p {
+  margin: 0;
+}
+.push-bot-hint {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  font-size: var(--text-sm);
+}
+.push-bot-hint > p {
+  margin: 0;
+}

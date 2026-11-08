@@ -24,7 +24,7 @@ export interface ConvIntContext {
 export type Method = 'GET' | 'POST' | 'DELETE' | 'HEAD' | 'PUT' | 'PATCH';
 
 /** extra: WS 테스트가 실제 포트 Host·heartbeat를 주입할 때만 쓴다. */
-export async function setupConvInt(extra: Pick<AppOptions, 'extraHosts' | 'realtime' | 'clock'> = {}): Promise<ConvIntContext> {
+export async function setupConvInt(extra: Pick<AppOptions, 'extraHosts' | 'realtime' | 'clock' | 'pushStore' | 'push' | 'logger'> = {}): Promise<ConvIntContext> {
   const schema = await migratedSchema();
   await schema.pool.query("INSERT INTO workspaces (id, name, created_at) VALUES ($1, 'Home', now())", [randomUUID()]);
   const ids = {

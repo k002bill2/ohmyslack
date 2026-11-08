@@ -11,4 +11,9 @@ export const LOG_CANARIES: Readonly<Record<string, string>> = Object.freeze({
   email: 'oms-canary-email-5d02bb@example.invalid',
   /** 봇 토큰 자리(TRD §5-2 2항 `omsb_` 접두사). 실제 토큰 형식(32바이트 base64url)이 아닌 합성 표식이다. */
   bot: 'omsb_OMS-CANARY-BOT-e81d4c',
+  /**
+   * push endpoint 경로 자리(TRD §6-2, DEV_DESIGN FR-OPS-03 R3.3). 통합 테스트의 구독 endpoint는
+   * `https://web.push.apple.com/<이 값>…` 형태로 쓰고, 로그에는 호스트만 남아야 하므로 이 값은 0건이어야 한다.
+   */
+  push_endpoint: 'OMS-CANARY-PUSHEP-2a9c71',
 });

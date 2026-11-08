@@ -23,6 +23,7 @@ import type {
 } from '../../../../packages/shared/src/index.js';
 import { createSendController, type PendingMessage, type PostResult } from '../features/conversation';
 import { adoptAccount, clearCheckpoints, readCheckpoint, writeCheckpoint, type SessionBus, type StorageLike } from '../features/sync';
+import { pushSubscriptionCreatedSchema, pushSubscriptionCreateSchema, vapidPublicKeyResponseSchema } from '../../../../packages/shared/src/push.js';
 import { createApi, HttpStatusError, isUnreachable, NetworkError, type FetchLike } from './api.js';
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
@@ -955,6 +956,24 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       nextRoot = undefined;
       nextMentions = undefined;
       nextAttachments = undefined;
+    },
+    /** Web Push 구독(W-23, TRD §6-2). 키 404 = push 비활성 → null. 오류는 그대로 던진다(CMP-30 「등록 실패」). */
+    push: {
+      async vapidPublicKey() {
+        try {
+          return vapidPublicKeyResponseSchema.parse(await api.get('/api/push/vapid-public-key')).public_key;
+        } catch (e) {
+          if (e instanceof HttpStatusError && e.status === 404) return null;
+          throw e;
+        }
+      },
+      async register(subscription) {
+        const body = pushSubscriptionCreateSchema.parse(subscription);
+        return pushSubscriptionCreatedSchema.parse(await api.post('/api/push/subscriptions', body)).subscription.id;
+      },
+      async unregister(id) {
+        await api.del(`/api/push/subscriptions/${encodeURIComponent(id)}`);
+      },
     },
     uploadAttachment(conversationId, file) {
       return attempt(async () => {
