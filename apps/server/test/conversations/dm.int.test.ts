@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { as, openDm, req, setupConvInt, teardownConvInt, type ConvIntContext } from './conv-int-harness.js';
+import { as, createChannel, openDm, req, setupConvInt, teardownConvInt, type ConvIntContext } from './conv-int-harness.js';
 
 let ctx: ConvIntContext;
 
@@ -58,5 +58,19 @@ describe('DM 시작', () => {
     expect(mine.conversations).toEqual([expect.objectContaining({ id, kind: 'dm', peer_user_id: ctx.ids.b, unread_count: 0 })]);
     const c = await as(ctx.app, 'c');
     expect((await req(ctx.app, 'GET', '/api/conversations', c)).json().conversations).toEqual([]);
+  });
+
+  it('W-22b peer_kind: DM은 상대 users.kind, 채널은 null — 비활성 봇 DM도 bot', async () => {
+    const a = await as(ctx.app, 'a');
+    const human = (await openDm(ctx.app, a, ctx.ids.b)).json<{ id: string }>().id;
+    const bot = (await openDm(ctx.app, a, ctx.ids.c)).json<{ id: string }>().id;
+    const channel = await createChannel(ctx.app, a, 'peer-kind');
+    // 상대를 봇으로 바꾼 뒤 CLI 비활성화와 같은 상태(status disabled)로 둔다 — GET /api/members(활성만)에는 없다.
+    await ctx.schema.pool.query("UPDATE users SET kind = 'bot', password_hash = NULL, status = 'disabled' WHERE id = $1", [ctx.ids.c]);
+    const list = (await req(ctx.app, 'GET', '/api/conversations', a)).json<{ conversations: { id: string; peer_kind: string | null }[] }>();
+    const kindOf = new Map(list.conversations.map((x) => [x.id, x.peer_kind]));
+    expect(Object.fromEntries([human, bot, channel].map((id) => [id, kindOf.get(id)]))).toEqual({ [human]: 'human', [bot]: 'bot', [channel]: null });
+    const members = (await req(ctx.app, 'GET', '/api/members', a)).json<{ members: { id: string }[] }>();
+    expect(members.members.map((m) => m.id)).not.toContain(ctx.ids.c);
   });
 });

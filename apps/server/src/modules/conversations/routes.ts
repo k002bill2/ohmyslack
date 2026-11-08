@@ -72,6 +72,7 @@ async function listConversations(deps: ConversationRouteDeps, request: FastifyRe
       kind: r.kind,
       name: r.name,
       peer_user_id: r.peerUserId,
+      peer_kind: r.peerKind ?? null,
       last_seq: r.lastSeq,
       last_read_seq: r.lastReadSeq,
       unread_count: r.unread?.unreadCount ?? 0,

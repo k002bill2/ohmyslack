@@ -53,6 +53,8 @@ export const conversationSummarySchema = z.object({
   name: z.string().nullable(),
   /** DM 상대(채널이면 null). */
   peer_user_id: z.uuid().nullable(),
+  /** DM 상대의 `users.kind`(채널이면 null). 상대가 비활성이어도 채운다 — 봇 DM 배지·고정이 `GET /api/members`(활성만)에 묶이지 않게(W-22b). 하위 호환 추가 필드. */
+  peer_kind: z.enum(['human', 'bot']).nullable().optional(),
   last_seq: z.number().int(),
   last_read_seq: z.number().int(),
   unread_count: z.number().int(),

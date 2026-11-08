@@ -5,6 +5,7 @@ import type {
   ConversationsStore,
   CreateChannelResult,
   OpenDmResult,
+  PeerKind,
   UnreadAggregate,
 } from './store.js';
 
@@ -68,6 +69,8 @@ const UPSERT_READ_STATE_SQL = `INSERT INTO conversation_read_state (conversation
 const LIST_FOR_USER_SQL = `SELECT c.id, c.kind, c.name, c.last_seq::text AS last_seq, rd.seq::text AS last_read_seq,
     (SELECT o.user_id FROM conversation_members o
       WHERE c.kind = 'dm' AND o.conversation_id = c.id AND o.user_id <> $1 LIMIT 1) AS peer_user_id,
+    (SELECT u.kind FROM conversation_members o JOIN users u ON u.id = o.user_id
+      WHERE c.kind = 'dm' AND o.conversation_id = c.id AND o.user_id <> $1 LIMIT 1) AS peer_kind,
     (SELECT count(*) FROM messages x
       WHERE x.conversation_id = c.id AND x.thread_root_id IS NULL AND x.seq > rd.seq
         AND x.author_id <> $1 AND x.deleted_at IS NULL)::text AS unread_count,
@@ -201,6 +204,7 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
         last_seq: string;
         last_read_seq: string;
         peer_user_id: string | null;
+        peer_kind?: PeerKind | null;
         unread_count?: string;
         mention_count: string;
         unread_threads: UnreadThreadRow[];
@@ -211,6 +215,7 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
           kind: r.kind,
           name: r.name,
           peerUserId: r.peer_user_id,
+          peerKind: r.peer_kind ?? null,
           lastSeq: Number(r.last_seq),
           lastReadSeq: Number(r.last_read_seq),
           ...(r.unread_count === undefined ? {} : { unread: toAggregate(r.unread_count, r.mention_count, r.unread_threads) }),

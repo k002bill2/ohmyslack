@@ -1,5 +1,7 @@
 /** 대화 공간 저장소 경계. 운영은 `repo.ts`(pg 트랜잭션), 단위 테스트는 메모리 구현을 쓴다. */
 export type ConversationKind = 'channel' | 'dm';
+/** 사용자 종류(`users.kind`). DM 상대 표시(봇 배지·고정)에 쓴다. */
+export type PeerKind = 'human' | 'bot';
 
 /** 접근 판정 입력: 대화 종류와 요청자의 **현재**(left_at IS NULL) 멤버십 여부. */
 export interface AccessRow {
@@ -33,6 +35,8 @@ export interface ConversationRow {
   readonly kind: ConversationKind;
   readonly name: string | null;
   readonly peerUserId: string | null;
+  /** DM 상대의 `users.kind`(비활성 상대 포함, 채널이면 null). */
+  readonly peerKind?: PeerKind | null;
   readonly lastSeq: number;
   readonly lastReadSeq: number;
   /** unread·mention·스레드 집계. 목록 쿼리가 계산한 경우에만 있고, 없으면 라우트가 0/[]로 낸다. */
