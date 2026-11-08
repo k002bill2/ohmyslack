@@ -29,10 +29,21 @@ async function errorCode(res: Response): Promise<string | undefined> {
 /** 응답 없는 실패(네트워크 오류). */
 export class NetworkError extends Error {}
 
+/**
+ * 리버스 프록시(Tailscale Serve)가 서버에 닿지 못했을 때의 게이트웨이 응답. 앱 서버는 이 코드를 내지 않으므로
+ * 끊김 판정(UI_STATES C6)에서는 네트워크 오류와 같이 센다(W-16 F-8). 전송 결과 판정(4xx·5xx → 실패)은 그대로다.
+ */
+const GATEWAY_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
+/** 서버에 닿지 못한 실패: 네트워크 오류 또는 게이트웨이 응답(F-8). */
+export function isUnreachable(e: unknown): boolean {
+  return e instanceof NetworkError || (e instanceof HttpStatusError && GATEWAY_STATUSES.has(e.status));
+}
+
 export interface ApiDeps {
   readonly fetch: FetchLike;
   readonly onUnauthorized: () => void;
-  /** 성공 응답(2xx) 1회 / 네트워크 오류 1회 알림 — 끊김 판정(UI_STATES C6·C7)에 쓴다. */
+  /** 서버 응답 1회(true) / 네트워크 오류·게이트웨이 응답 1회(false) 알림 — 끊김 판정(UI_STATES C6·C7)에 쓴다. */
   readonly onNetwork?: (ok: boolean) => void;
 }
 
@@ -55,7 +66,7 @@ export function createApi(deps: ApiDeps) {
       deps.onNetwork?.(false);
       throw new NetworkError('network');
     }
-    deps.onNetwork?.(true);
+    deps.onNetwork?.(!GATEWAY_STATUSES.has(res.status));
     if (res.status === 401) {
       csrf = null;
       deps.onUnauthorized();
