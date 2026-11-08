@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliRefusal } from '../../bin/lib/cli.js';
 import { BOT_TOKEN_PREFIX } from '../../src/modules/bots/index.js';
@@ -8,6 +8,9 @@ import { createOpsLogger } from '../../src/modules/ops/logger.js';
 import { dumpAllRows } from '../auth/bootstrap-harness.js';
 import { HOST, testApp } from '../support/auth-app.js';
 import { botFixture, type BotFixture } from './bot-harness.js';
+import { SESSION_COOKIE } from '../../src/modules/auth/routes.js';
+import { as } from '../conversations/conv-int-harness.js';
+import { bot, count, http, main, setupBotListener, teardownBotListener, type BotListenerContext } from './bot-listener-harness.js';
 
 /** 봇 토큰 저장·검증·폐기·회전·비활성화·발급 상한(정본: TRD §5-2 2항, ADR-001). WS close 연결은 다음 레인 범위. */
 let fx: BotFixture;
@@ -166,5 +169,69 @@ describe('메인 리스너는 Authorization 헤더로 인증하지 않는다(TRD
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('봇 토큰 경계(실제 두 리스너 HTTP)', () => {
+  let lc: BotListenerContext;
+
+  beforeEach(async () => {
+    lc = await setupBotListener();
+  });
+
+  afterEach(async () => {
+    await teardownBotListener(lc);
+  });
+
+  it('FR-BOT-02 봇 토큰은 해시로만 저장되고 폐기·회전 후 옛 토큰은 401이며 봇 토큰으로 사람 API와 사람 쿠키로 봇 API를 호출하면 401이고 Origin·Cookie가 붙은 봇 요청은 거부된다', async () => {
+    const pool = lc.conv.schema.pool;
+    // 해시로만 저장
+    const row = await pool.query<{ token_hash: string }>('SELECT token_hash FROM bot_tokens WHERE id = $1', [lc.tokenId]);
+    expect(row.rows[0]?.token_hash).toBe(sha256(lc.token));
+    expect((await dumpAllRows(pool)).includes(lc.token)).toBe(false);
+    expect((await bot(lc, 'GET', 'me')).status).toBe(200);
+
+    // 회전 → 새 토큰 200, 옛 토큰 폐기 후 401(형식 오류·미등록과 같은 본문)
+    const rotated = await lc.service.rotateToken(lc.bot.botUserId);
+    expect((await bot(lc, 'GET', 'me', undefined, rotated.token)).status).toBe(200);
+    await lc.service.revokeToken(lc.tokenId);
+    const old = await bot(lc, 'GET', 'me');
+    const malformed = await bot(lc, 'GET', 'me', undefined, 'omsb_fixture-malformed');
+    expect(old.status).toBe(401);
+    expect(malformed.status).toBe(401);
+    expect(old.json.error.code).toBe(malformed.json.error.code);
+    expect(Object.keys(old.json.error).sort()).toEqual(Object.keys(malformed.json.error).sort());
+
+    // 봇 토큰으로 사람 API(Bearer·쿠키 모두) → 401. 메인 리스너는 Authorization을 인증에 쓰지 않는다.
+    const viaBearer = await main(lc, 'GET', '/api/me', { authorization: `Bearer ${rotated.token}` });
+    expect(viaBearer.status).toBe(401);
+    const viaCookie = await main(lc, 'GET', '/api/me', { cookie: `${SESSION_COOKIE}=${rotated.token}` });
+    expect(viaCookie.status).toBe(401);
+    expect((await main(lc, 'GET', '/api/sync?after=0', { authorization: `Bearer ${rotated.token}` })).status).toBe(401);
+
+    // 사람 세션 토큰으로 봇 API: Bearer로 보내면 401, Cookie 헤더로 보내면 브라우저발 요청으로 400(§5-2 4항)
+    const human = await as(lc.conv.app, 'a');
+    expect((await bot(lc, 'GET', 'me', undefined, human.token)).status).toBe(401);
+    const humanCookie = await http(lc.botPort, 'GET', '/api/bot/v1/me', { cookie: `${SESSION_COOKIE}=${human.token}` });
+    expect(humanCookie.status).toBe(400);
+
+    // 유효 봇 토큰이어도 Origin·Cookie가 붙으면 400, 저장 0
+    const auth = { authorization: `Bearer ${rotated.token}` };
+    const before = await count(lc, 'SELECT count(*)::int AS n FROM messages', []);
+    const post = (headers: Record<string, string>) =>
+      http(lc.botPort, 'POST', `/api/bot/v1/conversations/${lc.bot.dmConversationId}/messages`, { ...auth, ...headers }, {
+        client_message_id: randomUUID(),
+        body: 'x',
+      });
+    expect((await post({ origin: `http://127.0.0.1:${lc.botPort}` })).status).toBe(400);
+    expect((await post({ cookie: 'a=b' })).status).toBe(400);
+    expect(await count(lc, 'SELECT count(*)::int AS n FROM messages', [])).toBe(before);
+    expect((await post({})).status).toBe(201);
+
+    // 봇 비활성화 → 남은 토큰도 같은 401
+    await lc.service.disableBot(lc.bot.botUserId);
+    const disabled = await bot(lc, 'GET', 'me', undefined, rotated.token);
+    expect(disabled.status).toBe(401);
+    expect(disabled.json.error.code).toBe(malformed.json.error.code);
   });
 });
