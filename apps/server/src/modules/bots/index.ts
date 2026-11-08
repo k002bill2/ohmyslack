@@ -1,0 +1,14 @@
+/** bots 모듈 공개 API(B1: 모듈 밖은 repo를 직접 import하지 않는다). 정본: TRD §5-2(ADR-001). */
+export { BOT_TOKEN_PREFIX } from './token.js';
+export { createBotEvents, type BotEvents, type BotConnectionsCloseEvent, type BotConnectionsCloseListener } from './events.js';
+export {
+  createBotService,
+  MAX_LIVE_TOKENS,
+  type BotService,
+  type BotServiceDeps,
+  type CreatedBot,
+  type IssuedBotToken,
+  type RotatedBotToken,
+} from './service.js';
+export type { BotRow } from './repo.js';
+export { runBotAdmin } from './admin-cli.js';
