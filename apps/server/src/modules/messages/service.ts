@@ -16,6 +16,7 @@ export interface SendInput {
   readonly body: string;
   readonly threadRootId: string | null;
   readonly mentionUserIds: readonly string[];
+  readonly attachmentIds?: readonly string[];
 }
 
 export interface WriteOutcome {
@@ -70,6 +71,7 @@ export function createMessagesService(deps: MessagesServiceDeps): MessagesServic
       const result = await store.send({ id: randomUUID(), conversationId, authorId, ...input, at: now() });
       if (result.kind === 'conflict') throw new HttpError(409, 'idempotency_conflict');
       if (result.kind === 'bad_root') throw new HttpError(400, 'invalid_thread_root');
+      if (result.kind === 'bad_attachments') throw new HttpError(400, 'invalid_attachments');
       if (result.kind === 'not_member') throw notFound();
       if (result.kind === 'created') {
         events.created({ changeId: result.changeId, message: result.message });

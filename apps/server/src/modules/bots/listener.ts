@@ -5,6 +5,7 @@ import { listenLoopback, parsePort } from '../../bind.js';
 import { registerAccessRegistry, type RegisteredRoute } from '../../http/access.js';
 import { errorBody, sendError, toHttpError } from '../../http/errors.js';
 import { normalizeHost, registerResponseHeaders } from '../../http/security.js';
+import type { AttachmentsService } from '../attachments/index.js';
 import type { ConversationsService } from '../conversations/service.js';
 import type { MessagesService } from '../messages/service.js';
 import type { OpsLogger } from '../ops/logger.js';
@@ -23,6 +24,8 @@ export interface BotAppOptions {
   readonly conversations: ConversationsService;
   readonly messages: MessagesService;
   readonly sync: SyncService;
+  /** 있으면 봇 첨부 라우트를 등록한다(메인 앱과 같은 인스턴스, `domainServices.attachments`). */
+  readonly attachments?: AttachmentsService;
   readonly logger: OpsLogger;
   readonly clock?: () => number;
   readonly limiter?: BotRateLimiter;
@@ -102,6 +105,8 @@ export function buildBotApp(options: BotAppOptions): FastifyInstance {
     messages: options.messages,
     sync: options.sync,
     limiter: options.limiter ?? createBotRateLimiter(clock),
+    clock,
+    ...(options.attachments === undefined ? {} : { attachments: options.attachments }),
   });
   if (options.realtime !== undefined) {
     registerBotRealtime(app, { bots: options.bots, conversations: options.conversations, clock, realtime: options.realtime });

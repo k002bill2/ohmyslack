@@ -66,6 +66,16 @@ export function toView(m: MessageRecord): MessageView {
     deleted_at: iso(m.deletedAt),
     mention_user_ids: [...m.mentionUserIds],
     root_reply_count: m.rootReplyCount,
+    attachments: (m.attachments ?? []).map((a) => ({
+      id: a.id,
+      mime: a.mime,
+      byte_size: a.byteSize,
+      duration_ms: a.durationMs,
+      width: a.width,
+      height: a.height,
+      expires_at: a.expiresAt.toISOString(),
+      expired: a.expired,
+    })),
   };
 }
 
@@ -100,6 +110,7 @@ export async function sendAs(messages: MessagesService, authorId: string, conver
     body: body.body,
     threadRootId: body.thread_root_id ?? null,
     mentionUserIds: body.mention_user_ids ?? [],
+    attachmentIds: body.attachment_ids ?? [],
   });
   reply.code(outcome.created ? 201 : 200);
   return writeResponse(outcome);

@@ -13,6 +13,7 @@ import { createConversationEvents, type ConversationEvents } from './modules/con
 import { registerConversationRoutes } from './modules/conversations/routes.js';
 import { createConversationsService, type ConversationsService } from './modules/conversations/service.js';
 import type { ConversationsStore } from './modules/conversations/store.js';
+import { createAttachmentsService, registerAttachmentRoutes, type AttachmentsService, type AttachmentsStore } from './modules/attachments/index.js';
 import { createMessageEvents, type MessageEvents } from './modules/messages/events.js';
 import { registerMessageRoutes } from './modules/messages/routes.js';
 import { createMessagesService, type MessagesService } from './modules/messages/service.js';
@@ -45,6 +46,8 @@ export interface AppOptions {
   /** sync·읽음 저장소. messagesStore와 함께 주어질 때만 sync·read-state 라우트를 등록한다. */
   readonly syncStore?: SyncStore;
   readonly readEvents?: ReadEvents;
+  /** 첨부 저장소(TRD §6-1). messagesStore와 함께 주어질 때만 첨부 라우트를 등록한다. */
+  readonly attachmentsStore?: AttachmentsStore;
   readonly clock?: () => number;
   readonly limiter?: LoginLimiter;
   readonly authEvents?: AuthEvents;
@@ -66,6 +69,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'messageEvents',
   'syncStore',
   'readEvents',
+  'attachmentsStore',
   'clock',
   'limiter',
   'authEvents',
@@ -90,6 +94,8 @@ export interface DomainServices {
   readonly conversations: ConversationsService;
   readonly messages: MessagesService;
   readonly sync: SyncService;
+  /** 첨부 서비스(attachmentsStore가 주어졌을 때만). 봇 첨부 라우트가 같은 인스턴스를 쓴다. */
+  readonly attachments?: AttachmentsService;
 }
 
 /** 알 수 없는 옵션(예: 쿠키 Secure 해제 시도)은 조용히 무시하지 않고 기동을 거부한다(NC-08). */
@@ -171,11 +177,15 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       : createMessagesService({ store: options.messagesStore, conversations, events: messageEvents, clock });
   const sync =
     messages === undefined || options.syncStore === undefined ? undefined : createSyncService({ store: options.syncStore, events: readEvents, clock });
+  const attachments =
+    messages === undefined || conversations === undefined || options.attachmentsStore === undefined
+      ? undefined
+      : createAttachmentsService({ store: options.attachmentsStore, conversations, clock });
   app.decorate(
     'domainServices',
     options.authStore === undefined || conversations === undefined || messages === undefined || sync === undefined
       ? undefined
-      : Object.freeze({ conversations, messages, sync }),
+      : Object.freeze({ conversations, messages, sync, ...(attachments === undefined ? {} : { attachments }) }),
   );
   if (options.authStore !== undefined) {
     const store = options.authStore;
@@ -192,6 +202,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
         registerConversationRoutes(scope, { auth, conversations });
         if (messages !== undefined) {
           registerMessageRoutes(scope, { auth, conversations, messages });
+          if (attachments !== undefined) registerAttachmentRoutes(scope, { auth, conversations, attachments, clock });
           if (sync !== undefined && syncStore !== undefined) {
             registerSyncRoutes(scope, { auth, conversations, sync });
             const deps = { auth, conversations, syncStore, authEvents, conversationEvents, messageEvents, readEvents, clock };

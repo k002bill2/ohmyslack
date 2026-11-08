@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type { AppOptions } from '../../src/app.js';
+import { createPgAttachmentsStore } from '../../src/modules/attachments/index.js';
 import { createPgAuthStore } from '../../src/modules/auth/index.js';
 import { SESSION_COOKIE } from '../../src/modules/auth/routes.js';
 import { createPgConversationsStore } from '../../src/modules/conversations/index.js';
@@ -23,7 +24,7 @@ export interface ConvIntContext {
 export type Method = 'GET' | 'POST' | 'DELETE' | 'HEAD' | 'PUT' | 'PATCH';
 
 /** extra: WS 테스트가 실제 포트 Host·heartbeat를 주입할 때만 쓴다. */
-export async function setupConvInt(extra: Pick<AppOptions, 'extraHosts' | 'realtime'> = {}): Promise<ConvIntContext> {
+export async function setupConvInt(extra: Pick<AppOptions, 'extraHosts' | 'realtime' | 'clock'> = {}): Promise<ConvIntContext> {
   const schema = await migratedSchema();
   await schema.pool.query("INSERT INTO workspaces (id, name, created_at) VALUES ($1, 'Home', now())", [randomUUID()]);
   const ids = {
@@ -39,6 +40,7 @@ export async function setupConvInt(extra: Pick<AppOptions, 'extraHosts' | 'realt
     conversationsStore: createPgConversationsStore(schema.pool),
     messagesStore: createPgMessagesStore(schema.pool),
     syncStore: createPgSyncStore(schema.pool),
+    attachmentsStore: createPgAttachmentsStore(schema.pool),
     ...extra,
   });
   const ended: [string, string][] = [];

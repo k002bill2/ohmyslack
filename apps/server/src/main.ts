@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { buildApp } from './app.js';
 import { listenLoopback, parsePort, resolveListenHost } from './bind.js';
+import { createPgAttachmentsStore, startRetentionTimer } from './modules/attachments/index.js';
 import { createPgAuthStore } from './modules/auth/index.js';
 import { buildBotApp, createBotEvents, createBotService, listenBot, resolveBotPort } from './modules/bots/index.js';
 import { createPgConversationsStore } from './modules/conversations/index.js';
@@ -31,6 +32,7 @@ const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: cre
   conversationsStore: createPgConversationsStore(pool),
   messagesStore: createPgMessagesStore(pool),
   syncStore,
+  attachmentsStore: createPgAttachmentsStore(pool),
   logger,
   ...(webDistDir === undefined ? {} : { webDistDir }),
 });
@@ -56,10 +58,18 @@ const botApp =
       });
 if (botApp !== undefined && botPort !== undefined) await listenBot(botApp, process.env, botPort);
 
+// 첨부 보존 삭제(TRD §6-1): 미결속 1시간·보존 기한 경과·삭제 메시지의 바이트. 5분 주기, shutdown에서 멈춘다.
+const attachmentsService = services?.attachments;
+const stopRetention =
+  attachmentsService === undefined
+    ? undefined
+    : startRetentionTimer(attachmentsService, 5 * 60 * 1000, () => logger.log({ event: 'attachment_retention_error', error_code: 'retention_failed' }));
+
 let closing = false;
 async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
+  stopRetention?.();
   await Promise.allSettled([app.close(), botApp?.close()]);
   await pool.end();
 }

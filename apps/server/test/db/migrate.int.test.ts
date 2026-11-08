@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR, migrate } from '../../src/db/migrate.js';
 import { createTestSchema, withClient, type TestSchema } from '../support/test-db.js';
 
+// 0003_attachments(W-21)로 attachment_blobs·attachments 2개 추가(이름 정렬 순).
 const TRD_TABLES = [
+  'attachment_blobs',
+  'attachments',
   'bot_tokens',
   'conversation_changes',
   'conversation_members',
