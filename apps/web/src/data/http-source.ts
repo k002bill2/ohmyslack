@@ -128,6 +128,12 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let current: string | null = null;
   let generation = 0;
   let resuming = false;
+  /**
+   * 복귀 절차의 HTTP catch-up 구간(인증~목록·emit). 이 구간에 늦게 도착한 WS 종료는 「최신 상태 확인 중」(배지·구분선 보류)을
+   * 덮지 않고 기록만 해 두었다가, 구간이 끝난 뒤 소켓이 여전히 닫혀 있으면 「다시 연결 중」으로 바꾼다(W-16 F-5, QA-FR-SYNC-07).
+   */
+  let inCatchUp = false;
+  let closedInCatchUp = false;
   let ended = false;
   let failures = 0;
   const rootFor = new Map<string, string>();
@@ -494,6 +500,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       sendController.wsClosed();
       // 1008: 세션 종료 가능성 — 복귀 절차의 `GET /api/me`가 401이면 end(), 200이면 소켓 재연결·catch-up·구독(UI_STATES C9, Codex r3 P2).
       if (policy) void resume();
+      else if (inCatchUp) closedInCatchUp = true;
       else if (connection !== 'offline') setConnection('reconnecting');
     },
     ...(deps.setTimer === undefined ? {} : { setTimer: deps.setTimer }),
@@ -624,6 +631,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     await loadList();
     if (gen !== generation) return false;
     emit();
+    endCatchUp();
     // 복귀 중 대화가 바뀌었으면 바뀐 대화를 다시 구독한다 — 현재 대화의 ACK 뒤에만 연결됨·checkpoint 전진(Codex r2 P2).
     for (let target = current; target !== null; target = current) {
       await waitOpen();
@@ -744,11 +752,20 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     if (readTimer === null && !stopped) readTimer = setTimer(flushReads, READ_FLUSH_MS);
   }
 
+  /** catch-up 구간 종료: 그 사이 소켓이 닫혔고 아직 다시 열리지 않았으면 이제 「다시 연결 중」을 보인다(F-5). */
+  const endCatchUp = () => {
+    const closed = closedInCatchUp;
+    inCatchUp = false;
+    closedInCatchUp = false;
+    if (closed && connection === 'catching-up' && !realtime.isOpen()) setConnection('reconnecting');
+  };
+
   const resume = async (retried = false): Promise<boolean> => {
     if (ended) return false;
     generation += 1;
     const gen = generation;
     resuming = true;
+    inCatchUp = true;
     setConnection(connection === 'offline' && !isOnline() ? 'offline' : 'catching-up');
     try {
       return await runResume(gen);
@@ -765,7 +782,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       if (e instanceof NetworkError) setConnection('offline');
       return false;
     } finally {
-      if (gen === generation) resuming = false;
+      if (gen === generation) {
+        resuming = false;
+        if (inCatchUp) endCatchUp();
+      }
     }
   };
 

@@ -12,7 +12,7 @@
 | 대상 커밋 | `74b822e` (main, 깨끗한 detached worktree) |
 | `pnpm verify` | **PASS** — exit 0, `=== VERIFY PASSED` |
 | `check:fr-coverage --mode=gate` | **FAIL** — exit 1, `실패:` 17줄 + 미구현 집계 1(FR-OPS-02) = 18건(아래 3절). 수동·실기·측정 증거 미완, 발견 F-1(키맵)·F-4(작성기 포커스 링) |
-| 수동 QA 14건 | PASS 4(BOOT-01·CLIENT-07·OPS-04·SYNC-01) · FAIL 0 · 미검증 5(CLIENT-01·02·04·OPS-01·02) · 파일 없음/미실행 5(CLIENT-03·MSG-08·SYNC-04·SYNC-07·OPS-03) — 7절 수정·8절 측정 반영 후 (SYNC-01은 이전 집계에서 미실행 템플릿으로 셌음) |
+| 수동 QA 14건 | PASS 7(BOOT-01·CLIENT-01·03·07·OPS-04·SYNC-01·04) · FAIL 0 · 미검증 5(CLIENT-02·04·OPS-01·02·SYNC-07) · 미실행 2(MSG-08·OPS-03) — 9절 실기 QA 반영 후 |
 | G1 신청 가능 여부 | **아직 불가** — 3절 "남은 일" 완료 후 판정 모드 재실행 필요 |
 | 교차 검증 | Codex 1라운드: P1 2·P2 2 지적(CLIENT-07 과대 PASS 2건, 전송 중 그레이스케일 증거, 소수 폭 대체 증거) — 전부 반영. F-1·F-2·F-3 코드 주장은 Codex가 소스로 재확인 |
 
@@ -28,14 +28,14 @@
 
 | # | 실패 | 현재 상태 | 닫는 방법 | 담당 |
 |---|---|---|---|---|
-| 1 | QA-FR-CLIENT-01 판정 FAIL | 키맵 일부 미구현(F-1) | F-1 결정(구현 또는 정본 조정) 후 재실행 + macOS Safari `⌃⌥` 확인 | 영환님 결정 → Developer → QA |
+| 1 | ~~QA-FR-CLIENT-01~~ **닫힘** | 9절: macOS Safari 27.2 wide·medium 통과, 기본 단축키 충돌 없음 → PASS | — | — |
 | 1b | QA-FR-CLIENT-07 판정 FAIL | 작성기 포커스 링 정본 위반(F-4) | 2px 링 + 2px 오프셋 구현 후 재검증(멘션 후보 선택 포함, 두 번째 사용자 필요) | Developer → QA |
-| 2 | QA-FR-CLIENT-02 미검증 | 데스크톱 22조합·compact 이동 통과 | ① 640.5·1023.5px 실제 렌더 넘침·가림(창 폭 조절 — CDP는 정수 폭만) ② iPhone Safari 390px S2·S4·S6·가상 키보드 | ① QA(수동 창 조절) ② 영환님(실기) |
-| 3 | QA-FR-CLIENT-03 파일 없음 | 미실행 | tailnet HTTPS에서 iOS 홈 화면 추가 → standalone 로그인 → 재실행 세션 유지 → S6 | 영환님(실기·Serve) |
-| 4 | QA-FR-CLIENT-04 미검증 | 데스크톱 Chromium 통과 | macOS Safari·iOS Safari·PWA에서 같은 절차 | 영환님(실기) |
-| 5 | QA-FR-MSG-08 파일 없음 | 미실행 | 디자인 §7-4 매트릭스 7항목 × 4환경(macOS Safari·Chrome, iOS Safari·PWA) 한글 실기 | 영환님(실기 IME) |
-| 6 | QA-FR-SYNC-04 파일 없음 | 미실행 | 맥·iPhone 동시 전경에서 읽음 → 배지 2초 안 갱신 | 영환님(실기) |
-| 7 | QA-FR-SYNC-07 파일 없음 | 미실행 | iPhone PWA 5분 백그라운드 후 복귀 | 영환님(실기) |
+| 2 | QA-FR-CLIENT-02 미검증 | 데스크톱 22조합·compact 이동 통과, iPhone S2 전송·S4·S6 통과(9절) | ① 640.5·1023.5px 실제 렌더 ② iPhone 길게 누르기 수정·삭제 ③ 가상 키보드 가림(F-6 연관) | ① QA ② ③ 영환님(실기, 실제 손가락) |
+| 3 | ~~QA-FR-CLIENT-03~~ **닫힘** | 9절: 홈 화면 추가·standalone 로그인·강제 종료 후 재실행 세션 유지·S6 → PASS | — | — |
+| 4 | QA-FR-CLIENT-04 미검증 | macOS Safari·iOS Safari·웹 앱에서 로그아웃 후 뒤로·앞으로·복원·재실행 본문 재노출 없음(9절) | iPhone 실기 저장소 검사(Web Inspector) | 영환님(실기) |
+| 5 | QA-FR-MSG-08 파일 없음 | 미실행 — iPhone 미러링은 Mac 키보드 입력이라 iOS 소프트 키보드 한글 조합 재현 불가(9절) | 디자인 §7-4 7항목 × iOS Safari·웹 앱(실제 소프트 키보드), macOS Safari·Chrome | 영환님(실기 IME) |
+| 6 | ~~QA-FR-SYNC-04~~ **닫힘** | 9절: Mac 읽음 → iPhone 웹 앱 본문 1.1s·스레드/멘션 1.5s, iOS Safari 1.35s(≤ 2s), 스레드 unread 본문 수 미합산 → PASS | — | — |
+| 7 | QA-FR-SYNC-07 미검증 | 9절: 5분 3초 백그라운드 복귀 후 105건·수정·삭제·타 기기 읽음 반영 정확. 「최신 상태 확인 중…」 미표시, 「다시 연결 중…」 약 2.9s(F-5) | F-5 수정 후 재실행 + 서버 꺼진 상태 복귀 경로 | Developer → 영환님(실기) |
 | 8–9 | ~~FR-SYNC-01 지정 테스트 결과 없음 + QA 미검증~~ **닫힘** | 8절: (a) p95 40.8ms·오류 0, (b) p95 128ms → QA-FR-SYNC-01 PASS | — | — |
 | 10 | QA-FR-OPS-01 미검증 | 미실행 | 점검 명령 8개 **[조회·승인 필요]** | 영환님 승인 → QA |
 | 11 | QA-FR-OPS-02 미검증 | 자동 드릴 `DRILL OK 7/7` 기록됨 | 승인자 확인 칸 서명 | 영환님 |
@@ -88,3 +88,15 @@
 - 1차 15:39–15:54: **무효.** 관측 탭이 ego-browser 백그라운드 태스크 스페이스라 rAF가 1–2회/s로 제한됨(`visibilityState`는 visible). CDP `Page.bringToFront`·포커스 에뮬레이션으로 해소 안 됨 → 사람이 ego-browser 창을 앞에 띄워야 함. `raf` p95 686ms는 판정에서 제외.
 - 2차 15:55–16:11: 영환님이 창을 전경에 둠(부하 전 rAF 62회/s). (a) 3000건·오류 0·전달 57000/57000·p95 40.8ms, (b) `raf` p95 128ms·p99 155ms·max 358ms·표본 3000. 부하 중 전경 유지 근거는 표본 전체의 `raf-commit` p95 1ms·max 53ms(제한 상태면 수백 ms). → QA-FR-SYNC-01 **PASS**.
 - 게이트 재실행: `check:fr-coverage --mode=gate` 실패 줄 16 → 14(SYNC-01 2줄 해소), 여전히 exit 1(실기·승인 항목).
+
+## 9. 실기 QA (2026-11-08 17:26 이후 KST, 빌드 `69d1078`, 테스트 DB 서버를 tailnet Serve 8443으로 노출 — 운영 서버·DB 미사용)
+
+실행: 별도 세션. macOS Safari 27.2(키 이벤트 전달), iPhone은 iPhone 미러링으로 조작. 결과 PASS 3(CLIENT-01·SYNC-04·CLIENT-03) · 미검증 3(SYNC-07·CLIENT-04·CLIENT-02) · 미실행 1(MSG-08, 파일 없음). 증거 `reports/qa/<항목>/`(gitignore, 로컬). 정리: 테스트 스키마·임시 하네스·iPhone 「메신저 QA」 아이콘 삭제, Safari 창 크기 원복. **남은 사람 조치:** Serve 8443 끄기(`tailscale serve --https=8443 off`, 테스트 서버는 이미 종료 → 502).
+
+| ID | 심각도 | 내용 | 근거 수준 | 제안 |
+|---|---|---|---|---|
+| F-5 | 중 — SYNC-07 차단 | 복귀 시 `resume()`이 `catching-up`으로 바꾼 뒤 늦게 온 WS 종료가 `onClose`에서 무조건 `reconnecting`으로 덮어씀(`apps/web/src/data/http-source.ts:497` vs `:752`). 배지·구분선 보류가 `connection === 'catching-up'`에만 걸려 있어(`apps/web/src/features/layout/AppShell.tsx:463,468`) catch-up 도중 보류가 풀릴 수 있음 | L1 실기 화면(「확인 중」 미표시·「다시 연결 중」 2.9s) + L2 코드 확인. 배지 깜빡임 자체는 미관측 | `resuming` 중에는 `onClose`가 `catching-up`을 덮지 않게(또는 resume 완료 시 재판정) + 회귀 테스트 |
+| F-6 | 하 | iOS에서 작성기 포커스 시 「자동 완성 연락처」 막대가 작성기·전송 버튼을 가림. textarea에 `autocomplete` 지정 없음 | L1 실기 | `autocomplete="off"` 등 지정 후 iPhone 재확인(CLIENT-02 가상 키보드 항목과 함께) |
+| F-7 | 확인 필요 | compact 「메시지 작업」 버튼을 미러링으로 탭하면 시트가 안 열리고 목록만 약 70px 이동, 펼친 버튼이 작성기 뒤에 가려지기도 함 | L1(미러링 입력 — 실제 터치와 다를 수 있음) | 실제 손가락으로 재현 여부 확인 후 판단 |
+
+- 게이트 재실행(main `c960e9d` 위, 2026-11-08): P1 범위에서 CLIENT-01·CLIENT-03·SYNC-04 실패 줄 해소. 남은 P1 실패는 MSG-08(파일 없음)·SYNC-07·CLIENT-02·CLIENT-04·OPS-01·OPS-02(판정 미PASS)·OPS-03(파일 없음)과 TR-SEC-07~10 종속. main에 병합된 후속 레인(W-18 봇·W-20 등)의 FR-MSG-10·CLIENT-05·OPS-05·BOT-01~06·TR-SEC-13~15 줄도 함께 나오며, 이는 P1 범위 밖(일부는 이 작업 트리에서 테스트 결과 파일이 없어 "실행 결과 없음"으로 집계 — `pnpm verify` 후 재판정 필요).

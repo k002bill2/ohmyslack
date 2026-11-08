@@ -14,3 +14,15 @@
 | 실제 결과 | **로그인 중:** localStorage = `oms.cp.<id>`: `"13"` 1개(숫자 checkpoint)뿐, sessionStorage 0, IndexedDB 0, Cache Storage `oms-shell-*` 11항목(index.html·JS·CSS·아이콘·manifest)·`/api/` 0 · 마커 적중 `csrf` 1건 — 캐시된 JS 번들 코드의 필드명 문자열 `csrf_token`(데이터 아님, `apps/web/dist/assets/index-*.js` 1회) · SW `/sw.js` 활성. **로그아웃 후:** `/login`, localStorage 비어 있음(checkpoint도 삭제), 캐시 동일(셸만). **이동 6회**(back→`/c/<id>`, back→`/`, forward→`/c/<id>`, forward→`/login`, bfcache 복원, reload) 모두 로그인 폼만 표시·화면 마커 0 |
 | 판정 | `미검증` — 데스크톱 Chromium에서는 기대와 일치. bfcache·저장소 동작이 다른 macOS Safari·iOS Safari·홈 화면 PWA 실기 확인이 남아 있어 PASS로 적지 않음 |
 | 증거 경로 | `reports/qa/client-04/storage-and-nav.json`, `reports/qa/client-04/{back1,back2,forward1,forward2,restoreFromBfcache,reload}.png` — `reports/`는 gitignore(로컬 보관). 자동 증거: `pnpm check:no-persist-cache`(W-16 verify 통과) |
+
+## 2차 실행 — macOS Safari·iOS Safari·홈 화면 웹 앱 (2026-11-08 17:46–17:53 KST)
+
+| 필드 | 값 |
+|---|---|
+| 실행자 | Aside(computer-use: Mac Safari + iPhone 미러링) |
+| 기기·OS·브라우저(버전) | macOS 27.2 Safari 27.2 / iPhone 16 Pro iOS Safari·홈 화면 웹 앱 |
+| 접속 경로 | tailnet HTTPS `:8443` → 로컬 테스트 서버(테스트 DB), 빌드 `69d1078` |
+| 절차 | 로그인 후 채널 본문을 연 뒤 `로그아웃`. macOS Safari: `⌘[`×3 → `⌘]`×3 → `⌘R` → `about:blank` 이동 후 뒤로(bfcache 복원), 매번 접근성 트리에서 본문 마커(메시지 본문 6종) 검색. iOS Safari: 툴바 뒤로×3 → 앞으로×3 → 새로고침, 매번 캡처. 웹 앱: (a) Safari 로그아웃으로 같은 세션 폐기 후 복귀·강제 종료 재실행 (b) 웹 앱 안에서 `로그아웃` → 가장자리 밀기 → 홈 갔다 복귀 → 강제 종료 재실행 |
+| 실제 결과 | **macOS Safari:** 로그아웃 후 9회 이동(`/settings/members`·`/c/<id>` 2곳·`/login`, bfcache 복원 포함) 모두 로그인 폼, 본문 마커 0. **iOS Safari:** 뒤로 3회·앞으로 3회·새로고침 모두 로그인 폼만, 본문 노출 0. **웹 앱:** (a) 복귀 시 「세션이 종료되었습니다. 다시 로그인해 주세요.」, 재실행도 로그인 폼 (b) 로그인 폼 유지, 본문 노출 0. 미러링 드래그는 가장자리 뒤로 제스처가 아니라 텍스트 선택으로 처리돼 standalone 뒤로 제스처는 확인 못 함. **미실행:** Safari·iOS 저장소 검사(Web Inspector 필요) |
+| 판정 | `미검증` — 세 환경 모두 로그아웃 후 재노출 0. 실기 저장소 검사(localStorage·Cache Storage·IndexedDB)와 웹 앱 가장자리 뒤로 제스처가 남음 |
+| 증거 경로 | `reports/qa/client-04-safari-ios/` — `ios-safari-back3.png`, `ios-safari-fwd3-reload.png`, `pwa-logout-swipe-resume-relaunch.png`, `pwa-relaunch-after-external-revoke.png`. macOS Safari는 위 표의 AX 검사 결과(이동별 URL·마커 수) |
