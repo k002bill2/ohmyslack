@@ -11,7 +11,7 @@ const N2 = 'FR-TST-02 beta works';
 const HEADER = '| FR | 지정 테스트 이름 | 계층·파일 | 실행 | 필수 보조 증거 | 수동 |';
 const AUX = 'apps/web/test/aux/aux.test.tsx';
 const SEC_HEADER = '| ID | 지정 테스트 이름 | 계층·파일 | 실행 | 수동 |';
-const SEC_IDS = Array.from({ length: 12 }, (_, i) => `TR-SEC-${String(i + 1).padStart(2, '0')}`);
+const SEC_IDS = Array.from({ length: 15 }, (_, i) => `TR-SEC-${String(i + 1).padStart(2, '0')}`);
 const refRow = (id: string, fr = 'FR-TST-01'): string => `| ${id} | → ${fr} | — | — | — |`;
 const defaultSecRows = SEC_IDS.map((id) => refRow(id));
 const QA_FIELDS = [
@@ -184,10 +184,10 @@ describe('check-fr-coverage', () => {
     const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
     const emptyReports = mkdtempSync(join(tmpdir(), 'frcov-reports-'));
 
-    it('progress exits 0 with 미구현 33', async () => {
+    it('progress reads the canon tables without scanner error', async () => {
       const r = await exec(repoRoot, '--mode=progress', '--reports', emptyReports);
-      // 실제 저장소 상태는 구현이 진행될수록 줄어든다 — 형식과 상한만 고정한다.
-      expect(r.text).toMatch(/P0 FR 33개 \/ 구현 \d+ \/ 미구현 \d+/);
+      // 실제 저장소 상태는 구현이 진행될수록 줄어든다 — 형식과 상한만 고정한다(P0 개수는 PRD 개정마다 바뀌므로 고정하지 않음).
+      expect(r.text).toMatch(/P0 FR \d+개 \/ 구현 \d+ \/ 미구현 \d+/);
       expect(r.text).toMatch(/TR-SEC 지정 3개 \/ 미구현 [0-3]개/);
       // 빈 reports로 돌리므로, 이미 구현된 지정 테스트는 '실행 결과 없음'으로 실패할 수 있다.
       // 이 테스트는 실제 정본 표가 스캐너 오류 없이 읽히는지만 고정한다(실행 판정은 verify 단계가 담당).
@@ -378,7 +378,7 @@ describe('check-fr-coverage TR-SEC 6-3 (NC-01)', () => {
   it('reference rows follow the referenced FR verdict', async () => {
     const rows = SEC_IDS.map((id) => (id === 'TR-SEC-02' ? selfRow : id === 'TR-SEC-03' ? refRow(id, 'FR-TST-01, FR-TST-02') : refRow(id)));
     const pass = await exec(secFixture(true, rows), '--mode=gate');
-    expect(pass.text).toContain('TR-SEC 참조 11개 / 참조 FR 미구현 0개');
+    expect(pass.text).toContain('TR-SEC 참조 14개 / 참조 FR 미구현 0개');
     expect(pass.code).toBe(0);
     const root = secFixture(true, rows);
     write(root, 'reports/r1.json', JSON.stringify(report(root, 'perf/b.perf.ts', [N2], 'failed')));
@@ -386,18 +386,18 @@ describe('check-fr-coverage TR-SEC 6-3 (NC-01)', () => {
     expect(fail.text).toContain('TR-SEC-03: 참조 FR-TST-02 미충족');
     expect(fail.code).toBe(1);
     const prog = await exec(build({ secRows: rows }), '--mode=progress');
-    expect(prog.text).toContain('TR-SEC 참조 11개 / 참조 FR 미구현 11개');
+    expect(prog.text).toContain('TR-SEC 참조 14개 / 참조 FR 미구현 14개');
     expect(prog.code).toBe(0);
   });
 
   it('scanner error when a TR-SEC ID is missing, duplicated or unknown', async () => {
-    const missing = await exec(build({ secRows: defaultSecRows.slice(0, 11) }), '--mode=progress');
+    const missing = await exec(build({ secRows: defaultSecRows.slice(0, 14) }), '--mode=progress');
     expect(missing.text).toContain('스캐너 오류');
-    expect(missing.text).toContain('TR-SEC-12');
+    expect(missing.text).toContain('TR-SEC-15');
     expect(missing.code).toBe(1);
-    const dup = [...defaultSecRows.slice(0, 11), refRow('TR-SEC-11')];
+    const dup = [...defaultSecRows.slice(0, 14), refRow('TR-SEC-14')];
     expect((await exec(build({ secRows: dup }), '--mode=progress')).code).toBe(1);
-    const extra = [...defaultSecRows, refRow('TR-SEC-13')];
+    const extra = [...defaultSecRows, refRow('TR-SEC-16')];
     expect((await exec(build({ secRows: extra }), '--mode=progress')).code).toBe(1);
   });
 
