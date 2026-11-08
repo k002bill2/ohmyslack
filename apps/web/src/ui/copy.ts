@@ -153,7 +153,25 @@ export const MEMBER_ADMIN_COPY = {
   roles: { owner: '관리자', member: '멤버' },
 } as const;
 
-/** 공간 전환기(G-33). 컴포넌트 미구현 — 상수만. */
+/**
+ * SCR-09 단축키 안내(CMP-18 「키보드 단축키」) 행 — D §7-3 키맵 표의 키·동작 열 그대로.
+ * 문서 상호 참조((§7-4 …)·(WCAG …))와 강조 표기만 뺐다. P1 후보 행(`↑` 내 마지막 메시지 수정)은 미구현이라 넣지 않는다.
+ */
+export const SHORTCUT_ROWS: readonly { readonly keys: string; readonly action: string }[] = Object.freeze([
+  { keys: 'Ctrl/⌘+K', action: '공간 전환기(콤보박스) 열기 — 기본 전환 수단' },
+  { keys: 'Ctrl+Alt+↑ / Ctrl+Alt+↓ (mac ⌃⌥↑/↓)', action: '이전/다음 공간' },
+  { keys: 'Ctrl+Alt+Shift+↑ / ↓', action: '읽지 않은 공간만 이동' },
+  { keys: 'Enter (작성기)', action: '전송' },
+  { keys: 'Shift+Enter', action: '줄바꿈(조합 중이 아닐 때)' },
+  { keys: 'Esc — 다이얼로그·멘션 후보·medium 스레드 오버레이·compact 스레드 화면 안', action: '항상 닫기. 작성기 초안은 대상별로 보존되어 다시 열면 복원' },
+  { keys: 'Esc — wide 스레드 패널 작성기, 비어 있음', action: '스레드 패널 닫기' },
+  { keys: 'Esc — wide 스레드 패널 작성기, 입력 있음', action: '1회: 아무 동작 없음 + "닫으려면 Esc를 한 번 더 누르세요"(초안은 보존됨) / 1.5초 안에 2회: 닫기' },
+  { keys: 'Tab / Shift+Tab', action: '영역 간 이동. 메시지 목록 안에서는 메시지 단위(roving tabindex)' },
+  { keys: '메시지에서 R / E / Delete', action: '답글 / 수정(내 것) / 삭제(내 것, 확인 다이얼로그)' },
+  { keys: 'Ctrl/⌘+/', action: '키보드 단축키 안내 다이얼로그' },
+]);
+
+/** 공간 전환기(G-33). */
 export const SPACE_SWITCHER_COPY = {
   title: '공간 이동',
   inputLabel: '채널 또는 DM 이름',

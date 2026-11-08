@@ -31,3 +31,4 @@ export {
 export { canModify, failureView, type FailureView } from './MessageItemRules.js';
 export { ThreadSummary, type ThreadSummaryProps } from './MessageItemThreadSummary.js';
 export { lastServerSeq, scrolledToBottom } from './seen.js';
+export { useMessageRoving } from './message-keys.js';

@@ -31,8 +31,8 @@ export class WsClient {
     });
   }
 
-  static open(wsUrl: string, session: Session, timeoutMs = 5000): Promise<WsClient> {
-    const init = { headers: { cookie: `${SESSION_COOKIE}=${session.token}`, origin: ORIGIN } };
+  static open(wsUrl: string, session: Session, timeoutMs = 5000, origin = ORIGIN): Promise<WsClient> {
+    const init = { headers: { cookie: `${SESSION_COOKIE}=${session.token}`, origin } };
     const ws = new WebSocket(wsUrl, init as unknown as string[]);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('WS open timeout')), timeoutMs);

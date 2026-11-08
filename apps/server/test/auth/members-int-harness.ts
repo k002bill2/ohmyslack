@@ -54,8 +54,8 @@ export async function teardownMembersInt(ctx: MembersIntContext | undefined): Pr
   await ctx?.schema.drop();
 }
 
-export async function signIn(app: FastifyInstance, email: string, secret = SECRET): Promise<Session> {
-  const res = await login(app, email, secret);
+export async function signIn(app: FastifyInstance, email: string, secret = SECRET, origin = ORIGIN): Promise<Session> {
+  const res = await login(app, email, secret, undefined, origin);
   if (res.statusCode !== 200) throw new Error(`로그인 실패: ${res.statusCode}`);
   return { token: sessionCookie(res) ?? '', csrf: res.json<{ csrf_token: string }>().csrf_token };
 }

@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { ActionResult } from '../../data/index.js';
 import { MESSAGE_ACTION_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from './copy.js';
@@ -9,6 +9,7 @@ import { MessageEditor } from './MessageItemEditor.js';
 import { canModify } from './MessageItemRules.js';
 import { ThreadSummary } from './MessageItemThreadSummary.js';
 import { MessageStatus } from './MessageStatus.js';
+import { messageKeyAction, useRovingInner } from './message-keys.js';
 import type { PendingMessage } from './send-status.js';
 
 export interface MessageItemData {
@@ -50,6 +51,11 @@ export interface MessageItemProps {
    * `sheet` = 길게 누르기·「메시지 작업」 버튼 → 액션 시트(compact). 기본은 `timePlacement === 'below'`면 `sheet`.
    */
   readonly actionMode?: 'toolbar' | 'sheet';
+  /**
+   * 메시지 목록 roving tabindex(UI_STATES §4-1): `true` = 이 항목이 목록의 Tab 정류장(tabIndex 0),
+   * `false` = 정류장 아님(안의 조작도 Tab에서 뺀다). 없으면(스레드 패널 등) 기존처럼 tabIndex -1.
+   */
+  readonly rovingActive?: boolean;
 }
 
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -117,6 +123,17 @@ function MessageItemView(props: MessageItemProps) {
   const hasActions = showReply || (actionable && !isEditing);
   const canEdit = actionable && !isEditing && onEdit !== undefined;
   const canDelete = actionable && !isEditing && onDelete !== undefined;
+  useRovingInner(item, props.rovingActive);
+  /** D §7-3 메시지 단축키 — compact는 키맵 대신 보이는 버튼(액션 시트)이라 끈다. */
+  const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
+    if (sheetMode) return;
+    const action = messageKeyAction(e, { reply: showReply && onReply !== undefined, edit: canEdit, delete: canDelete });
+    if (action === null) return;
+    e.preventDefault();
+    if (action === 'reply') onReply?.(message.id);
+    else if (action === 'edit') setEditing(true);
+    else setConfirming(true);
+  };
 
   useEffect(() => {
     if (sheetOpen || pendingAction === null) return;
@@ -145,8 +162,9 @@ function MessageItemView(props: MessageItemProps) {
   return (
     <li
       ref={item}
-      tabIndex={-1}
+      tabIndex={props.rovingActive === true ? 0 : -1}
       className={itemClass}
+      onKeyDown={onKeyDown}
       data-message-id={message.id}
       aria-label={messageLabel(message.author, message.createdAt)}
       {...longPress}
