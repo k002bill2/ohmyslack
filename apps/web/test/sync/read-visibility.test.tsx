@@ -253,7 +253,7 @@ describe('FR-SYNC-03 읽음 저장 복구(L43b, Codex r1 P2)', () => {
     const w = world();
     w.ds.open?.(CONV);
     expect(await w.ds.resume()).toBe(true);
-    w.server.on('PUT /api/read-state', () => ({ status: 503, body: { error: { code: 'unavailable' } } }));
+    w.server.on('PUT /api/read-state', () => ({ status: 500, body: { error: { code: 'internal' } } }));
     w.ds.markRead?.(CONV, null, 5);
     w.timers.run(READ_FLUSH_MS);
     await settle();
