@@ -35,6 +35,7 @@ TOKEN_ENV = "OHMYSLACK_BOT_TOKEN"
 URL_ENV = "OHMYSLACK_BOT_URL"
 PORT_ENV = "OHMYSLACK_BOT_PORT"
 BACKLOG_LIMIT_SECONDS = 15 * 60
+SNAPSHOT_MAX_PAGES = 50
 BACKOFF_START, BACKOFF_CAP = 2.0, 60.0
 BACKLOG_NOTICE = "오프라인 동안 받은 {n}건은 처리하지 않았습니다"
 ATTACHMENT_FALLBACK = "(첨부 전송은 아직 지원하지 않습니다)"
@@ -42,7 +43,8 @@ ATTACHMENT_FALLBACK = "(첨부 전송은 아직 지원하지 않습니다)"
 
 def backoff_delay(attempt: int, rand: Callable[[], float] = random.random) -> float:
     """2→4→…→60초 지수 백오프 + 최대 10% 지터."""
-    base = min(BACKOFF_CAP, BACKOFF_START * (2 ** max(0, attempt)))
+    exponent = min(max(0, attempt), 6)  # 2*2**5=64 ≥ 상한 — 큰 지수 계산(OverflowError) 방지
+    base = min(BACKOFF_CAP, BACKOFF_START * (2 ** exponent))
     return base + base * 0.1 * rand()
 
 
@@ -204,6 +206,10 @@ class OhmySlackAdapter(BasePlatformAdapter):
             kind = frame.get("type")
             if kind == "message.created":
                 await self._ingest(str(frame.get("conversation_id") or ""), frame.get("message") or {})
+                if int(frame.get("change_id") or 0) > self._watermark:
+                    # 실시간 수신 후 저장 커서 전진은 REST watermark로만 한다(TRD §4: 대화 간 live 순서 비보장).
+                    await self._catch_up(self._watermark)
+                    await self._flush_backlog()
             elif kind == "conversation.subscribed":
                 await self._flush_backlog()
             elif kind == "sync.required":
@@ -236,15 +242,27 @@ class OhmySlackAdapter(BasePlatformAdapter):
             snap = await self._client.get_snapshot(cid)
             cur = int(snap["snapshot_cursor"])
             start = cur if start is None else min(start, cur)
-            for m in snap.get("messages") or ():
-                mid = str(m.get("id") or "")
-                fresh = not self._dedup.is_duplicate(mid)
-                created = _epoch(m.get("created_at")) or 0.0
-                if prev is not None and fresh and self._is_owner_instruction(m) and created >= prev.saved_at:
-                    self._backlog[cid] = self._backlog.get(cid, 0) + 1
+            for _page in range(SNAPSHOT_MAX_PAGES):
+                oldest = self._count_snapshot_page(cid, snap.get("messages") or (), prev)
+                # 410일 때만 오프라인 시점까지 과거 페이지를 더 읽어 센다(첫 연결은 실행·안내 없음).
+                if prev is None or not snap.get("has_more") or snap.get("next_before_seq") is None \
+                        or oldest < prev.saved_at:
+                    break
+                snap = await self._client.get_snapshot(cid, before_seq=int(snap["next_before_seq"]))
         start = start or 0
         self._save_cursor(start)
         return start
+
+    def _count_snapshot_page(self, cid: str, messages, prev: Optional[CursorState]) -> float:
+        oldest = float("inf")
+        for m in messages:
+            mid = str(m.get("id") or "")
+            fresh = not self._dedup.is_duplicate(mid)
+            created = _epoch(m.get("created_at")) or 0.0
+            oldest = min(oldest, created)
+            if prev is not None and fresh and self._is_owner_instruction(m) and created >= prev.saved_at:
+                self._backlog[cid] = self._backlog.get(cid, 0) + 1
+        return oldest
 
     # ---------- inbound ----------
     def _is_owner_instruction(self, m: dict) -> bool:
@@ -258,11 +276,11 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return
         if self._dedup.is_duplicate(mid):
             return
-        self._remember(mid)
         created = _epoch(m.get("created_at"))
         if created is None or self._clock() - created > BACKLOG_LIMIT_SECONDS:
             if m.get("edited_at") is None:
                 self._backlog[conversation_id] = self._backlog.get(conversation_id, 0) + 1
+            self._remember(mid)
             return
         thread_id = str(m.get("thread_root_id") or mid)
         self._root_of[mid] = thread_id
@@ -270,7 +288,13 @@ class OhmySlackAdapter(BasePlatformAdapter):
                                    thread_id=thread_id, message_id=mid)
         event = MessageEvent(text=str(m["body"]), message_type=MessageType.TEXT, user_id=str(m["author_id"]),
                              source=source, raw_message=m, message_id=mid)
-        await self.handle_message(event)
+        try:
+            await self.handle_message(event)
+        except BaseException:
+            # 인계 실패: 중복 방지 등록을 풀고 커서도 전진시키지 않는다 → 재연결 catch-up에서 재전달.
+            self._dedup.discard(mid)
+            raise
+        self._remember(mid)
 
     def _remember(self, mid: str) -> None:
         self._recent = (self._recent + (mid,))[-RECENT_IDS_MAX:]

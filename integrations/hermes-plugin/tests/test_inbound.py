@@ -224,3 +224,63 @@ async def test_token_and_body_never_logged(server, make_adapter, caplog):
     for needle in (TOKEN, "secret-instruction-body", "secret-reply-body", "secret-path"):
         assert needle not in caplog.text
     assert "send_document is not supported" in caplog.text
+
+
+# ---------- Codex r1 회귀 ----------
+async def test_failed_handoff_is_redelivered_after_reconnect(server, make_adapter):
+    adapter = make_adapter()
+    delivered = adapter.events
+    state = {"fail": True}
+
+    async def flaky(event):
+        if state["fail"]:
+            state["fail"] = False
+            raise RuntimeError("gateway handoff failed")
+        delivered.append(event)
+
+    adapter.handle_message = flaky
+    assert await adapter.connect()
+    await wait_for(lambda: server.sockets)
+    m = make_message(body="must not be lost")
+    await server.push_live(m)
+    await wait_for(lambda: [e.message_id for e in delivered] == [m["id"]])
+
+
+async def test_live_messages_advance_persisted_cursor(server, make_adapter, tmp_path):
+    adapter = make_adapter()
+    assert await adapter.connect()
+    await wait_for(lambda: server.sockets)
+    m = make_message(body="advance me")
+    await server.push_live(m)
+    change_id = server.changes[-1][0]
+    await wait_for(lambda: json.loads((tmp_path / "cursor.json").read_text())["change_id"] >= change_id)
+
+
+async def test_410_counts_owner_messages_across_snapshot_pages(server, make_adapter, tmp_path):
+    from ohmyslack.cursor import CursorState, CursorStore
+    CursorStore(tmp_path / "cursor.json").save(CursorState(change_id=1, saved_at=time.time() - 3600))
+    server.sync_expired_below = 5
+    server.snapshot_pages = [
+        [make_message(author=BOT_ID, body=f"bot {i}", age=600) for i in range(3)],
+        [make_message(body="owner older page", age=1800), make_message(body="pre-offline", age=7200)],
+        [make_message(body="never read", age=9000)],
+    ]
+    adapter = make_adapter()
+    assert await adapter.connect()
+    assert adapter.events == []
+    assert [p["body"] for p in _posts_ok(server)] == ["오프라인 동안 받은 1건은 처리하지 않았습니다"]
+    snaps = [r for r in server.requests if r[1] == "/api/bot/v1/sync/snapshot"]
+    assert len(snaps) == 2  # 오프라인 시점보다 오래된 페이지에서 멈춤
+
+
+def test_backoff_huge_attempt_does_not_overflow():
+    from ohmyslack.adapter import backoff_delay
+    assert backoff_delay(10_000, lambda: 0.0) == 60.0
+
+
+def test_manifest_marks_token_secret():
+    import yaml
+    from pathlib import Path
+    manifest = yaml.safe_load((Path(__file__).resolve().parents[1] / "ohmyslack" / "plugin.yaml").read_text())
+    token = [e for e in manifest["requires_env"] if e["name"] == "OHMYSLACK_BOT_TOKEN"][0]
+    assert token["secret"] is True

@@ -12,6 +12,7 @@ requires_env:
     description: "ohmyslack 봇 토큰(omsb_ 접두사, bot-admin CLI 발급)"
     prompt: "ohmyslack bot token"
     password: true
+    secret: true
 optional_env:
   - name: OHMYSLACK_BOT_URL
     description: "봇 리스너 URL — 루프백만 허용 (예: http://127.0.0.1:<BOT_PORT>)"

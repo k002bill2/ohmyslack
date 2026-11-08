@@ -113,8 +113,11 @@ class BotClient:
             params["through"] = str(through)
         return await self.request("GET", "/sync", params=params)
 
-    async def get_snapshot(self, conversation_id: str) -> dict:
-        return await self.request("GET", "/sync/snapshot", params={"conversation_id": conversation_id})
+    async def get_snapshot(self, conversation_id: str, *, before_seq: Optional[int] = None) -> dict:
+        params = {"conversation_id": conversation_id}
+        if before_seq is not None:
+            params["before_seq"] = str(before_seq)
+        return await self.request("GET", "/sync/snapshot", params=params)
 
     async def post_message(self, conversation_id: str, body: str, *,
                            thread_root_id: Optional[str] = None) -> dict:

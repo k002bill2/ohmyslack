@@ -60,6 +60,7 @@ class FakeBotServer:
         self.changes: list[tuple[int, str, dict]] = []
         self.next_change = 10
         self.snapshot_messages: list[dict] = []
+        self.snapshot_pages: list[list[dict]] = []
         self.me_status = 200
         self.sync_expired_below: Optional[int] = None
         self.ws_fail = 0
@@ -118,8 +119,12 @@ class FakeBotServer:
 
     async def snapshot(self, request):
         self._log(request)
+        # snapshot_pages가 있으면 before_seq(=페이지 번호)로 과거 페이지를 내준다.
+        pages = self.snapshot_pages or [self.snapshot_messages]
+        idx = int(request.query.get("before_seq", 0))
+        more = idx + 1 < len(pages)
         return web.json_response({"snapshot_cursor": self.next_change, "conversation_id": request.query["conversation_id"],
-                                  "messages": self.snapshot_messages, "has_more": False, "next_before_seq": None})
+                                  "messages": pages[idx], "has_more": more, "next_before_seq": idx + 1 if more else None})
 
     async def post(self, request):
         self._log(request)
