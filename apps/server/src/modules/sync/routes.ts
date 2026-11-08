@@ -40,17 +40,26 @@ export function conversationRefGuard(
   action: AccessAction,
 ): preHandlerAsyncHookHandler {
   return markConversationGuard(async (request: FastifyRequest): Promise<void> => {
-    const ref = conversationRef.safeParse(from === 'query' ? request.query : request.body);
-    if (!ref.success) throw new HttpError(400, 'invalid_request');
-    request.conversationAccess = await service.assertAccess(requireAuth(request).user.id, ref.data.conversation_id, action);
+    request.conversationAccess = await service.assertAccess(requireAuth(request).user.id, conversationRefOf(request, from), action);
   });
 }
 
-async function sync(deps: SyncRouteDeps, request: FastifyRequest): Promise<SyncResponse> {
-  const query = parseOr400(syncQuerySchema, request.query);
-  const page = await deps.sync.sync(requireAuth(request).user.id, query.after, query.through, query.limit);
+/** query·body의 `conversation_id`(형식 오류 400). 봇 리스너의 같은 가드도 이 해석을 쓴다. */
+export function conversationRefOf(request: FastifyRequest, from: 'query' | 'body'): string {
+  const ref = conversationRef.safeParse(from === 'query' ? request.query : request.body);
+  if (!ref.success) throw new HttpError(400, 'invalid_request');
+  return ref.data.conversation_id;
+}
+
+/**
+ * sync·snapshot·read-state 처리 본문(사람·봇 라우트 공용, TRD §5-2 6항 "같은 스키마·같은 서비스").
+ * 행위자 id는 호출자가 인증 경계에서 정해 넘긴다 — 이 함수는 인증 정보를 읽지 않는다.
+ */
+export async function syncAs(service: SyncService, userId: string, rawQuery: unknown): Promise<SyncResponse> {
+  const query = parseOr400(syncQuerySchema, rawQuery);
+  const page = await service.sync(userId, query.after, query.through, query.limit);
   return {
-    changes: page.changes.map((c) => ({ change_id: c.changeId, conversation_id: c.message.conversationId, message: toView(c.message) })),
+    changes: page.changes.map((c) => ({ change_id: c.changeId, op: c.op, conversation_id: c.message.conversationId, message: toView(c.message) })),
     through_cursor: page.throughCursor,
     scanned_through: page.scannedThrough,
     has_more: page.hasMore,
@@ -58,9 +67,10 @@ async function sync(deps: SyncRouteDeps, request: FastifyRequest): Promise<SyncR
   };
 }
 
-async function snapshot(deps: SyncRouteDeps, request: FastifyRequest): Promise<SnapshotResponse> {
-  const query = parseOr400(snapshotQuerySchema, request.query);
-  const page = await deps.sync.snapshot(query.conversation_id, query.before_seq, query.limit);
+/** 대화 접근은 호출자의 assertAccess 가드가 먼저 판정한다. */
+export async function snapshotOf(service: SyncService, rawQuery: unknown): Promise<SnapshotResponse> {
+  const query = parseOr400(snapshotQuerySchema, rawQuery);
+  const page = await service.snapshot(query.conversation_id, query.before_seq, query.limit);
   return {
     snapshot_cursor: page.snapshotCursor,
     conversation_id: query.conversation_id,
@@ -70,9 +80,10 @@ async function snapshot(deps: SyncRouteDeps, request: FastifyRequest): Promise<S
   };
 }
 
-async function markRead(deps: SyncRouteDeps, request: FastifyRequest): Promise<ReadStateResponse> {
-  const body = parseOr400(readStateRequestSchema, request.body);
-  const outcome = await deps.sync.markRead(requireAuth(request).user.id, {
+/** 대화 접근은 호출자의 assertAccess 가드가 먼저 판정한다. */
+export async function markReadAs(service: SyncService, userId: string, rawBody: unknown): Promise<ReadStateResponse> {
+  const body = parseOr400(readStateRequestSchema, rawBody);
+  const outcome = await service.markRead(userId, {
     conversationId: body.conversation_id,
     threadRootId: body.thread_root_id ?? null,
     lastReadSeq: body.last_read_seq,
@@ -84,6 +95,11 @@ async function markRead(deps: SyncRouteDeps, request: FastifyRequest): Promise<R
     updated_at: outcome.updatedAt.toISOString(),
   };
 }
+
+const sync = (deps: SyncRouteDeps, request: FastifyRequest): Promise<SyncResponse> => syncAs(deps.sync, requireAuth(request).user.id, request.query);
+const snapshot = (deps: SyncRouteDeps, request: FastifyRequest): Promise<SnapshotResponse> => snapshotOf(deps.sync, request.query);
+const markRead = (deps: SyncRouteDeps, request: FastifyRequest): Promise<ReadStateResponse> =>
+  markReadAs(deps.sync, requireAuth(request).user.id, request.body);
 
 /**
  * 동기화·읽음 라우트(정본: TRD §3). `/api/sync`는 계정 전역(payload를 현재 멤버십으로 거른다).

@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createBotEvents, createBotService, type CreatedBot } from '../../src/modules/bots/index.js';
-import { as, openDm, req, setupConvInt, teardownConvInt, type ConvIntContext } from '../conversations/conv-int-harness.js';
+import { as, createChannel, openDm, req, setupConvInt, teardownConvInt, type ConvIntContext } from '../conversations/conv-int-harness.js';
+import { bot as botCall, count, setupBotListener, teardownBotListener, type BotListenerContext } from './bot-listener-harness.js';
 
 /**
  * 봇 참여 범위 경계(TRD §5-2 5항: owner DM + owner가 추가한 채널, Codex r1 P1·P2).
@@ -66,5 +68,84 @@ describe('사람 API의 봇 범위 경계', () => {
       [bot.botUserId],
     );
     expect(state.rows[0]).toEqual({ status: 'active', live: 1 });
+  });
+});
+
+describe('봇 리스너 멤버십 상한(§5-2 5항)', () => {
+  let lc: BotListenerContext;
+
+  beforeEach(async () => {
+    lc = await setupBotListener();
+  });
+
+  afterEach(async () => {
+    await teardownBotListener(lc);
+  });
+
+  const msg = (body: string, root?: string) => ({ client_message_id: randomUUID(), body, ...(root === undefined ? {} : { thread_root_id: root }) });
+
+  it('봇은 참여하지 않은 대화의 이력·답글·쓰기·수정·snapshot·read-state가 404이고 sync에 0건이며 저장도 0이다', async () => {
+    const owner = await as(lc.conv.app, 'a');
+    const channel = await createChannel(lc.conv.app, owner, 'secret');
+    const root = (await req(lc.conv.app, 'POST', `/api/conversations/${channel}/messages`, owner, msg('비밀'))).json<{ message: { id: string } }>().message.id;
+    const before = await count(lc, 'SELECT count(*)::int AS n FROM messages', []);
+    const checks: [string, string, unknown?][] = [
+      ['GET', `conversations/${channel}/messages`],
+      ['GET', `messages/${root}/replies`],
+      ['POST', `conversations/${channel}/messages`, msg('침입')],
+      ['POST', `conversations/${channel}/messages`, msg('침입 답글', root)],
+      ['PATCH', `messages/${root}`, { body: '변조' }],
+      ['GET', `sync/snapshot?conversation_id=${channel}`],
+      ['PUT', 'read-state', { conversation_id: channel, last_read_seq: 1 }],
+    ];
+    for (const [method, path, body] of checks) {
+      const res = await botCall(lc, method, path, body);
+      expect(res.status, `${method} ${path}`).toBe(404);
+      expect(JSON.stringify(res.json).includes('비밀'), `${method} ${path}`).toBe(false);
+    }
+    expect(await count(lc, 'SELECT count(*)::int AS n FROM messages', [])).toBe(before);
+    expect(await count(lc, "SELECT count(*)::int AS n FROM messages WHERE body = '비밀'", [])).toBe(1);
+    const sync = await botCall(lc, 'GET', 'sync?after=0');
+    expect(sync.status).toBe(200);
+    expect(sync.json.changes.filter((c: { conversation_id: string }) => c.conversation_id === channel)).toEqual([]);
+    expect((await botCall(lc, 'POST', 'dms', { user_id: lc.conv.ids.b })).status).toBe(404);
+  });
+
+  it('me.conversation_ids는 활성 참여 대화만이고 owner_user_id는 워크스페이스 owner다', async () => {
+    const owner = await as(lc.conv.app, 'a');
+    const left = await createChannel(lc.conv.app, owner, 'left-channel');
+    await lc.conv.schema.pool.query(
+      'INSERT INTO conversation_members (conversation_id, user_id, joined_at, joined_seq, left_at) VALUES ($1, $2, now(), 0, now())',
+      [left, lc.bot.botUserId],
+    );
+    const me = await botCall(lc, 'GET', 'me');
+    expect(me.status).toBe(200);
+    expect(me.json).toEqual({ id: lc.bot.botUserId, owner_user_id: lc.conv.ids.a, conversation_ids: [lc.bot.dmConversationId] });
+    expect((await botCall(lc, 'GET', `conversations/${left}/messages`)).status).toBe(404);
+  });
+
+  it('봇 메시지의 author_kind는 서버가 bot으로 정하고 sync change는 op를 싣는다', async () => {
+    const dm = lc.bot.dmConversationId;
+    const created = await botCall(lc, 'POST', `conversations/${dm}/messages`, { ...msg('안녕'), author_kind: 'human' });
+    expect(created.status).toBe(400);
+    const ok = await botCall(lc, 'POST', `conversations/${dm}/messages`, msg('안녕'));
+    expect(ok.status).toBe(201);
+    expect(ok.json.message.author_kind).toBe('bot');
+    const owner = await as(lc.conv.app, 'a');
+    await req(lc.conv.app, 'POST', `/api/conversations/${dm}/messages`, owner, msg('지시'));
+    const edited = await botCall(lc, 'PATCH', `messages/${ok.json.message.id}`, { body: '안녕!' });
+    expect(edited.status).toBe(200);
+    const history = await botCall(lc, 'GET', `conversations/${dm}/messages`);
+    expect(history.json.messages.map((m: { author_kind: string }) => m.author_kind)).toEqual(['bot', 'human']);
+    const first = await botCall(lc, 'GET', `sync?after=0&through=${ok.json.change_id}`);
+    expect(first.json.changes.map((c: { op: string; message: { author_kind: string } }) => [c.op, c.message.author_kind])).toEqual([['create', 'bot']]);
+    const all = await botCall(lc, 'GET', 'sync?after=0');
+    expect(all.json.changes.map((c: { op: string; message: { author_kind: string } }) => [c.op, c.message.author_kind])).toEqual([
+      ['create', 'human'],
+      ['edit', 'bot'],
+    ]);
+    const snap = await botCall(lc, 'GET', `sync/snapshot?conversation_id=${dm}`);
+    expect(snap.status).toBe(200);
+    expect(snap.json.messages).toHaveLength(2);
   });
 });

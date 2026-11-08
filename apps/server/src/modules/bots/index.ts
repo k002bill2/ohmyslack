@@ -12,3 +12,6 @@ export {
 } from './service.js';
 export type { BotRow } from './repo.js';
 export { runBotAdmin } from './admin-cli.js';
+export { buildBotApp, listenBot, resolveBotPort, type BotAppOptions } from './listener.js';
+export { createBotRateLimiter, BOT_RATE_LIMITS, BOT_RATE_WINDOW_MS, type BotRateLimiter } from './rate-limit.js';
+export { requireBot, type BotContext } from './routes.js';

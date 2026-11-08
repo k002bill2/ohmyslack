@@ -93,7 +93,7 @@ async function setup() {
     retentionFloor: async () => 0,
     async scan(r) {
       calls.scans.push(r);
-      return { scannedThrough: 30, changes: [{ changeId: 12, message: msgs[0] as MessageRecord }] };
+      return { scannedThrough: 30, changes: [{ changeId: 12, op: 'create' as const, message: msgs[0] as MessageRecord }] };
     },
     async snapshot(c, before, limit) {
       calls.snapshots.push([c, before, limit]);

@@ -89,9 +89,13 @@ function pageRequest(q: PageQuery): PageRequest {
   };
 }
 
-async function send(deps: MessageRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<MessageWriteResponse> {
-  const body = parseOr400(messageCreateRequestSchema, request.body);
-  const outcome = await deps.messages.send(requireAuth(request).user.id, pathId(request), {
+/**
+ * 메시지 처리 본문(사람·봇 라우트 공용, TRD §5-2 6항 "같은 스키마·같은 서비스"). 행위자 id는 호출자가 인증 경계에서 정해 넘긴다.
+ * 대화·메시지 접근은 호출자의 assertAccess 가드가 먼저 판정한다.
+ */
+export async function sendAs(messages: MessagesService, authorId: string, conversationId: string, rawBody: unknown, reply: FastifyReply): Promise<MessageWriteResponse> {
+  const body = parseOr400(messageCreateRequestSchema, rawBody);
+  const outcome = await messages.send(authorId, conversationId, {
     clientMessageId: body.client_message_id,
     body: body.body,
     threadRootId: body.thread_root_id ?? null,
@@ -101,23 +105,30 @@ async function send(deps: MessageRouteDeps, request: FastifyRequest, reply: Fast
   return writeResponse(outcome);
 }
 
-async function history(deps: MessageRouteDeps, request: FastifyRequest): Promise<HistoryResponse> {
+export async function historyOf(messages: MessagesService, conversationId: string, rawQuery: unknown): Promise<HistoryResponse> {
   // roots_only는 계약상 받지만 이력은 항상 원문만 낸다(답글은 페이지 크기를 쓰지 않는다, FR-MSG-04·06).
-  const query = parseOr400(historyQuerySchema, request.query);
-  const page = await deps.messages.history(pathId(request), pageRequest(query));
+  const query = parseOr400(historyQuerySchema, rawQuery);
+  const page = await messages.history(conversationId, pageRequest(query));
   return { messages: page.messages.map(toView), has_more: page.hasMore };
 }
 
-async function replies(deps: MessageRouteDeps, request: FastifyRequest): Promise<RepliesResponse> {
-  const query = parseOr400(repliesQuerySchema, request.query);
-  const { root, page } = await deps.messages.replies(pathId(request), pageRequest(query));
+export async function repliesOf(messages: MessagesService, rootId: string, rawQuery: unknown): Promise<RepliesResponse> {
+  const query = parseOr400(repliesQuerySchema, rawQuery);
+  const { root, page } = await messages.replies(rootId, pageRequest(query));
   return { root: toView(root), replies: page.messages.map(toView), has_more: page.hasMore };
 }
 
-async function edit(deps: MessageRouteDeps, request: FastifyRequest): Promise<MessageWriteResponse> {
-  const body = parseOr400(messageEditRequestSchema, request.body);
-  return writeResponse(await deps.messages.edit(requireAuth(request).user.id, pathId(request), body.body, body.mention_user_ids ?? []));
+export async function editAs(messages: MessagesService, editorId: string, messageId: string, rawBody: unknown): Promise<MessageWriteResponse> {
+  const body = parseOr400(messageEditRequestSchema, rawBody);
+  return writeResponse(await messages.edit(editorId, messageId, body.body, body.mention_user_ids ?? []));
 }
+
+const send = (deps: MessageRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<MessageWriteResponse> =>
+  sendAs(deps.messages, requireAuth(request).user.id, pathId(request), request.body, reply);
+const history = (deps: MessageRouteDeps, request: FastifyRequest): Promise<HistoryResponse> => historyOf(deps.messages, pathId(request), request.query);
+const replies = (deps: MessageRouteDeps, request: FastifyRequest): Promise<RepliesResponse> => repliesOf(deps.messages, pathId(request), request.query);
+const edit = (deps: MessageRouteDeps, request: FastifyRequest): Promise<MessageWriteResponse> =>
+  editAs(deps.messages, requireAuth(request).user.id, pathId(request), request.body);
 
 async function remove(deps: MessageRouteDeps, request: FastifyRequest): Promise<MessageDeleteResponse> {
   const { message, changeId } = await deps.messages.remove(requireAuth(request).user.id, pathId(request));

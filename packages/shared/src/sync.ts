@@ -21,9 +21,17 @@ export const syncQuerySchema = z
 
 export type SyncQuery = z.infer<typeof syncQuerySchema>;
 
-/** 페이지 내 message id별 현재 상태(삭제는 body null·mention 빈 배열 tombstone). `change_id`는 그 메시지의 페이지 내 최신 변경. */
+/** sync change 종류(DB `conversation_changes.op`). R3.3 추가 필드 — 기존 소비자는 무시해도 된다. */
+export const SYNC_CHANGE_OPS = Object.freeze(['create', 'edit', 'delete'] as const);
+export type SyncChangeOp = (typeof SYNC_CHANGE_OPS)[number];
+
+/**
+ * 페이지 내 message id별 현재 상태(삭제는 body null·mention 빈 배열 tombstone). `change_id`는 그 메시지의 페이지 내 최신 변경.
+ * `op`는 그 메시지 **자신의** 페이지 내 최신 변경 종류다. 답글 변경 때문에 함께 실린 원문(자신의 변경이 페이지에 없음)은 `edit`.
+ */
 export const syncChangeSchema = z.object({
   change_id: z.number().int(),
+  op: z.enum(SYNC_CHANGE_OPS),
   conversation_id: z.uuid(),
   message: messageSchema,
 });

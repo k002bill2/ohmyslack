@@ -103,7 +103,7 @@ describe('hub 리뷰 회귀', () => {
     // scan의 멤버십 조회는 통과했고, 메시지 로딩 직전에 나가기가 commit·발행된다.
     state.member = false;
     conversationEvents.membershipEnded(CID, USER);
-    page.resolve({ scannedThrough: 10, changes: [{ changeId: 5, message: message('m5', 5) }] });
+    page.resolve({ scannedThrough: 10, changes: [{ changeId: 5, op: 'create' as const, message: message('m5', 5) }] });
     await flush();
     const types = socket.frames.map((f) => f.type);
     expect(types).toEqual(['error']);
@@ -119,7 +119,7 @@ describe('hub 리뷰 회귀', () => {
     hub.subscribe(conn, CID, 0);
     await flush();
     state.member = false;
-    page.resolve({ scannedThrough: 10, changes: [{ changeId: 5, message: message('m5', 5) }] });
+    page.resolve({ scannedThrough: 10, changes: [{ changeId: 5, op: 'create' as const, message: message('m5', 5) }] });
     await flush();
     expect(socket.frames.map((f) => f.type)).toEqual(['error']);
     expect(socket.frames[0]).toMatchObject({ code: 'not_found', conversation_id: CID });
@@ -127,7 +127,7 @@ describe('hub 리뷰 회귀', () => {
   });
 
   it('멤버가 유지되면 replay 본문 뒤에 ACK가 온다(대조군)', async () => {
-    const { hub } = setup({ scan: async () => ({ scannedThrough: 10, changes: [{ changeId: 5, message: message('m5', 5) }] }) });
+    const { hub } = setup({ scan: async () => ({ scannedThrough: 10, changes: [{ changeId: 5, op: 'create' as const, message: message('m5', 5) }] }) });
     const socket = fakeSocket();
     const conn = hub.attach(socket, { userId: USER, sessionId: SESSION, token: 'tok', expiresAt: new Date(NOW + 3_600_000) });
     hub.subscribe(conn, CID, 0);

@@ -1,3 +1,4 @@
+import type { SyncChangeOp } from '../../shared.js';
 import type { MessageRecord } from '../messages/index.js';
 
 /** sync·읽음 저장소 경계. 운영은 `repo.ts`(pg). */
@@ -11,6 +12,8 @@ export interface ScanRequest {
 export interface FoldedChange {
   /** 페이지 안에서 이 메시지의 최신 change_id. */
   readonly changeId: number;
+  /** 이 메시지 자신의 페이지 내 최신 변경 종류. 답글 변경으로만 실린 원문은 'edit'. */
+  readonly op: SyncChangeOp;
   readonly message: MessageRecord;
 }
 
