@@ -6,9 +6,9 @@ import type { Session } from '../../apps/server/test/auth/members-int-harness.js
 import { foldChange, foldedRows, foldMessage, syncFrom, truth, type E2eContext, type FoldState } from './harness.js';
 import { WsClient } from './ws-client.js';
 
-type MsgFrame = Extract<WsServerFrame, { type: 'message.created' | 'message.updated' | 'message.deleted' }>;
+export type MsgFrame = Extract<WsServerFrame, { type: 'message.created' | 'message.updated' | 'message.deleted' }>;
 
-function isMsgFrame(f: WsServerFrame): f is MsgFrame {
+export function isMsgFrame(f: WsServerFrame): f is MsgFrame {
   return f.type === 'message.created' || f.type === 'message.updated' || f.type === 'message.deleted';
 }
 
@@ -23,7 +23,7 @@ async function remove(ctx: E2eContext, s: Session, id: string): Promise<void> {
 }
 
 /** 두 대화에 번갈아 n건 게시 + 일부 수정·삭제. */
-async function burst(ctx: E2eContext, s: Session, convs: readonly string[], n: number, tag: string): Promise<MessageView[]> {
+export async function burst(ctx: E2eContext, s: Session, convs: readonly string[], n: number, tag: string): Promise<MessageView[]> {
   const sent: MessageView[] = [];
   for (let i = 0; i < n; i += 1) sent.push(await send(ctx.app, s, convs[i % convs.length] ?? '', { body: `${tag}-${i}` }));
   for (let i = 3; i < n; i += 17) await edit(ctx, s, sent[i]?.id ?? '', `${tag}-${i}-수정`);
@@ -31,7 +31,7 @@ async function burst(ctx: E2eContext, s: Session, convs: readonly string[], n: n
   return sent;
 }
 
-function foldWs(state: FoldState, frames: readonly WsServerFrame[]): FoldState {
+export function foldWs(state: FoldState, frames: readonly WsServerFrame[]): FoldState {
   let next = state;
   for (const f of frames) {
     if (!isMsgFrame(f)) continue;
