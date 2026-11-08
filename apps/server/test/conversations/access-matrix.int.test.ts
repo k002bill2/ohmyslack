@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WS_ACTIONS } from '../../src/http/access.js';
+import { png, upload, uploadedId } from '../attachments/att-harness.js';
 import type { Session } from '../auth/members-int-harness.js';
-import { bot as botCall, setupBotListener, teardownBotListener } from '../bots/bot-listener-harness.js';
+import { bot as botCall, botUpload, setupBotListener, teardownBotListener } from '../bots/bot-listener-harness.js';
 import { as, convState, createChannel, req, setupConvInt, teardownConvInt, type ConvIntContext, type Method } from './conv-int-harness.js';
 
 /**
@@ -24,12 +25,15 @@ interface Fixture {
   readonly c: Session;
   readonly l: Session;
   readonly d: Session;
+  /** A가 올린 첨부(대화별). `attachment` 메타 라우트의 `:id` 대상(W-21). */
+  readonly files: Readonly<Record<string, string>>;
 }
 
 async function fixture(): Promise<Fixture> {
   const a = await as(ctx.app, 'a');
   const dm = (await req(ctx.app, 'POST', '/api/dms', a, { user_id: ctx.ids.b })).json<{ id: string }>().id;
   const channel = await createChannel(ctx.app, a, 'matrix');
+  const files = { [dm]: await uploadedId(ctx.app, a, dm, png(), 'image/png'), [channel]: await uploadedId(ctx.app, a, channel, png(), 'image/png') };
   const l = await as(ctx.app, 'l');
   await req(ctx.app, 'POST', `/api/conversations/${channel}/join`, l);
   await req(ctx.app, 'POST', `/api/conversations/${dm}/join`, l);
@@ -38,7 +42,7 @@ async function fixture(): Promise<Fixture> {
   const d = await as(ctx.app, 'd');
   await req(ctx.app, 'POST', `/api/conversations/${channel}/join`, d);
   await ctx.schema.pool.query("UPDATE users SET status = 'disabled' WHERE id = $1", [ctx.ids.d]);
-  return { dm, channel, c, l, d };
+  return { dm, channel, c, l, d, files };
 }
 
 const BODY = { kind: 'channel', name: 'x', user_id: '00000000-0000-4000-8000-000000000000', body: 'x' };
@@ -53,7 +57,10 @@ describe('접근 매트릭스', () => {
   it('FR-CONV-04 접근 레지스트리의 모든 HTTP 라우트와 WS 동작에서 비참여자·나간 사용자는 내용·멤버십·이벤트 0건이고 데이터가 바뀌지 않으며 공개 채널 discover만 메시지·멤버 정보 없이 예외다', async () => {
     const fx = await fixture();
     const routes = ctx.app.accessRoutes;
-    const scoped = routes.filter((r) => r.access === 'conversation' || r.access === 'message');
+    const scoped = routes.filter((r) => r.access === 'conversation' || r.access === 'message' || r.access === 'attachment');
+    expect(scoped.some((r) => r.access === 'attachment')).toBe(true); // W-21 attachment 메타 행.
+    // attachment 메타는 `:id`가 첨부 ID다(첨부 → 대화 해석 → assertAccess).
+    const target = (route: { readonly access: string }, conv: string): string => (route.access === 'attachment' ? (fx.files[conv] ?? '') : conv);
     expect(scoped.length).toBeGreaterThan(0);
     expect(WS_ACTIONS).toEqual([{ action: 'conversation.subscribe', access: 'conversation' }]); // W-09b WS 행.
     const before = await convState(ctx.schema);
@@ -62,14 +69,20 @@ describe('접근 매트릭스', () => {
       expect(route.url, `${route.method} ${route.url}: 대화 경로 변수 없음`).toContain(':id');
       const label = `${route.method} ${route.url}`;
       // 비참여자 C → DM: 404, 응답에 DM ID 없음.
-      const cDm = await hit(route.method, route.url.replace(':id', fx.dm), fx.c);
+      const cDm = await hit(route.method, route.url.replace(':id', target(route, fx.dm)), fx.c);
       expect(cDm.status, `C ${label}`).toBe(404);
       expect(cDm.text).not.toContain(ctx.ids.b);
       // 나간 사용자 L → 채널: join(재참여 허용 대상)만 예외, 나머지 404.
-      if (!route.url.endsWith('/join')) expect((await hit(route.method, route.url.replace(':id', fx.channel), fx.l)).status, `L ${label}`).toBe(404);
+      if (!route.url.endsWith('/join')) expect((await hit(route.method, route.url.replace(':id', target(route, fx.channel)), fx.l)).status, `L ${label}`).toBe(404);
       // 비활성 D → 채널: 401.
-      expect((await hit(route.method, route.url.replace(':id', fx.channel), fx.d)).status, `D ${label}`).toBe(401);
+      expect((await hit(route.method, route.url.replace(':id', target(route, fx.channel)), fx.d)).status, `D ${label}`).toBe(401);
     }
+    // 업로드(`account` 메타 + assertAccess(write) 가드, 경로 변수 없음): C → DM 404, L → 채널 404, D → 401. 저장 0.
+    const stored = (await ctx.schema.pool.query('SELECT id FROM attachments')).rowCount;
+    expect((await upload(ctx.app, fx.c, fx.dm, png(), 'image/png')).statusCode).toBe(404);
+    expect((await upload(ctx.app, fx.l, fx.channel, png(), 'image/png')).statusCode).toBe(404);
+    expect((await upload(ctx.app, fx.d, fx.channel, png(), 'image/png')).statusCode).toBe(401);
+    expect((await ctx.schema.pool.query('SELECT id FROM attachments')).rowCount).toBe(stored);
     // account·public GET 응답에는 C·L이 참여하지 않은 DM이 0건.
     for (const route of routes.filter((r) => r.method === 'GET' && (r.access === 'account' || r.access === 'public'))) {
       for (const who of [fx.c, fx.l]) {
@@ -97,10 +110,12 @@ describe('접근 매트릭스 — 봇 행위자(TRD §5-2 5항)', () => {
       })).json<{ message: { id: string } }>().message.id;
       const before = await convState(lc.conv.schema);
       const routes = (lc.botApp.botAccessRoutes ?? []).filter((r) => r.method !== 'HEAD');
+      const file = await uploadedId(lc.conv.app, owner, channel, png(), 'image/png');
       const scoped = routes.filter((r) => r.url.includes(':id') || r.url.endsWith('/snapshot') || r.url.endsWith('/read-state'));
-      expect(scoped.length).toBe(6);
+      // W-21: GET attachments/:id 추가로 6 → 7.
+      expect(scoped.length).toBe(7);
       for (const route of scoped) {
-        const target = route.url.includes('/messages/:id') ? root : channel;
+        const target = route.url.includes('/messages/:id') ? root : route.url.includes('/attachments/:id') ? file : channel;
         let path = route.url.replace('/api/bot/v1/', '').replace(':id', target);
         if (path === 'sync/snapshot') path = `sync/snapshot?conversation_id=${channel}`;
         const body = route.method === 'GET' ? undefined : { ...BODY, client_message_id: '00000000-0000-4000-8000-0000000000bb', conversation_id: channel, last_read_seq: 1 };
@@ -115,6 +130,10 @@ describe('접근 매트릭스 — 봇 행위자(TRD §5-2 5항)', () => {
         const res = await botCall(lc, route.method, path, cleanBody);
         expect(res.status, `${route.method} ${route.url}`).toBe(404);
       }
+      // 봇 업로드(비참여 대화): 404, 저장 0.
+      const upBot = (await botUpload(lc, channel, png(), 'image/png')).status;
+      expect(upBot).toBe(404);
+      expect((await lc.conv.schema.pool.query('SELECT id FROM attachments')).rowCount).toBe(1);
       expect(await convState(lc.conv.schema)).toEqual(before);
     } finally {
       await teardownBotListener(lc);
