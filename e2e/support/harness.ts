@@ -19,6 +19,13 @@ export interface E2eContext {
   readonly ids: Readonly<Record<'a' | 'b' | 'c', string>>;
   readonly baseUrl: string;
   readonly wsUrl: string;
+  /** 하네스 호출(http·로그인·WS)이 보낼 Origin. 기본은 테스트 출처, 관측 모드는 리슨 주소. */
+  readonly origin: string;
+}
+
+export interface E2eOptions {
+  /** perf 관측 모드: 주어지면 이 웹 빌드를 같은 출처로 서빙하고 허용 출처를 실제 리슨 주소(`http://127.0.0.1:<port>`)로 둔다. */
+  readonly webDistDir?: string;
 }
 
 /** Node 내장 WebSocket은 Host를 덮어쓰므로 포트를 먼저 잡아 extraHosts에 넣고 같은 포트로 listen한다. */
@@ -34,7 +41,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-export async function setupE2e(): Promise<E2eContext> {
+export async function setupE2e(options: E2eOptions = {}): Promise<E2eContext> {
   const schema = await migratedSchema();
   await schema.pool.query("INSERT INTO workspaces (id, name, created_at) VALUES ($1, 'Home', now())", [randomUUID()]);
   const ids = {
@@ -44,7 +51,9 @@ export async function setupE2e(): Promise<E2eContext> {
   };
   const port = await freePort();
   const host = `127.0.0.1:${port}`;
+  const observer = options.webDistDir === undefined ? {} : { allowedOrigin: `http://${host}`, webDistDir: options.webDistDir };
   const app = testApp({
+    ...observer,
     extraHosts: [host],
     authStore: createPgAuthStore(schema.pool),
     membersStore: createPgMembersStore(schema.pool),
@@ -53,7 +62,7 @@ export async function setupE2e(): Promise<E2eContext> {
     syncStore: createPgSyncStore(schema.pool),
   });
   await app.listen({ host: '127.0.0.1', port });
-  return { schema, app, ids, baseUrl: `http://${host}`, wsUrl: `ws://${host}/api/ws` };
+  return { schema, app, ids, baseUrl: `http://${host}`, wsUrl: `ws://${host}/api/ws`, origin: observer.allowedOrigin ?? ORIGIN };
 }
 
 export async function teardownE2e(ctx: E2eContext | undefined): Promise<void> {
@@ -66,7 +75,7 @@ export async function http<T>(ctx: E2eContext, method: string, path: string, ses
   const res = await fetch(`${ctx.baseUrl}${path}`, {
     method,
     headers: {
-      origin: ORIGIN,
+      origin: ctx.origin,
       cookie: `${SESSION_COOKIE}=${session.token}`,
       'x-csrf-token': session.csrf,
       ...(payload === undefined ? {} : { 'content-type': 'application/json' }),

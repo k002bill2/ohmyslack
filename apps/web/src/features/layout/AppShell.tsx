@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
-import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useMessageRoving, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
@@ -15,7 +15,10 @@ import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
 import { startsNewDay, useNewMessagesSeq } from './message-dividers.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
+import { ShortcutsDialog } from './ShortcutsDialog.js';
+import { useGlobalShortcuts } from './shortcuts.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
+import { SpaceSwitcher } from './SpaceSwitcher.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
 
@@ -116,6 +119,9 @@ function ConversationPane(props: {
   const left = space.left === true;
   const list = useRef<HTMLUListElement>(null);
   const onPinScroll = usePinBottom(list, space.id);
+  // UI_STATES §4-1 메시지 단위 roving tabindex(compact는 보이는 버튼이라 끈다).
+  const roving = useMessageRoving(list, roots.map((m) => m.id));
+  const rovingOn = breakpoint !== 'compact';
   const lastSeq = lastServerSeq(roots);
   const reportSeen = () => {
     const el = list.current;
@@ -161,7 +167,12 @@ function ConversationPane(props: {
       ) : roots.length === 0 ? (
         <p className="message-empty">첫 메시지를 남겨 보세요</p>
       ) : (
-        <ul ref={list} className="message-list" onScroll={onListScroll}>
+        <ul
+          ref={list}
+          className="message-list"
+          onScroll={onListScroll}
+          {...(rovingOn ? { onFocus: roving.onFocus, onKeyDown: roving.onKeyDown } : {})}
+        >
           {roots.map((m, i) => (
             <Fragment key={m.id}>
               {startsNewDay(roots, i) && <DateSeparator at={m.createdAt} />}
@@ -176,6 +187,7 @@ function ConversationPane(props: {
                 timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
                 mentionsSelf={mentionsSelf(m)}
                 {...(mentionNames === undefined ? {} : { mentionNames })}
+                {...(rovingOn ? { rovingActive: m.id === roving.activeId } : {})}
               />
             </Fragment>
           ))}
@@ -229,6 +241,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const shell = useRef<HTMLDivElement>(null);
   const prevThread = useRef<string | null>(null);
   const focusComposer = useRef(false);
+  /** 같은 공간을 다시 골라도(전환기) 작성기 포커스 효과가 돌게 하는 카운터(F4). */
+  const [focusTick, bumpFocus] = useReducer((n: number) => n + 1, 0);
+  /** D §7-3 `Ctrl/⌘+K` 공간 전환기·`Ctrl/⌘+/` 단축키 안내. */
+  const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | null>(null);
 
   const space = snap.spaces.find((s) => s.id === state.conversationId);
   const root = snap.messages.find((m) => m.id === state.threadRootId && m.conversationId === state.conversationId);
@@ -307,10 +323,17 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     if (!focusComposer.current) return;
     focusComposer.current = false;
     shell.current?.querySelector<HTMLElement>('[data-composer="main"] textarea')?.focus();
-  }, [state.conversationId]);
+  }, [state.conversationId, focusTick]);
+
+  useGlobalShortcuts(bp !== 'compact', {
+    onSwitcher: () => setOverlay('switcher'),
+    onShortcuts: () => setOverlay('shortcuts'),
+  });
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (bp === 'compact' || !e.ctrlKey || !e.altKey) return;
+    // 모달(Dialog·전환기·단축키 안내) 안의 키는 배경 공간을 바꾸지 않는다(Codex F-1 r1 P2).
+    if ((e.target as HTMLElement).closest('[role="dialog"][aria-modal="true"]') !== null) return;
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     e.preventDefault();
     const unread = new Set(snap.spaces.filter((s) => s.unreadCount > 0).map((s) => s.id));
@@ -490,6 +513,19 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
           {memberAdmin || pane}
           {!members && thread}
           {spacePanel}
+          {overlay === 'switcher' && (
+            <SpaceSwitcher
+              spaces={snap.spaces}
+              titleOf={spaceTitle}
+              onClose={() => setOverlay(null)}
+              onSelect={(id) => {
+                setOverlay(null);
+                goTo(id);
+                bumpFocus();
+              }}
+            />
+          )}
+          {overlay === 'shortcuts' && <ShortcutsDialog onClose={() => setOverlay(null)} />}
         </>
       )}
       <div className="visually-hidden" aria-live="polite">

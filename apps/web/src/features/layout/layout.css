@@ -934,3 +934,51 @@ body {
 .app-shell[data-layout='compact'] > .install-card ~ .sidebar {
   grid-row: 3;
 }
+
+/* 공간 전환기(D §7-3 Ctrl/⌘+K): 입력 + 후보 목록. 활성 후보 = 사이드바 선택과 같은 accent-bg 면(색만으로 구분하지 않게 굵게도). */
+.space-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.space-switcher-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.space-switcher-option {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  cursor: pointer;
+}
+.space-switcher-option:hover {
+  background: var(--bg-hover);
+}
+.space-switcher-option[aria-selected='true'] {
+  background: var(--accent-bg);
+  font-weight: 700;
+}
+
+/* SCR-09 단축키 안내: 키 / 동작 두 열(compact에서는 열리지 않는다 — D §7-3). */
+.shortcut-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  line-height: var(--leading-body);
+}
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-3);
+  padding-block: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.shortcut-row dd {
+  margin: 0;
+}

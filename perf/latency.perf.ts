@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { arch, cpus, release, type } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MessageView } from '../apps/server/src/shared.js';
 import { addUser, signIn, type Session } from '../apps/server/test/auth/members-int-harness.js';
-import { createChannel } from '../apps/server/test/conversations/conv-int-harness.js';
-import { http, setupE2e, teardownE2e, type E2eContext } from '../e2e/support/harness.js';
+import { http, setupE2e, teardownE2e, type E2eContext, type E2eOptions } from '../e2e/support/harness.js';
 import { WsClient } from '../e2e/support/ws-client.js';
 import { summarize, tallyDelivery, type Receipt } from './stats.ts';
 
@@ -25,6 +25,8 @@ const DURATION_S = Number(process.env['PERF_DURATION_S'] ?? '600');
 const DRAIN_MS = 3000;
 /** (b) 측정용: 0보다 크면 관측 계정·서버 주소·채널을 출력하고 이 초만큼 기다린 뒤 부하를 시작한다. */
 const OBSERVER_WAIT_S = Number(process.env['PERF_OBSERVER_WAIT_S'] ?? '0');
+/** (b) 관측 모드에서 같은 출처로 서빙할 웹 측정 빌드(`pnpm --filter @ohmyslack/web build:measure`). */
+const MEASURE_DIST = fileURLToPath(new URL('../apps/web/dist-measure', import.meta.url));
 const VERDICT_NOTE = 'FR-SYNC-01 판정은 (b) 표시 지연 p95 ≤ 1000ms다. 이 (a) 프로토콜 지연은 보조 증거이며 (a)만으로 통과를 주장하지 않는다.';
 
 interface Conn {
@@ -67,7 +69,7 @@ async function sessions(c: E2eContext): Promise<{ user: number; session: Session
   }
   const out: { user: number; session: Session }[] = [];
   for (const [user, email] of emails.entries()) {
-    for (let d = 0; d < DEVICES; d += 1) out.push({ user, session: await signIn(c.app, email) });
+    for (let d = 0; d < DEVICES; d += 1) out.push({ user, session: await signIn(c.app, email, undefined, c.origin) });
   }
   return out;
 }
@@ -76,14 +78,15 @@ async function connect(c: E2eContext): Promise<void> {
   const all = await sessions(c);
   const owner = all[0];
   if (owner === undefined) throw new Error('세션 없음');
-  channel = await createChannel(c.app, owner.session, `perf-${randomUUID().slice(0, 8)}`);
+  const created = await http<{ id: string }>(c, 'POST', '/api/conversations', owner.session, { kind: 'channel', name: `perf-${randomUUID().slice(0, 8)}` });
+  channel = created.id;
   for (const s of all.filter((x) => x.user !== 0 && all.indexOf(x) % DEVICES === 0)) {
     await http(c, 'POST', `/api/conversations/${channel}/join`, s.session);
   }
   const clock = await c.schema.pool.query<{ id: string }>('SELECT last_change_id::text AS id FROM sync_clock WHERE id = 1');
   const cursor = Number(clock.rows[0]?.id ?? 0);
   for (const s of all) {
-    const ws = await WsClient.open(c.wsUrl, s.session);
+    const ws = await WsClient.open(c.wsUrl, s.session, undefined, c.origin);
     ws.subscribe(channel, cursor);
     await ws.subscribed(channel);
     conns.push({ ...s, ws });
@@ -95,7 +98,7 @@ async function awaitObserver(c: E2eContext): Promise<void> {
   if (!(OBSERVER_WAIT_S > 0)) return;
   const email = 'observer@example.test';
   await addUser(c.schema, email, 'member');
-  await http(c, 'POST', `/api/conversations/${channel}/join`, await signIn(c.app, email));
+  await http(c, 'POST', `/api/conversations/${channel}/join`, await signIn(c.app, email, undefined, c.origin));
   console.info(`관측 준비: 서버 ${c.baseUrl} · 계정 ${email}(테스트 비밀번호 SECRET) · 채널 ${channel} · ${OBSERVER_WAIT_S}s 후 부하 시작`);
   await sleep(OBSERVER_WAIT_S * 1000);
 }
@@ -203,8 +206,17 @@ function writeReport(report: Record<string, unknown>): string {
   return path;
 }
 
+/** 관측 모드면 웹 측정 빌드가 있어야 한다. 없으면 부하 전에 즉시 실패한다. */
+function observerOptions(): E2eOptions {
+  if (!(OBSERVER_WAIT_S > 0)) return {};
+  if (!existsSync(join(MEASURE_DIST, 'index.html'))) {
+    throw new Error(`웹 측정 빌드가 없습니다(${MEASURE_DIST}/index.html). 먼저 \`pnpm --filter @ohmyslack/web build:measure\`를 실행하세요.`);
+  }
+  return { webDistDir: MEASURE_DIST };
+}
+
 beforeAll(async () => {
-  ctx = await setupE2e();
+  ctx = await setupE2e(observerOptions());
   env = await environment(ctx);
   await connect(ctx);
   await awaitObserver(ctx);

@@ -54,11 +54,12 @@ export function sessionCookie(res: LightMyRequestResponse): string | undefined {
   return res.cookies.find((c) => c.name === SESSION_COOKIE)?.value;
 }
 
-export function login(app: FastifyInstance, email: string, secret: string, cookie?: string): Promise<LightMyRequestResponse> {
+/** origin: 앱이 다른 허용 출처로 떠 있을 때(perf 관측 모드)만 준다. Host는 그 출처의 host로 맞춘다. */
+export function login(app: FastifyInstance, email: string, secret: string, cookie?: string, origin = ORIGIN): Promise<LightMyRequestResponse> {
   return app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    headers: { host: HOST, origin: ORIGIN, ...(cookie === undefined ? {} : { cookie: `${SESSION_COOKIE}=${cookie}` }) },
+    headers: { host: new URL(origin).host, origin, ...(cookie === undefined ? {} : { cookie: `${SESSION_COOKIE}=${cookie}` }) },
     payload: { email, password: secret },
   });
 }

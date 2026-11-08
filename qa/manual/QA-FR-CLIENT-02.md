@@ -1,0 +1,16 @@
+# QA-FR-CLIENT-02 — 구간별 단수·가로 넘침·compact 이동 (DEV_DESIGN 6-2 FR-CLIENT-02, 5-4 형식)
+
+> 기준: PRD FR-CLIENT-02 + 디자인 §5·§8·§11-1·§11-2. 수동 열: "정본 §11 QA 폭 목록 전부 가로 넘침 0, iPhone 390px S2·S4·S6, 가상 키보드 가림 0".
+> 실행하지 않은 항목을 `PASS`로 적지 않습니다(DEV_DESIGN 8절 8).
+
+| 필드 | 값 |
+|---|---|
+| 실행자 | Claude(W-16 QA 레인, ego-browser 자동 조작) — iPhone 부분은 미실행 |
+| 일시(KST) | 2026-11-08 12:07–12:08 KST |
+| 기기·OS·브라우저(버전) | 서버 Mac(arm64) / macOS 27.2 / ego-browser 0.6.2.9 (Chromium 156.0), CDP `Emulation.setDeviceMetricsOverride`(높이 800, DSF 1). iPhone Safari 미실행 |
+| 접속 경로 | localhost(`http://127.0.0.1:<임의 포트>`, 커밋 74b822e 빌드) |
+| 절차 | ① 폭 320·390·640·641·768·1023·1024·1119·1120·1280·1440px × 스레드 닫힘/열림마다 새로 로드 → 채널 진입·메시지 렌더 대기(긴 무공백 단어 1건 포함) ② `documentElement.scrollWidth`·사이드바/스레드 사각형·작성기·전송 버튼이 뷰포트 안인지 측정, 스크린샷 ③ compact(320·390·640): 목록 → 채널 → `메시지 작업` 시트 → `답글` → 스레드, 브라우저 back → 본문, `뒤로` → 목록 |
+| 기대 결과 | compact(≤640) 1단, medium(640<w<1024) 2단·스레드 오버레이 `min(420px,100%)`·`aria-modal`, wide(≥1024) 3단·스레드 `clamp(320,32vw,380)`, 스레드 열림+1024–1119px 사이드바 72px 접힘·본문 ≥480, 1120px 펼침 복귀, 전 폭 가로 넘침 0·작성기/전송 가림 0, compact 공간→본문→스레드→뒤로. iPhone 390px S2·S4·S6·가상 키보드 가림 0 |
+| 실제 결과 | **데스크톱 Chromium 22조합 전부 기대대로:** 가로 넘침 0(scrollWidth = 뷰포트 폭) · 작성기·전송 버튼 전부 뷰포트 안 · 320/390/640 사이드바 없음(1단) · 641/768/1023 사이드바 260px + 스레드 오버레이 420px `aria-modal="true"`(2단) · 1024/1119 스레드 열림 시 사이드바 72px·스레드 330/360px·본문 ≥598px · 1120/1280/1440 사이드바 260px·스레드 360/382/382px(테두리 포함) · compact 3폭 모두 시트 버튼 `닫기·답글·수정·삭제·취소` → 스레드(답글 작성기·전송 뷰포트 안, 넘침 0) → back 시 본문 → `뒤로` 시 목록(`/`). **미측정:** 640.5·1023.5px 실제 렌더(CDP 폭은 정수라 재현 불가. `apps/web/test/layout/responsive.test.tsx`는 matchMedia 목으로 구간 분류만 확인하며 넘침·가림은 재지 않음 — 실제 창 폭 조절로 따로 측정 필요), iPhone 실기 390px S2·S4·S6·가상 키보드 |
+| 판정 | `미검증` — 측정한 데스크톱 22조합은 기대와 일치. 소수 폭 640.5·1023.5px 실제 렌더와 iPhone Safari 390px 실기(S2·S4·S6, 가상 키보드 가림)가 남아 있어 PASS로 적지 않음 |
+| 증거 경로 | `reports/qa/client-02/widths.json`, `reports/qa/client-02/w<폭>-{closed,thread}.png`(22장) — `reports/`는 gitignore(로컬 보관) |
