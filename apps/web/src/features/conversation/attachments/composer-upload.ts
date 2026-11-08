@@ -21,6 +21,8 @@ export interface ComposerChip {
   readonly status: 'uploading' | 'done' | 'failed';
   readonly attachmentId?: string;
   readonly error?: string;
+  /** 같은 파일을 다시 보내도 결과가 같은 실패(413·415·사전 판정)면 false — 「다시 시도」 없이 제거만. */
+  readonly retryable?: boolean;
 }
 
 /** 실패 응답 → 문구. 413·415만 전용 문구, 나머지(네트워크 포함)는 공통 문구. */
@@ -56,13 +58,19 @@ export function useComposerAttachments(upload: UploadFn | undefined) {
     if (upload === undefined) return;
     const pre = precheck(file);
     if (pre !== null) {
-      patch(key, { status: 'failed', error: pre });
+      patch(key, { status: 'failed', error: pre, retryable: false });
       return;
     }
     patch(key, { status: 'uploading' });
     upload(file).then(
-      (r) => patch(key, r.ok ? { status: 'done', attachmentId: r.value.id } : { status: 'failed', error: uploadErrorText(r.status) }),
-      () => patch(key, { status: 'failed', error: ATTACHMENT_COPY.uploadFailed }),
+      (r) =>
+        patch(
+          key,
+          r.ok
+            ? { status: 'done', attachmentId: r.value.id }
+            : { status: 'failed', error: uploadErrorText(r.status), retryable: r.status !== 413 && r.status !== 415 },
+        ),
+      () => patch(key, { status: 'failed', error: ATTACHMENT_COPY.uploadFailed, retryable: true }),
     );
   };
 

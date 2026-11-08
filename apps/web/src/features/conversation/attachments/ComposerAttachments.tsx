@@ -52,9 +52,11 @@ export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, o
       {lastFailed !== undefined && (
         <div className="composer-attach-error" role="alert">
           <span>{lastFailed.error ?? ATTACHMENT_COPY.uploadFailed}</span>
-          <button type="button" className="msg-action" onClick={() => onRetry(lastFailed.key)}>
-            {ATTACHMENT_COPY.retry}
-          </button>
+          {lastFailed.retryable !== false && (
+            <button type="button" className="msg-action" onClick={() => onRetry(lastFailed.key)}>
+              {ATTACHMENT_COPY.retry}
+            </button>
+          )}
         </div>
       )}
     </div>

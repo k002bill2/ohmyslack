@@ -78,6 +78,19 @@ describe('Composer 이미지 첨부', () => {
   it.each([
     [413, ATTACHMENT_COPY.tooLarge],
     [415, ATTACHMENT_COPY.unsupported],
+  ])('실패 %s → role=alert 「%s」, 다시 시도 없음(같은 파일은 결과가 같다) · 제거하면 전송 가능', async (status, text) => {
+    const { pick, sendBtn, type } = mount(async (): Promise<Result> => ({ ok: false, status }));
+    type('본문');
+    await pick(png('p.png'));
+    expect(screen.getByRole('alert').textContent).toContain(text);
+    expect(screen.queryByRole('button', { name: ATTACHMENT_COPY.retry })).toBeNull();
+    expect(sendBtn().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: `${ATTACHMENT_COPY.remove}: p.png` }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(sendBtn().disabled).toBe(false);
+  });
+
+  it.each([
     [500, ATTACHMENT_COPY.uploadFailed],
     ['network' as const, ATTACHMENT_COPY.uploadFailed],
   ])('실패 %s → role=alert 1개 「%s」 + 다시 시도, 실패 칩이 있으면 전송 비활성', async (status, text) => {
