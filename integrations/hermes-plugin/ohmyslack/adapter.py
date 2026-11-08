@@ -39,6 +39,8 @@ SNAPSHOT_MAX_PAGES = 50
 BACKOFF_START, BACKOFF_CAP = 2.0, 60.0
 BACKLOG_NOTICE = "오프라인 동안 받은 {n}건은 처리하지 않았습니다"
 ATTACHMENT_FALLBACK = "(첨부 전송은 아직 지원하지 않습니다)"
+SYNC_OPS = frozenset({"create", "edit", "delete"})  # shared/sync.ts SYNC_CHANGE_OPS
+WS_CLOSE_TOKEN_INVALID = 1008  # 토큰 폐기·봇 비활성화·회전(token_revoked·session_ended) — 재연결하지 않는다
 
 
 def backoff_delay(attempt: int, rand: Callable[[], float] = random.random) -> float:
@@ -111,7 +113,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
             ws = await self._open()
         except BotAuthError:
             await self._close_session()
-            self._set_fatal_error("unauthorized", "ohmyslack bot token rejected (401/403)", retryable=False)
+            self._set_fatal_error("unauthorized", "ohmyslack bot token rejected (401)", retryable=False)
             return False
         except Exception as exc:  # noqa: BLE001 — 재시도는 게이트웨이 watcher 몫
             logger.warning("ohmyslack: connect failed (%s)", type(exc).__name__)
@@ -177,6 +179,13 @@ class OhmySlackAdapter(BasePlatformAdapter):
                 logger.warning("ohmyslack: websocket dropped (%s)", type(exc).__name__)
             finally:
                 await ws.close()
+            if ws.close_code == WS_CLOSE_TOKEN_INVALID:
+                # 토큰 값·사유 본문은 로그에 싣지 않는다(코드만).
+                logger.warning("ohmyslack: websocket closed with code %d (token invalid); not reconnecting",
+                               WS_CLOSE_TOKEN_INVALID)
+                self._set_fatal_error("unauthorized", "ohmyslack bot token revoked (ws 1008)", retryable=False)
+                await self._notify_fatal_error()
+                return
             while not self._stopping:
                 await self._sleep(backoff_delay(attempt, self._rand))
                 attempt += 1
@@ -187,7 +196,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
                 except asyncio.CancelledError:
                     raise
                 except BotAuthError:
-                    self._set_fatal_error("unauthorized", "ohmyslack bot token rejected (401/403)", retryable=False)
+                    self._set_fatal_error("unauthorized", "ohmyslack bot token rejected (401)", retryable=False)
                     await self._notify_fatal_error()
                     return
                 except Exception as exc:  # noqa: BLE001
@@ -236,8 +245,10 @@ class OhmySlackAdapter(BasePlatformAdapter):
             reply_roots = {str((c.get("message") or {}).get("thread_root_id") or "") for c in changes}
             for change in changes:
                 m = change.get("message") or {}
-                aux_root = m.get("thread_root_id") is None and str(m.get("id") or "") in reply_roots
-                await self._ingest(str(change.get("conversation_id") or ""), m, aux_root=aux_root)
+                op = change.get("op") if change.get("op") in SYNC_OPS else None
+                # op가 있으면 그것만으로 판정한다(답글에 동반된 원문은 서버가 `edit`로 싣는다). 없으면 기존 추론.
+                aux_root = op is None and m.get("thread_root_id") is None and str(m.get("id") or "") in reply_roots
+                await self._ingest(str(change.get("conversation_id") or ""), m, aux_root=aux_root, op=op)
             cursor = int(page["next_cursor"])
             self._save_cursor(cursor)
             if not page.get("has_more"):
@@ -279,7 +290,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return (bool(author) and author != self._me_id and author == self._owner_id
                 and m.get("deleted_at") is None and m.get("body") is not None)
 
-    async def _ingest(self, conversation_id: str, m: dict, *, aux_root: bool = False) -> None:
+    async def _ingest(self, conversation_id: str, m: dict, *, aux_root: bool = False,
+                      op: Optional[str] = None) -> None:
         mid = str(m.get("id") or "")
         if not mid or not conversation_id or not self._is_owner_instruction(m):
             return
@@ -289,8 +301,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
             # 답글 변경에 동반된 원문 projection은 실행·집계 대상이 아니다(Codex r3 P2). 원문 생성 변경과
             # 구분할 수 없으므로 같은 페이지의 원문 생성은 다음 live/catch-up에서 다시 보지 않게 된다(REPORT §6).
             return
-        if m.get("edited_at") is not None:
-            # sync change에는 op가 없다 — 수정 projection은 새 지시로 실행하지 않는다(WS message.updated와 동일).
+        if (op is not None and op != "create") or (op is None and m.get("edited_at") is not None):
+            # 수정·삭제 변경은 새 지시로 실행하지 않는다(WS message.updated와 동일). op 없는 구 서버는 edited_at로 추론.
             self._remember(mid)
             return
         created = _epoch(m.get("created_at"))
