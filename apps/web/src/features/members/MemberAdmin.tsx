@@ -4,6 +4,7 @@ import type { ActionFailure, ActionResult, Invite, Member } from '../../data';
 import { FORBIDDEN_TEXT, MEMBER_ADMIN_COPY, MEMBER_DEACTIVATE_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { failureText, isRetryable } from '../spaces';
+import { BotBadge } from '../../ui/BotBadge.js';
 import { DeactivateDialog } from './DeactivateDialog.js';
 import { InviteDialog, type InviteView } from './InviteDialog.js';
 import { inviteLink } from './format.js';
@@ -42,14 +43,17 @@ function MemberRow({ member, self, inactive, onDeactivate }: {
   readonly inactive: boolean;
   readonly onDeactivate: () => void;
 }) {
+  // 봇 행은 비활성화 대상이 아니다(서버 not_found, 봇 비활성화는 CLI disable만 — W-19b).
+  const bot = member.kind === 'bot';
   return (
     <li className={inactive ? 'member-row member-inactive' : 'member-row'}>
       {/* 이니셜 원(시안 10) — 이름이 바로 옆에 있어 장식. 글자는 CSS attr()로 그려 행 텍스트·접근 이름에 섞지 않는다. */}
       <span className="member-avatar" aria-hidden="true" data-initial={memberInitial(member.displayName)} />
       <span className="member-name">{member.displayName}</span>
+      {bot && <BotBadge />}
       <span className="member-role">{MEMBER_ADMIN_COPY.roles[member.role]}</span>
       {inactive && <span className="member-status">{MEMBER_ADMIN_COPY.inactive}</span>}
-      {!self && !inactive && (
+      {!self && !inactive && !bot && (
         <button type="button" className="btn btn-secondary" aria-label={MEMBER_DEACTIVATE_COPY.rowButtonName(member.displayName)} onClick={onDeactivate}>
           {MEMBER_DEACTIVATE_COPY.rowButton}
         </button>

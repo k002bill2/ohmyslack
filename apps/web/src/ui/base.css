@@ -71,3 +71,19 @@ body {
     padding: var(--space-4);
   }
 }
+
+/* CMP-26 BotBadge(W-19b, Q-H1 임시): 이름과 같은 줄의 작은 텍스트 pill. 기존 토큰만 사용, 줄바꿈·축소 없음. */
+.bot-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-inline-start: var(--space-1);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}

@@ -261,3 +261,9 @@ export const LEFT_CHANNEL_COPY = {
   notice: '이 채널을 나갔습니다. 다시 참여하면 이력을 볼 수 있습니다',
   join: '참여',
 } as const;
+
+/**
+ * CMP-26 BotBadge 문구(W-19b). 정본 미정(UI_STATES §8 Q-H1) — Jarvis ★ 임시 결정: 작성자 이름 옆 텍스트 pill 「봇」.
+ * 색만으로 구분하지 않고 접근 가능한 이름에 포함한다.
+ */
+export const BOT_BADGE_TEXT = '봇';

@@ -17,6 +17,8 @@ export interface Space {
   readonly unreadThreadRoots?: readonly string[];
   /** 이번 세션에 본인이 나간 채널(UI_STATES §2-3 「나간 채널」). 서버 목록은 나간 채널을 주지 않아 클라이언트가 기억한다. */
   readonly left?: boolean;
+  /** 상대가 봇(`GET /api/members` kind)인 DM — 목록 최상단 고정 + CMP-26 배지(UI_STATES §2-3 「Jarvis DM」, W-19b). */
+  readonly bot?: boolean;
 }
 
 export interface Message {
@@ -36,6 +38,8 @@ export interface Message {
   readonly deleted?: boolean;
   /** 서버 `edited_at`(있으면 「(수정됨)」, W-10i). */
   readonly editedAt?: string;
+  /** 서버 projection `author_kind`(W-19b). `bot`이면 CMP-26 배지. 없으면 사람으로 본다. */
+  readonly authorKind?: 'human' | 'bot';
 }
 
 /** 디자인 §6-4 연결 상태 4종. */
@@ -79,6 +83,8 @@ export interface Member {
   readonly id: string;
   readonly displayName: string;
   readonly role: 'owner' | 'member';
+  /** 서버 `users.kind`(W-19b). 없으면 사람으로 본다. */
+  readonly kind?: 'human' | 'bot';
 }
 
 /** `POST /api/invites` 2xx(원문 token은 이 응답에서 한 번만 보인다 — 호출자는 메모리에만 둔다). */
@@ -181,5 +187,7 @@ export interface MembershipApi {
   /** `DELETE /api/conversations/:id/membership`(204). 성공하면 목록에 「나간 채널」로 남긴다. */
   leaveChannel?(conversationId: string): Promise<ActionResult<null>>;
   /** `GET /api/conversations/:id/members`. */
-  listConversationMembers?(conversationId: string): Promise<ActionResult<readonly { readonly id: string; readonly displayName: string }[]>>;
+  listConversationMembers?(
+    conversationId: string,
+  ): Promise<ActionResult<readonly { readonly id: string; readonly displayName: string; readonly bot?: boolean }[]>>;
 }

@@ -80,7 +80,7 @@ const readKey = (conversationId: string, rootId: string | null) => (rootId === n
  * 목록 항목 → Space. `reads`(WS `read.updated`로 받은 읽음 위치)와 서버 값을 단조 병합해 큰 쪽을 쓴다.
  * 병합한 위치가 마지막 seq에 닿으면 미읽음을 0으로, 스레드는 마지막 답글에 닿으면 미읽음 스레드에서 뺀다.
  */
-function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: ReadonlyMap<string, number>): Space {
+function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: ReadonlyMap<string, number>, bots: ReadonlySet<string>): Space {
   const peer = c.peer_user_id === null ? undefined : names.get(c.peer_user_id);
   const read = Math.max(c.last_read_seq, reads.get(c.id) ?? 0);
   const caughtUp = read > c.last_read_seq && read >= c.last_seq;
@@ -97,6 +97,7 @@ function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: Readonly
     mentionCount: c.mention_count,
     unreadThreadCount: Math.max(0, c.unread_thread_count - threadsRead),
     unreadThreadRoots: unreadRoots(c, reads),
+    ...(c.kind === 'dm' && c.peer_user_id !== null && bots.has(c.peer_user_id) ? { bot: true } : {}),
   };
 }
 
@@ -123,6 +124,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   /** 목록이 한 번이라도 2xx로 왔는가 — 이후 실패는 목록을 유지하고 배너(연결 상태)로만 알린다. */
   let listState: ListState = 'loading';
   let names: ReadonlyMap<string, string> = new Map();
+  /** `GET /api/members` kind = bot인 사용자 ID(W-19b): 봇 DM 고정·멘션 후보 배지. */
+  let bots: ReadonlySet<string> = new Set();
+  const noteKinds = (members: MembersResponse['members']) => {
+    bots = new Set(members.filter((m) => m.kind === 'bot').map((m) => m.id));
+  };
   let userId: string | null = null;
   let checkpoint: number | null = null;
   let current: string | null = null;
@@ -201,7 +207,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       }
     }
     if (changed) fold = { applied: fold.applied, messages };
-    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads)));
+    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads, bots)));
     emit();
   };
 
@@ -554,7 +560,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 세션 종료 뒤 늦게 도착한 목록 응답은 버린다(Codex r1 P2).
     if (ended) return [];
     summaries = all;
-    spaces = withLeft(all.map((c) => toSpace(c, names, reads)));
+    spaces = withLeft(all.map((c) => toSpace(c, names, reads, bots)));
     listState = 'ready';
     syncBackground();
     retryDeferredThreadReads();
@@ -573,7 +579,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     const key = readKey(conversationId, rootId);
     if (seq <= (reads.get(key) ?? 0)) return;
     reads = new Map(reads).set(key, seq);
-    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads)));
+    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads, bots)));
     emit();
     void loadList().then(
       () => {
@@ -603,6 +609,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     try {
       const res = await api.get<MembersResponse>('/api/members');
       names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
+      noteKinds(res.members);
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
     }
@@ -899,13 +906,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     listConversationMembers: (conversationId) =>
       attempt(async () => {
         const res = await api.get<ConversationMembersResponse>(`/api/conversations/${encodeURIComponent(conversationId)}/members`);
-        return res.members.map((m) => ({ id: m.id, displayName: m.display_name }));
+        return res.members.map((m) => ({ id: m.id, displayName: m.display_name, ...(bots.has(m.id) ? { bot: true } : {}) }));
       }),
     listMembers: () =>
       attempt(async () => {
         const res = await api.get<MembersResponse>('/api/members');
         names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
-        return res.members.map((m) => ({ id: m.id, displayName: m.display_name, role: m.role }));
+        noteKinds(res.members);
+        return res.members.map((m) => ({ id: m.id, displayName: m.display_name, role: m.role, kind: m.kind }));
       }),
     createInvite: () =>
       attempt(async () => {
