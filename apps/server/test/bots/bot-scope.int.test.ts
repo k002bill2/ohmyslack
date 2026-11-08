@@ -22,7 +22,7 @@ afterEach(async () => {
 
 /** request_id는 요청마다 달라 비교에서 뺀다(나머지 본문·키는 같아야 한다). */
 function shape(body: { error: Record<string, unknown> }): unknown {
-  const { request_id: _id, ...rest } = body.error;
+  const rest = Object.fromEntries(Object.entries(body.error).filter(([k]) => k !== 'request_id'));
   return { keys: Object.keys(body.error).sort(), ...rest };
 }
 
