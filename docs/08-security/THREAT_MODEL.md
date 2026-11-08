@@ -1,6 +1,7 @@
 # 위협 모델 — 개인 전용 웹 메신저 MVP (W-03)
 
 - 상태: 초안 v0.1 (Security, 개발설계서 W-03 산출물) / 작성일: 2026-11-07
+- 개정 v0.2 (2026-11-08): ADR-001(Hermes 봇 연동, D-1~D-7 ★ 채택) 반영 — 자산 AS-09–12, 신뢰 경계 TB-8·TB-9, §4-9 STRIDE 행, §0 결론 5. 표기 `ADR:§` = `docs/decisions/ADR-001-hermes-agent-integration.md`. 새 행의 잔여 위험 등급은 구현 전·미검증 값입니다.
 - 범위: 단계 P1(MVP) 설계 문서 기반 분석. 코드·DB·`.env`·Tailscale 설정·실서비스는 조회하지 않았고 스캔·PoC도 하지 않았습니다.
 - 정본: TRD R3.1(`docs/03-trd/TRD.md`, 아래 `T:행`), 개발설계서 R3.1(`docs/04-dev-design/DEV_DESIGN.md`, `DD:행`), PRD v1.2(`docs/02-prd/PRD.md`, `P:행`), 화면 상태 명세(`docs/07-ui-spec/UI_STATES.md`, `U:행`), 디자인 레퍼런스(`docs/05-design-ref/DESIGN_REFERENCE.md`, `D:행`), `CLEANROOM.md`.
 - 이 문서는 값(수치·정책)을 새로 정하지 않습니다. 정본에 값이 없으면 "결정 필요"로 남기고 선택지만 적습니다.
@@ -15,6 +16,7 @@
    - **API 응답의 HTTP 캐시 금지.** TRD는 Cache API·IndexedDB·localStorage만 막습니다(T:160). 브라우저 HTTP 디스크 캐시는 통제 밖입니다.
 3. 구조 문제 1건: 6-3에만 있는 테스트 2개(`secret-storage.int.test.ts`, `frame-limit.int.test.ts`)는 `check:fr-coverage` 입력(DD:196)에 없어서, G1에서 빠져도 게이트가 통과합니다(§5 NC-01).
 4. 6-3 누락 후보 27건(§5), 정본 간 불일치·확인 필요 16건(§6)을 Jarvis에 반환합니다.
+5. **ADR-001 봇·첨부·푸시(v0.2, §4-9).** 잔여 Medium 신규 5건(TM-BOT-01·04·05·07, TM-ATT-03). 그중 **TM-BOT-04(다른 멤버 메시지 → Jarvis 지시)**가 가장 중요하며, 서버 멤버십 상한 + 어댑터 owner allowlist 이중 통제를 출시 게이트로 둡니다. 네트워크 자세 변화: Web Push 도입 시 서버가 **처음으로 outbound 인터넷 요청**을 합니다(TB-9). 인바운드 노출은 변하지 않습니다(봇 리스너는 별도 루프백 포트, Serve 대상 아님).
 
 ## 1. 배포 전제 (확정, 브리프)
 
@@ -38,6 +40,10 @@ C=기밀성, I=무결성, A=가용성. 등급은 H/M/L.
 | AS-06 | sync checkpoint | 기기 localStorage(숫자 1개) — T:103, DD:87 | L | M | L | 숫자 외 저장 금지, 로그아웃 시 삭제(DD:189). 값이 틀리면 누락이 생김(무결성) |
 | AS-07 | 백업 | shared-infra `backup.sh` 산출물 — T:181 | H | H | M | AS-01–05 전부의 사본 + 삭제 전 본문. 보존·삭제·RPO/RTO 미정(T:181, P:182) |
 | AS-08 | 로그·계측 | 앱/HTTP/WS 로그, Serve 로그, PG 서버 로그, 로컬 계측 7일 — T:139, P:160–170 | M | L | L | 본문·자격 증명·토큰·식별자·IP·UA 0건(T:139, P:115) |
+| AS-09 | 봇 토큰 | 원문: Hermes 쪽 설정(`~/.hermes/.env` 계열, 600) 1곳, DB `bot_tokens.token_hash`(SHA-256) — ADR:§3 | H | H | M | 탈취 = Jarvis 사칭(owner DM에 지시처럼 보이는 메시지 게시). 원문은 1회 표시, 로그·URL 금지 |
+| AS-10 | 첨부 파일 바이트 | `attachment_blobs`(PG bytea, ADR:§3-g, D-4 ★) | H | H | L | 대화 참여자에게만. 지속 캐시 금지(T:150 확장), 보존 기한 후 삭제 |
+| AS-11 | Web Push 구독·VAPID 개인키 | `push_subscriptions`(endpoint·키), VAPID 개인키는 서버 비밀 파일(600) | M | H | L | endpoint는 기기 식별자 성격. 개인키 유출 = 임의 알림 발송 |
+| AS-12 | Hermes 세션 지시 권한 | owner의 DM 메시지가 Hermes 도구 실행으로 이어지는 경로 | H | H | M | 맥 로컬 권한으로 명령 실행 가능한 에이전트 → **무결성 최상위** |
 
 보조 자산: CSRF 토큰(`GET /api/me` 응답, T:133, C=M), `.env`·`.env.test` DB 자격 증명(DD:401, C=H), 로컬 owner 생성 명령(DD:45, I=H).
 
@@ -82,6 +88,8 @@ flowchart LR
 | TB-5 | 앱·DB ↔ 로그·백업 | 로그 줄, 덤프 | 로거 허용 목록(DD:86), 백업 무수정 사용·격리 복원(T:152, T:181) |
 | TB-6 | 맥 로컬 사용자·프로세스 ↔ 앱·DB·파일 | 루프백 소켓, 파일 | 앱 인증(T:131), `.env.test` 600(DD:401). **그 밖의 로컬 통제는 없음 — 맥 사용자 계정이 신뢰 루트** |
 | TB-7 | 의존성 레지스트리·CI ↔ 저장소·맥 | 패키지, 빌드 스크립트 | `--frozen-lockfile`·`pnpm audit --prod`(DD:167, DD:178), `onlyBuiltDependencies: esbuild`(`pnpm-workspace.yaml`) |
+| TB-8 | Hermes 게이트웨이(어댑터) ↔ ohmyslack 봇 리스너 | Bearer 봇 토큰, 메시지 본문, 첨부, WS 이벤트 | **별도 루프백 포트**(Serve 대상 아님), Bearer 전용(쿠키 무시), 봇 전용 라우트 prefix, 봇 계정의 멤버십 상한(owner DM) — ADR:§3·§6 |
+| TB-9 | ohmyslack 서버 → Web Push 서비스(Apple 등) | 암호화 push payload, VAPID JWT | outbound HTTPS만, payload에 본문 미포함(★), endpoint 호스트 허용목록 — ADR:§3-i |
 
 ## 4. STRIDE 위협 표
 
@@ -192,6 +200,27 @@ flowchart LR
 | TM-SUP-01 | T | lockfile 밖 버전 설치, 설치 스크립트로 맥에서 임의 코드 실행 | DD:167 `--frozen-lockfile`, `pnpm-workspace.yaml` `onlyBuiltDependencies`(esbuild만 빌드 스크립트 허용) | L | [기존: `pnpm verify` install 단계] |
 | TM-SUP-02 | T/E | **개발 의존성**(빌드·테스트·lint 도구)의 알려진 취약점. 이 도구들은 운영 DB·`.env`가 있는 같은 맥에서 사용자 권한으로 실행됨 | DD:178 `pnpm audit --prod --audit-level=high` — 개발 의존성은 제외 | M | [신규 NC-27] |
 | TM-SUP-03 | T | CI 외부 action이 태그(`@v4`)로만 고정돼 태그가 바뀌면 다른 코드가 실행됨 | `.github/workflows/ci.yml:8` `permissions: contents: read`(토큰 범위 축소). SHA 고정은 **통제 없음**(`ci.yml:33–35`) | L | [신규 NC-27] |
+
+### 4-9. TB-8·TB-9 봇·첨부·푸시 (v0.2, ADR-001)
+
+- 통제는 ADR-001 채택안(★)과 TRD R3.3 §5-2·§6-1·§6-2 계약입니다. 잔여 등급은 구현 전·미검증 값이고, 검증 열의 FR·TR-SEC는 개발설계서 R3.3 6-2·6-3 행입니다. 어댑터 pytest는 `integrations/hermes-plugin/`(D-6) 소관으로 `check:fr-coverage` 탐색 범위 밖입니다.
+
+| ID | S/T/R/I/D/E | 위협 | 기존 통제(정본) | 잔여 | 검증 |
+|---|---|---|---|---|---|
+| TM-BOT-01 | S | 봇 토큰 탈취(로그·셸 히스토리·설정 파일·백업)로 Jarvis 사칭 메시지 게시 | 해시 저장, 1회 표시, 접두사 `omsb_`로 로그 마스킹·유출 스캔, 루프백 전용 리스너(원격 사용 불가), 회전·폐기 CLI, 폐기 후 5초 내 WS close | M | `FR-BOT-02` 지정 테스트 + `TR-SEC-02` 표식 확장 |
+| TM-BOT-02 | E | 봇 토큰으로 사람용 라우트(`/api/**`) 호출, 또는 사람 세션 쿠키로 봇 라우트 호출 | 봇 리스너는 `/api/bot/v1/**`만 등록, 메인 리스너는 Bearer를 무시하고 쿠키만 인정, 봇 라우트는 쿠키·`Origin` 동봉 요청 거부 | L | `FR-BOT-02` |
+| TM-BOT-03 | S | 봇 계정으로 로그인 시도·세션 발급(사람 로그인) | `users.kind='bot'`은 `password_hash` NULL(CHECK), 로그인 서비스가 kind=bot을 일반 실패와 같은 오류로 거부, `sessions`에 bot 행 생성 금지 | L | `FR-BOT-01` |
+| TM-BOT-04 | E | **프롬프트 인젝션 — 다른 멤버의 메시지가 Jarvis 지시로 들어감**(봇이 채널에 참여했거나 다른 멤버가 owner–봇 DM에 들어올 수 있는 경우) | ① 서버: 봇 멤버십은 owner와의 DM 1개(+owner가 지정한 채널)로 제한, 봇 DM에 제3자 추가 경로 없음(DM은 2인 고정, T:64) ② 서버 이벤트에 서버가 정한 `author_id`·`author_kind` ③ 어댑터: owner `user_id` allowlist 밖 작성자 메시지는 세션 생성·지시 처리 0 ④ Hermes 게이트웨이 사용자 허용목록(ADR:§3-c) | M | `FR-BOT-03`(서버) + 어댑터 pytest `test_ignores_non_owner` |
+| TM-BOT-05 | T | owner가 붙여넣은 외부 텍스트·링크·이미지 안의 지시(간접 인젝션) | 범위 밖(Hermes 에이전트 정책 소관). 승인 게이트(명령 실행 전 approve)가 마지막 방어선 | M | [수용] Hermes 쪽 승인 설정 유지 |
+| TM-BOT-06 | T/R | 승인(approve/deny) 위조 — owner 아닌 사람 또는 봇 자신의 메시지가 승인으로 해석됨 | 승인 텍스트 명령은 owner 작성 + 해당 승인 요청 스레드 안에서만 유효(어댑터), 봇 자신의 메시지 무시(자기 echo 차단) | L | 어댑터 pytest `test_approval_only_owner_in_thread` |
+| TM-BOT-07 | D | 어댑터 폭주(재연결 루프·스트리밍 edit 남발)로 change log 보존 한도(100,000행, T:139) 소진 → 사람 기기 cursor 410 | 봇 토큰별 rate limit(전송·수정), edit 스트리밍 기본 꺼짐(ADR:§3-f ★), 재연결 지수 백오프 | M | `FR-BOT-05` 보조 `bot-rate-limit.int.test.ts` |
+| TM-ATT-01 | E | 악성 첨부(HTML/SVG/JS를 이미지로 위장)가 같은 출처에서 렌더돼 XSS | MIME 허용목록(오디오 mp3·이미지 png/jpeg/webp만, SVG 금지), 서버 매직바이트 판정(클라이언트 MIME 무시), 응답 `X-Content-Type-Options: nosniff`, 첨부 응답 전용 `Content-Security-Policy: sandbox; default-src 'none'`, 비미디어는 `Content-Disposition: attachment` | L | `FR-OPS-05` 지정 테스트(`TR-SEC-14`) |
+| TM-ATT-02 | I | 첨부 ID 추측으로 비참여 대화 파일 다운로드(IDOR) | `access: attachment` 메타 → 첨부의 대화로 `assertAccess`, 비멤버 404 | L | `FR-CONV-04` 접근 매트릭스에 첨부 라우트 포함 |
+| TM-ATT-03 | D | 큰 파일·반복 업로드로 DB·디스크 소진(공용 PG) | 파일당 상한(★10 MiB), 계정별 일 총량, 보존 기한(★오디오 30일) 후 삭제 작업 | M | `FR-OPS-05` 보조 `attachment-limits.int.test.ts` |
+| TM-ATT-04 | I | 첨부가 SW·브라우저 HTTP 캐시에 남음 | `/api/**` no-store 유지(T §5-1 S5), SW 우회 목록에 첨부 경로 포함 | L | NC-02 확장 |
+| TM-PUSH-01 | I | 알림 미리보기(잠금 화면)·Apple 경유로 본문 노출 | payload에 본문·대화 이름 미포함, 고정 문구 「새 메시지가 있습니다」 + 대화 종류만(★) | L | `FR-CLIENT-05` 지정 테스트(payload 필드 allowlist, `TR-SEC-15`) |
+| TM-PUSH-02 | S | VAPID 개인키 유출로 임의 알림 발송 | 개인키는 600 파일·로그 금지, 회전 시 재구독 절차 | L | `TR-SEC-02` 표식에 VAPID 개인키 추가 |
+| TM-PUSH-03 | I | push endpoint를 SSRF 표적으로 등록(내부 주소로 POST 유도) | 구독 등록 시 endpoint 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `*.push.services.mozilla.com`) + https만 | L | `FR-CLIENT-05` 보조 `push-endpoint-allowlist.int.test.ts`(`TR-SEC-15`) |
 
 ## 5. 6-3 누락 테스트 후보 (Jarvis 반환)
 
