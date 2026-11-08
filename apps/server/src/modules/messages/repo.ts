@@ -1,4 +1,6 @@
 import type pg from 'pg';
+import { ATTACHMENT_UNBOUND_TTL_MS } from '../../shared.js';
+import { ATTACHMENTS_PROJECTION_SQL, bindInTx, boundIdsOf, purgeMessageBlobsInTx, type AttachmentProjectionRow } from '../attachments/index.js';
 import type {
   MessageEdit,
   MessageLocator,
@@ -26,7 +28,8 @@ export const MESSAGE_COLUMNS = `m.id, m.conversation_id, m.seq::text AS seq, m.a
   COALESCE((SELECT array_agg(mm.user_id::text ORDER BY mm.user_id) FROM message_mentions mm WHERE mm.message_id = m.id), '{}'::text[])
     AS mention_user_ids,
   (CASE WHEN m.thread_root_id IS NULL THEN (SELECT count(*) FROM messages r
-     WHERE r.conversation_id = m.conversation_id AND r.thread_root_id = m.id AND r.deleted_at IS NULL) END)::text AS root_reply_count`;
+     WHERE r.conversation_id = m.conversation_id AND r.thread_root_id = m.id AND r.deleted_at IS NULL) END)::text AS root_reply_count,
+  ${ATTACHMENTS_PROJECTION_SQL}`;
 
 /** mention 대상: 요청 ID 중 현재 활성 참여자이며 작성자 본인이 아닌 사용자(중복 제거·정렬). */
 export const MENTION_FILTER_SQL = `SELECT u.id FROM conversation_members cm JOIN users u ON u.id = cm.user_id
@@ -49,6 +52,8 @@ export interface MessageRow {
   deleted_at: Date | null;
   mention_user_ids: string[];
   root_reply_count: string | null;
+  /** SELECT가 MESSAGE_COLUMNS를 쓰면 항상 있다(가짜 행은 생략 가능). */
+  attachments?: AttachmentProjectionRow[];
 }
 
 export function toRecord(r: MessageRow): MessageRecord {
@@ -66,6 +71,16 @@ export function toRecord(r: MessageRow): MessageRecord {
     deletedAt: r.deleted_at,
     mentionUserIds: r.mention_user_ids,
     rootReplyCount: r.root_reply_count === null ? null : Number(r.root_reply_count),
+    attachments: (r.attachments ?? []).map((a) => ({
+      id: a.id,
+      mime: a.mime,
+      byteSize: a.byte_size,
+      durationMs: a.duration_ms,
+      width: a.width,
+      height: a.height,
+      expiresAt: new Date(a.expires_at),
+      expired: a.expired,
+    })),
   };
 }
 
@@ -158,12 +173,16 @@ async function sameMentions(client: pg.PoolClient, original: MessageRecord, requ
 }
 
 /**
- * 같은 멱등 키 재시도: 같은 payload(본문·thread_root_id·mention 집합)면 원래 메시지(현재 상태), 아니면 충돌.
+ * 같은 멱등 키 재시도: 같은 payload(본문·thread_root_id·mention 집합·첨부 ID 집합)면 원래 메시지(현재 상태), 아니면 충돌.
+ * 첨부 결속은 메시지 수정·삭제 뒤에도 메타가 남으므로 첨부 ID 집합은 항상 비교한다.
  * 수정·삭제된 메시지는 최초 본문·mention을 보존하지 않으므로(스키마 변경 없음) thread_root_id만 비교한다.
  */
 async function replay(client: pg.PoolClient, existingId: string, msg: NewMessage): Promise<SendResult> {
   const original = await load(client, existingId);
   if (original === undefined || original.threadRootId !== msg.threadRootId) return { kind: 'conflict' };
+  const requestedAttachments = [...new Set(msg.attachmentIds ?? [])].sort();
+  const bound = await boundIdsOf(client, existingId);
+  if (bound.length !== requestedAttachments.length || bound.some((id, i) => id !== requestedAttachments[i])) return { kind: 'conflict' };
   const mutated = original.editedAt !== null || original.deletedAt !== null;
   if (!mutated && (original.body !== msg.body || !(await sameMentions(client, original, msg.mentionUserIds)))) return { kind: 'conflict' };
   const change = await client.query<{ id: string }>("SELECT change_id::text AS id FROM conversation_changes WHERE message_id = $1 AND op = 'create'", [
@@ -202,6 +221,14 @@ async function sendIn(client: pg.PoolClient, msg: NewMessage): Promise<TxOutcome
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [msg.id, msg.conversationId, seq.rows[0]?.seq, msg.authorId, msg.clientMessageId, msg.threadRootId, msg.body, msg.at],
   );
+  const bound = await bindInTx(client, {
+    ids: msg.attachmentIds ?? [],
+    messageId: msg.id,
+    conversationId: msg.conversationId,
+    uploaderId: msg.authorId,
+    notBefore: new Date(msg.at.getTime() - ATTACHMENT_UNBOUND_TTL_MS),
+  });
+  if (bound === 'invalid') return { commit: false, value: { kind: 'bad_attachments' } };
   await insertMentions(client, msg.id, mentions);
   await qualifyThreadTargets(client, msg.threadRootId ?? msg.id, [msg.authorId, ...mentions], msg.at);
   const changeId = await recordChange(client, msg.conversationId, msg.id, 'create', msg.at);
@@ -260,6 +287,8 @@ async function removeIn(client: pg.PoolClient, id: string, actorId: string, at: 
   if (typeof locked === 'string') return { commit: false, value: { kind: locked } };
   await client.query('UPDATE messages SET body = NULL, deleted_at = $2 WHERE id = $1', [id, at]);
   await client.query('DELETE FROM message_mentions WHERE message_id = $1', [id]);
+  // 메시지 삭제 시 첨부 바이트 즉시 삭제(TRD §6-1). SQL은 attachments 모듈 소유(B10).
+  await purgeMessageBlobsInTx(client, id, at);
   const changeId = await recordChange(client, locked.conversationId, id, 'delete', at);
   const message = await load(client, id);
   if (message === undefined) throw new Error('삭제한 메시지를 다시 읽지 못했습니다');

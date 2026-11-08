@@ -74,7 +74,9 @@ export function http(
   headers: Record<string, string> = {},
   body?: unknown,
 ): Promise<HttpResult> {
-  const payload = body === undefined ? undefined : JSON.stringify(body);
+  // Buffer는 원시 바이트(첨부 업로드)로 그대로 보낸다 — Content-Type은 호출자가 headers로 준다.
+  const raw = Buffer.isBuffer(body);
+  const payload = body === undefined ? undefined : raw ? body : JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       {
@@ -82,7 +84,7 @@ export function http(
         port,
         method,
         path,
-        headers: { host: `127.0.0.1:${port}`, ...(payload === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
+        headers: { host: `127.0.0.1:${port}`, ...(payload === undefined || raw ? {} : { 'content-type': 'application/json' }), ...headers },
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -108,6 +110,11 @@ export function http(
 /** 봇 Bearer 요청. */
 export function bot(ctx: BotListenerContext, method: string, path: string, body?: unknown, token = ctx.token): Promise<HttpResult> {
   return http(ctx.botPort, method, `/api/bot/v1/${path}`, { authorization: `Bearer ${token}` }, body);
+}
+
+/** 봇 첨부 업로드(원시 바이트, TRD §5-2 6항). */
+export function botUpload(ctx: BotListenerContext, conversationId: string, bytes: Buffer, contentType: string, token = ctx.token): Promise<HttpResult> {
+  return http(ctx.botPort, 'POST', `/api/bot/v1/attachments?conversation_id=${conversationId}`, { authorization: `Bearer ${token}`, 'content-type': contentType }, bytes);
 }
 
 /** 메인 리스너 요청(허용 Host). */

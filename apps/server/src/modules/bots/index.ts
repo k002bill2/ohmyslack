@@ -13,6 +13,13 @@ export {
 export type { BotRow } from './repo.js';
 export { runBotAdmin } from './admin-cli.js';
 export { buildBotApp, listenBot, resolveBotPort, type BotAppOptions } from './listener.js';
-export { createBotRateLimiter, BOT_RATE_LIMITS, BOT_RATE_WINDOW_MS, type BotRateLimiter } from './rate-limit.js';
+export {
+  createBotRateLimiter,
+  BOT_RATE_LIMITS,
+  BOT_RATE_WINDOW_MS,
+  BOT_UPLOAD_BYTES_PER_DAY,
+  BOT_UPLOAD_BYTES_WINDOW_MS,
+  type BotRateLimiter,
+} from './rate-limit.js';
 export { requireBot, type BotContext } from './routes.js';
 export { BOT_WS_PATH, BOT_WS_SWEEP_MS, BOT_WS_END_REASON, type BotRealtimeDeps } from './ws.js';

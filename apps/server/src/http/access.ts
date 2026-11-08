@@ -2,9 +2,9 @@ import type { FastifyInstance } from 'fastify';
 
 /**
  * 접근 메타(정본: DEV_DESIGN §2-2 B2·B9, §2-4). `bot`(R3.3)은 봇 리스너 전용이다.
- * `attachment`(R3.3)는 W-21 소관이라 여기 아직 없다.
+ * `attachment`(R3.3, W-21)는 첨부 ID → 첨부의 대화를 해석해 `assertAccess` 하나로 판정한다(메인 리스너 전용).
  */
-export const ACCESS_KINDS = Object.freeze(['public', 'account', 'admin', 'conversation', 'message', 'bot'] as const);
+export const ACCESS_KINDS = Object.freeze(['public', 'account', 'admin', 'conversation', 'message', 'attachment', 'bot'] as const);
 export type Access = (typeof ACCESS_KINDS)[number];
 
 export interface RegisteredRoute {
@@ -33,7 +33,7 @@ export function markAdminGuard<T extends object>(guard: T): T {
 }
 
 /**
- * `conversation`·`message` 라우트 가드 표식. 표식은 `conversations.service.assertAccess`를 호출하는 가드에만 붙인다
+ * `conversation`·`message`·`attachment` 라우트 가드 표식. 표식은 `conversations.service.assertAccess`를 호출하는 가드에만 붙인다
  * (B2 단일 진입점). 레지스트리가 해당 메타 라우트의 preHandler에 이 표식이 있는지 강제한다.
  */
 const CONVERSATION_GUARD = Symbol('oms.conversationGuard');
@@ -118,7 +118,7 @@ function checkGuard(access: Access, preHandler: unknown, methods: readonly strin
   if (access === 'admin' && !hasMarkedGuard(preHandler, ADMIN_GUARD)) {
     throw new AccessMetaError(`admin 가드 누락: ${where}`);
   }
-  if ((access === 'conversation' || access === 'message') && !hasMarkedGuard(preHandler, CONVERSATION_GUARD)) {
+  if ((access === 'conversation' || access === 'message' || access === 'attachment') && !hasMarkedGuard(preHandler, CONVERSATION_GUARD)) {
     throw new AccessMetaError(`대화 접근 가드 누락: ${where}`);
   }
   if (access === 'bot' && !hasMarkedGuard(preHandler, BOT_GUARD)) {
@@ -133,7 +133,7 @@ function checkGuard(access: Access, preHandler: unknown, methods: readonly strin
 
 /**
  * `onRoute` 훅으로 등록되는 **모든** 라우트를 수집하고, `config.access`가 없거나 알 수 없는 값이면
- * 등록 자체를 throw로 막는다(기동 실패). `admin` 메타는 owner 가드(markAdminGuard)가, `conversation`·`message` 메타는
+ * 등록 자체를 throw로 막는다(기동 실패). `admin` 메타는 owner 가드(markAdminGuard)가, `conversation`·`message`·`attachment` 메타는
  * assertAccess 가드(markConversationGuard)가, `account` 메타는 세션 가드(markAccountGuard)가, `bot` 메타는 봇 토큰
  * 가드(markBotGuard)가 없어도 막는다(ACCOUNT_GUARD_EXEMPT 예외). 리스너 종류(기본 `main`)에 맞지 않는 메타도 막는다(B9).
  * 반환한 배열은 레지스트리 테스트가 읽는다.

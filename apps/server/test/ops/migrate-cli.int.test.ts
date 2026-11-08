@@ -16,7 +16,8 @@ import { createTestSchema, type TestSchema } from '../support/test-db.js';
 const SERVER_DIR = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = fileURLToPath(new URL('../../../../node_modules/.bin/tsx', import.meta.url));
 /** 저장소의 마이그레이션 파일 전체(0002_bots 추가, W-18). 출력 순서 = 적용 순서. */
-const MIGRATIONS = ['0001_initial_schema.sql', '0002_bots.sql'];
+// 0003_attachments 추가(W-21).
+const MIGRATIONS = ['0001_initial_schema.sql', '0002_bots.sql', '0003_attachments.sql'];
 const LISTED = MIGRATIONS.map((name) => `${name}\n`).join('');
 const N = MIGRATIONS.length;
 

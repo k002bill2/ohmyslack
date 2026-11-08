@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { attachmentIdsSchema, attachmentViewSchema } from './attachments.js';
 
 /** 메시지 HTTP 계약(정본: TRD §3 messages route, §5 본문 상한). 테스트는 이 상수를 읽는다(정본 수치 복제 금지). */
 export const MESSAGE_BODY_MAX = 4000;
@@ -25,6 +26,8 @@ export const messageCreateRequestSchema = z
     body: bodySchema,
     thread_root_id: z.uuid().nullable().optional(),
     mention_user_ids: mentionIdsSchema.optional(),
+    /** 같은 요청자가 올린 같은 대화의 미결속 첨부(최대 4, TRD §3·§6-1). 멱등 payload 비교에 포함. */
+    attachment_ids: attachmentIdsSchema.optional(),
   })
   .strict();
 
@@ -82,6 +85,8 @@ export const messageSchema = z.object({
   mention_user_ids: z.array(z.uuid()),
   /** 원문만: 살아 있는 답글 수. 답글은 null. */
   root_reply_count: z.number().int().nullable(),
+  /** 첨부 projection(TRD §4). 선택 필드가 아니라 기본 빈 배열이다(첨부 이전 서버 응답도 같은 모양으로 읽힌다). */
+  attachments: z.array(attachmentViewSchema).default([]),
 });
 
 export type MessageView = z.infer<typeof messageSchema>;

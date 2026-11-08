@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { BOT_ROUTE_PREFIX, markBotGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
 import type { BotMe } from '../../shared.js';
+import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService } from '../attachments/index.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import { editAs, historyOf, repliesOf, sendAs } from '../messages/routes.js';
 import type { MessagesService } from '../messages/service.js';
@@ -18,6 +19,9 @@ export interface BotRouteDeps {
   readonly messages: MessagesService;
   readonly sync: SyncService;
   readonly limiter: BotRateLimiter;
+  /** 있으면 첨부 라우트(§5-2 6항)를 등록한다. 사람 라우트와 같은 서비스 인스턴스. */
+  readonly attachments?: AttachmentsService;
+  readonly clock?: () => number;
 }
 
 /** 인증된 봇 컨텍스트. 사람 `request.auth`와 별개 필드다(세션·쿠키를 봇 인증에 쓰지 않는다). */
@@ -84,6 +88,38 @@ function rateGuard(limiter: BotRateLimiter, kind: BotRateKind): preHandlerAsyncH
   });
 }
 
+/** 첨부 업로드 상한(건수·바이트): 접근 판정 뒤, 저장 전에 본문 길이로 검사·기록한다. 초과는 429(저장 0). */
+function uploadRateGuard(limiter: BotRateLimiter): preHandlerAsyncHookHandler {
+  return markBotGuard(async (request, reply): Promise<void> => {
+    const bytes = Buffer.isBuffer(request.body) ? request.body.length : 0;
+    const decision = limiter.takeUpload(requireBot(request).tokenId, bytes);
+    if (!decision.ok) {
+      reply.header('retry-after', String(decision.retryAfterSeconds));
+      throw new HttpError(429, 'rate_limited');
+    }
+  });
+}
+
+/** 봇 첨부 라우트: 사람 라우트와 같은 처리 본문(uploadAs·downloadAs)과 같은 assertAccess 경계. */
+function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, attachments: AttachmentsService): void {
+  const p = BOT_ROUTE_PREFIX;
+  const token = botTokenGuard(deps.bots);
+  const clock = deps.clock ?? Date.now;
+  const attachmentAccess = markBotGuard(async (request: FastifyRequest): Promise<void> => {
+    request.attachmentAccess = await attachments.resolveAccess(requireBot(request).botUserId, attachmentPathId(request), 'read');
+  });
+  registerUploadRoute(
+    app,
+    `${p}attachments`,
+    { access: 'bot', preHandler: [token, accessGuard(deps, 'query', 'write'), uploadRateGuard(deps.limiter)] },
+    (request, reply) => uploadAs(attachments, requireBot(request).botUserId, request, reply, clock),
+  );
+  app.get(`${p}attachments/:id`, { config: { access: 'bot' }, preHandler: [token, attachmentAccess], onSend: attachmentCspOnSend }, (request, reply) => {
+    if (request.attachmentAccess === undefined) throw new HttpError(404, 'not_found');
+    return downloadAs(attachments, request.attachmentAccess, request, reply);
+  });
+}
+
 async function me(deps: BotRouteDeps, request: FastifyRequest): Promise<BotMe> {
   const botId = requireBot(request).botUserId;
   const found = await deps.bots.me(botId);
@@ -92,7 +128,7 @@ async function me(deps: BotRouteDeps, request: FastifyRequest): Promise<BotMe> {
 }
 
 /**
- * 등록 라우트(§5-2 6항, WS·첨부 제외). `POST /api/dms`·채널 참여·멤버 목록 같은 사람 전용 라우트는 등록하지 않는다(§5-2 5항).
+ * 등록 라우트(§5-2 6항, WS 제외 — 첨부는 서비스가 주어졌을 때). `POST /api/dms`·채널 참여·멤버 목록 같은 사람 전용 라우트는 등록하지 않는다(§5-2 5항).
  * 삭제(DELETE)도 §5-2 6항 목록에 없어 등록하지 않는다.
  */
 export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): void {
@@ -121,4 +157,5 @@ export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): voi
   app.put(`${p}read-state`, { config, preHandler: guarded('body', 'read') }, (request) =>
     markReadAs(deps.sync, requireBot(request).botUserId, request.body),
   );
+  if (deps.attachments !== undefined) registerBotAttachmentRoutes(app, deps, deps.attachments);
 }

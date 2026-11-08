@@ -35,6 +35,9 @@ describe('봇 리스너 바인드·경로', () => {
     const keys = [...new Set(routes.filter((r) => r.method !== 'HEAD').map((r) => `${r.method} ${r.url}`))].sort();
     expect(keys).toEqual(
       [
+        // W-21: 첨부 2개(TRD §5-2 6항) 추가 → 9 + 2.
+        'GET /api/bot/v1/attachments/:id',
+        'POST /api/bot/v1/attachments',
         'GET /api/bot/v1/conversations/:id/messages',
         'GET /api/bot/v1/me',
         'GET /api/bot/v1/messages/:id/replies',

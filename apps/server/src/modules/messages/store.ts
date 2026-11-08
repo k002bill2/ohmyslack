@@ -1,4 +1,17 @@
 /** 메시지 저장소 경계. 운영은 `repo.ts`(pg 단일 트랜잭션), 단위 테스트는 가짜 구현을 쓴다. */
+/** 메시지 projection의 첨부 메타(TRD §4). 바이트는 attachments 모듈만 다룬다(B10). */
+export interface MessageAttachment {
+  readonly id: string;
+  readonly mime: 'audio/mpeg' | 'image/png' | 'image/jpeg' | 'image/webp';
+  readonly byteSize: number;
+  readonly durationMs: number | null;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly expiresAt: Date;
+  /** 바이트 삭제됨(`deleted_at` 존재 또는 `expires_at` 경과). */
+  readonly expired: boolean;
+}
+
 export interface MessageRecord {
   readonly id: string;
   readonly conversationId: string;
@@ -16,6 +29,8 @@ export interface MessageRecord {
   readonly mentionUserIds: readonly string[];
   /** 원문만: 살아 있는 답글 수. 답글은 null. */
   readonly rootReplyCount: number | null;
+  /** 결속된 첨부(생략 = 없음). */
+  readonly attachments?: readonly MessageAttachment[];
 }
 
 export interface NewMessage {
@@ -26,6 +41,8 @@ export interface NewMessage {
   readonly threadRootId: string | null;
   readonly body: string;
   readonly mentionUserIds: readonly string[];
+  /** 결속할 미결속 첨부(같은 요청자·같은 대화, 최대 4). 생략 = 없음. */
+  readonly attachmentIds?: readonly string[];
   readonly at: Date;
 }
 
@@ -42,7 +59,8 @@ export type SendResult =
   | { readonly kind: 'replayed'; readonly message: MessageRecord; readonly changeId: number }
   | { readonly kind: 'conflict' }
   | { readonly kind: 'not_member' }
-  | { readonly kind: 'bad_root' };
+  | { readonly kind: 'bad_root' }
+  | { readonly kind: 'bad_attachments' };
 
 export interface MessageEdit {
   readonly id: string;

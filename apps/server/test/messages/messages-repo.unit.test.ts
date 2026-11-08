@@ -277,13 +277,15 @@ describe('createPgMessagesStore: edit·remove', () => {
       'SELECT 1 FROM',
       'UPDATE messages SET',
       'DELETE FROM message_mentions',
+      'WITH gone AS', // W-21: 메시지 삭제 시 첨부 바이트 즉시 삭제(TRD §6-1)
       'UPDATE sync_clock SET',
       'INSERT INTO conversation_changes',
       'SELECT m.id, m.conversation_id,',
       'COMMIT',
     ]);
     expect(fx.params[3]).toEqual(['m1', at]);
-    expect(fx.params[6]?.[3]).toBe('delete');
+    expect(fx.params[5]).toEqual(['m1', at]);
+    expect(fx.params[7]?.[3]).toBe('delete');
   });
 
   it('remove: forbidden·재조회 실패', async () => {
