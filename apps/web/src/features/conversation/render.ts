@@ -91,8 +91,11 @@ export function safeLinkHref(candidate: string): string | undefined {
   return url.href;
 }
 
-export function linkify(text: string): Line {
-  const out: Inline[] = [];
+/** 자동 링크 결과는 text·link뿐이다(이어 붙이면 입력과 같다). */
+export type PlainInline = Extract<Inline, { readonly kind: 'text' | 'link' }>;
+
+export function linkify(text: string): readonly PlainInline[] {
+  const out: PlainInline[] = [];
   let last = 0;
   for (const token of text.matchAll(TOKEN)) {
     const offset = linkStart(token[0]);
@@ -148,6 +151,51 @@ function badUrlCharFinder(text: string): Finder {
 
 const BAD_URL_CHAR: ReadonlySet<string> = new Set([...'()[]<>"`']);
 
+/** 백틱을 왼쪽부터 둘씩 짝지은 구간(인라인 코드 후보) 표시. codeAt의 짝짓기와 같다. O(n). */
+function codeMask(line: string): Uint8Array {
+  const mask = new Uint8Array(line.length);
+  let open = -1;
+  for (let i = 0; i < line.length; i += 1) {
+    if (line.charCodeAt(i) !== 0x60) continue;
+    if (open === -1) open = i;
+    else {
+      mask.fill(1, open, i + 1);
+      open = -1;
+    }
+  }
+  return mask;
+}
+
+/** 인라인 코드 구간 밖의 `**` 위치(Codex r1 P2: `**a `**` b**`). stringFinder와 같은 기억 규칙. */
+function strongCloseFinder(line: string): Finder {
+  const mask = codeMask(line);
+  let from0 = Number.POSITIVE_INFINITY;
+  let pos = -1;
+  return (from) => {
+    if (from >= from0 && (pos === -1 || from <= pos)) return pos;
+    from0 = from;
+    pos = -1;
+    for (let i = line.indexOf('**', from); i !== -1; i = line.indexOf('**', i + 1)) {
+      if (mask[i] === 0 && mask[i + 1] === 0) {
+        pos = i;
+        break;
+      }
+    }
+    return pos;
+  };
+}
+
+/** 줄 전체 자동 링크의 시작 → 끝 위치(Codex r1 P2: URL 안 `**`·`[`는 서식이 아니라 URL 일부). linkify 출력을 이어 붙이면 입력과 같다. */
+function autolinkSpans(line: string): ReadonlyMap<number, number> {
+  const spans = new Map<number, number>();
+  let offset = 0;
+  for (const part of linkify(line)) {
+    if (part.kind === 'link') spans.set(offset, offset + part.text.length);
+    offset += part.text.length;
+  }
+  return spans;
+}
+
 interface Scan {
   readonly line: string;
   readonly index: MentionIndex;
@@ -157,6 +205,7 @@ interface Scan {
   readonly close: Finder;
   readonly paren: Finder;
   readonly bad: Finder;
+  readonly autolinks: ReadonlyMap<number, number>;
 }
 
 /** top: 줄 본문, strong: 굵게 안(인라인 코드만), label: 링크 글자 안(굵게만, 멘션·링크 미적용). */
@@ -172,12 +221,13 @@ function createScan(line: string, index: MentionIndex): Scan {
   return {
     line,
     index,
-    stars: stringFinder(line, '**'),
+    stars: strongCloseFinder(line),
     tick: stringFinder(line, '`'),
     open: stringFinder(line, '['),
     close: stringFinder(line, ']'),
     paren: stringFinder(line, ')'),
     bad: badUrlCharFinder(line),
+    autolinks: autolinkSpans(line),
   };
 }
 
@@ -245,6 +295,11 @@ function parseRange(s: Scan, from: number, to: number, mode: Mode): readonly Inl
   let pending = from;
   let i = from;
   while (i < to) {
+    const autolinkEnd = mode === 'label' ? undefined : s.autolinks.get(i);
+    if (autolinkEnd !== undefined) {
+      i = autolinkEnd;
+      continue;
+    }
     const hit = formatAt(s, i, to, mode);
     if (hit === undefined) {
       i += 1;

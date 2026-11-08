@@ -109,6 +109,24 @@ describe('FR-MSG-10 제한된 서식', () => {
     expect(bodyMentionsName('- @홍길동 확인', '홍길동')).toBe(true);
   });
 
+  it('FR-MSG-10 자동 링크 URL 안의 서식 기호는 URL 일부다(Codex r1 P2)', () => {
+    expect(parseBody('https://example.com/**/foo/** 끝')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [[{ kind: 'link', text: 'https://example.com/**/foo/**', href: 'https://example.com/**/foo/**' }, { kind: 'text', text: ' 끝' }]],
+    });
+    expect(parseBody('**https://a.co/x** 굵은 링크')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [[{ kind: 'strong', children: [{ kind: 'link', text: 'https://a.co/x', href: 'https://a.co/x' }] }, { kind: 'text', text: ' 굵은 링크' }]],
+    });
+  });
+
+  it('FR-MSG-10 굵게의 닫는 기호는 인라인 코드 안의 **를 건너뛴다(Codex r1 P2)', () => {
+    expect(parseBody('**use `**` literally**')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [[{ kind: 'strong', children: [{ kind: 'text', text: 'use ' }, { kind: 'code', text: '**' }, { kind: 'text', text: ' literally' }] }]],
+    });
+  });
+
   it('FR-MSG-10 펜스 안은 서식 해석 0', () => {
     expect(parseBody('```\n# 제목\n**x** `y` [a](https://a.co)\n- b\n```')).toEqual([
       { kind: 'code', text: '# 제목\n**x** `y` [a](https://a.co)\n- b' },
