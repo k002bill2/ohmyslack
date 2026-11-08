@@ -321,15 +321,13 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._cursor.save(CursorState(change_id=self._watermark, saved_at=self._clock(), recent_ids=self._recent))
 
     async def _flush_backlog(self) -> None:
-        for cid, n in list(self._backlog.items()):
+        for cid in list(self._backlog):
+            n = self._backlog.pop(cid, 0)  # await 전에 꺼내 동시 flush의 중복 게시를 막는다
             if n <= 0:
-                self._backlog.pop(cid, None)
                 continue
             result = await self.send(cid, BACKLOG_NOTICE.format(n=n))
-            if result.success:  # 실패분은 보존해 다음 flush(재연결·구독 ACK)에서 다시 보낸다
-                self._backlog[cid] = self._backlog.get(cid, n) - n
-                if self._backlog[cid] <= 0:
-                    self._backlog.pop(cid, None)
+            if not result.success:  # 실패분은 되돌려 다음 flush(재연결·구독 ACK)에서 다시 보낸다
+                self._backlog[cid] = self._backlog.get(cid, 0) + n
 
     # ---------- outbound ----------
     def _thread_root(self, reply_to: Optional[str], metadata: Optional[dict]) -> Optional[str]:
