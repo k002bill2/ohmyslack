@@ -8,7 +8,8 @@ import {
 } from './ime.js';
 import type { DraftStore } from './drafts.js';
 import { MENTION_DRAFT_SUFFIX, filterCandidates, insertMention, mentionIdsIn, mentionQuery, parseSelections, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
-import { COMPOSER_COPY, MENTION_EMPTY_TEXT, overText, remainingText } from '../../ui/copy.js';
+import { COMPOSER_COPY, MENTION_EMPTY_TEXT, MENTION_POPOVER_COPY, overText, remainingText } from '../../ui/copy.js';
+import './composer-copy.css';
 
 export type MentionKey = 'Enter' | 'Tab' | 'Escape' | 'ArrowUp' | 'ArrowDown';
 
@@ -26,6 +27,10 @@ export interface ComposerProps {
   readonly draft?: { readonly store: DraftStore; readonly key: string };
   /** CMP-12 멘션 후보(현재 대화 참여자). 있으면 `@` 입력으로 후보 목록을 연다(자기 자신 제외). */
   readonly mentions?: { readonly candidates: readonly MentionCandidate[]; readonly selfId?: string };
+  /** 작성기 도움말 표시(결정 3: wide·medium만). 표시할 때만 렌더하고 `aria-describedby`로 잇는다. */
+  readonly showHint?: boolean;
+  /** 멘션 팝오버 머리말 대상(채널 「이 채널의 멤버」 / DM 「이 대화의 멤버」). */
+  readonly mentionScope?: 'channel' | 'dm';
 }
 
 const LIMIT_MESSAGE = COMPOSER_COPY.limit;
@@ -47,7 +52,7 @@ export function counterAnnouncement(length: number, max: number): string {
 }
 
 /** CMP-11 Composer — IME 안전 Enter(디자인 §7-4). 키 판정은 `ime.ts`의 순수 함수가 한다. */
-export function Composer({ label, placeholder, onSend, mentionOpen = false, onMentionKey, draft, mentions }: ComposerProps) {
+export function Composer({ label, placeholder, onSend, mentionOpen = false, onMentionKey, draft, mentions, showHint = false, mentionScope = 'channel' }: ComposerProps) {
   const [text, setText] = useState(() => draft?.store.get(draft.key) ?? '');
   const [picker, setPicker] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
@@ -65,6 +70,7 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
   const area = useRef<HTMLTextAreaElement>(null);
   const caretAfter = useRef<number | null>(null);
   const listId = useId();
+  const hintId = useId();
   const options = picker === null || mentions === undefined ? [] : filterCandidates(mentions.candidates, picker.query, mentions.selfId);
   const pickerOpen = picker !== null && mentions !== undefined;
   const composing = useRef(false);
@@ -162,6 +168,7 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
         className="field composer-input"
         aria-label={label}
         placeholder={placeholder}
+        {...(showHint ? { 'aria-describedby': hintId } : {})}
         value={text}
         {...(!pickerOpen
           ? {}
@@ -192,30 +199,45 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
         }}
       />
       {pickerOpen && (
-        <ul className="mention-picker" id={listId} role="listbox" aria-label={label}>
-          {options.length === 0 ? (
-            <li className="mention-empty" role="presentation">
-              {MENTION_EMPTY_TEXT}
-            </li>
-          ) : (
-            options.map((c, i) => (
-              <li
-                key={c.id}
-                id={`${listId}-${i}`}
-                role="option"
-                aria-selected={i === active}
-                className={i === active ? 'mention-option mention-active' : 'mention-option'}
-                data-initial={Array.from(c.displayName)[0] ?? ''}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  choose(c);
-                }}
-              >
-                {c.displayName}
+        // 팝오버 어디를 눌러도 textarea 포커스를 유지한다(키보드 이동이 끊기지 않게).
+        <div className="mention-picker" onMouseDown={(e) => e.preventDefault()}>
+          {/* 머리말·도움말은 listbox 밖 — 옵션 수·키보드 이동에 영향 없음(결정 3). */}
+          <p className="mention-heading">
+            {mentionScope === 'dm' ? MENTION_POPOVER_COPY.dmHeading : MENTION_POPOVER_COPY.channelHeading}
+          </p>
+          <ul className="mention-list" id={listId} role="listbox" aria-label={label}>
+            {options.length === 0 ? (
+              <li className="mention-empty" role="presentation">
+                {MENTION_EMPTY_TEXT}
               </li>
-            ))
-          )}
-        </ul>
+            ) : (
+              options.map((c, i) => (
+                <li
+                  key={c.id}
+                  id={`${listId}-${i}`}
+                  role="option"
+                  aria-selected={i === active}
+                  className={i === active ? 'mention-option mention-active' : 'mention-option'}
+                  data-initial={Array.from(c.displayName)[0] ?? ''}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    choose(c);
+                  }}
+                >
+                  {c.displayName}
+                </li>
+              ))
+            )}
+          </ul>
+          <p className="mention-hint">
+            {MENTION_POPOVER_COPY.hint}
+          </p>
+        </div>
+      )}
+      {showHint && (
+        <p className="composer-hint" id={hintId}>
+          {COMPOSER_COPY.hint}
+        </p>
       )}
       {counter !== null && (
         <p className="composer-counter" aria-hidden="true">

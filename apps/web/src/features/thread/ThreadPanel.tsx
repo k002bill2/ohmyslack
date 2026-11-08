@@ -159,6 +159,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
         key={root.id}
         label={COMPOSER_COPY.replyLabel}
         placeholder={COMPOSER_COPY.replyPlaceholder}
+        showHint={variant !== 'compact'}
         onSend={onSend}
         {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
       />

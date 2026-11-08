@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { ActionResult } from '../../data/index.js';
 import { MESSAGE_ACTION_COPY } from '../../ui/copy.js';
-import { CONVERSATION_DESIGN_COPY } from './copy.js';
+import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 import { MessageBody } from './MessageBody.js';
 import { MessageActionSheet, useLongPress, type MessageSheetAction } from './MessageActionSheet.js';
 import { DeleteMessageDialog } from './MessageItemDelete.js';

@@ -1,0 +1,28 @@
+/*
+ * 결정 3 시안 문구 채택(p1-copy-adopt): 작성기 도움말·멘션 팝오버 머리말/도움말. 토큰만.
+ * 팝오버 카드(.mention-picker)는 기존 규칙 그대로 쓰고, 안의 listbox(.mention-list)는 목록 기본값만 지운다.
+ */
+.mention-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.mention-heading,
+.mention-hint {
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.mention-heading {
+  font-weight: 700;
+}
+/* 아래 줄 왼쪽(전송 버튼 앞): 작고 muted. compact에서는 Composer가 렌더하지 않는다. */
+.composer-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  align-self: center;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
