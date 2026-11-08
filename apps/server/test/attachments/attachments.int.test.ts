@@ -157,4 +157,13 @@ describe('첨부(FR-OPS-05)', () => {
     );
     expect(meta.rows).toEqual([pngId, audioId].sort().map((id) => ({ id, deleted: true })));
   });
+  it('대문자 첨부 UUID로 같은 요청을 재시도해도 201 다음 200이다(Codex r1 P2)', async () => {
+    ctx = await setupConvInt();
+    const a = await as(ctx.app, 'a');
+    const channel = await createChannel(ctx.app, a, 'upper');
+    const id = await uploadedId(ctx.app, a, channel, png(), 'image/png');
+    const body = { client_message_id: randomUUID(), body: 'x', attachment_ids: [id.toUpperCase()] };
+    expect((await req(ctx.app, 'POST', `/api/conversations/${channel}/messages`, a, body)).statusCode).toBe(201);
+    expect((await req(ctx.app, 'POST', `/api/conversations/${channel}/messages`, a, body)).statusCode).toBe(200);
+  });
 });
