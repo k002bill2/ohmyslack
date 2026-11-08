@@ -982,3 +982,11 @@ body {
 .shortcut-row dd {
   margin: 0;
 }
+/* 알림 탭 대상 메시지를 찾지 못함(W-23 Codex P2-3) — 헤더 아래 짧은 안내. */
+.message-anchor-notice {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
