@@ -267,3 +267,25 @@ export const LEFT_CHANNEL_COPY = {
  * 색만으로 구분하지 않고 접근 가능한 이름에 포함한다.
  */
 export const BOT_BADGE_TEXT = '봇';
+
+/**
+ * 첨부 문구(W-22, CMP-27–29·Composer 첨부). 정본 미정(UI_STATES Q-H2·Q-H3) — Jarvis ★ 임시 결정.
+ * 수치(10MB·형식)는 문구에만 쓰고 판정은 shared 상수(`ATTACHMENT_*`)와 서버 응답 코드가 한다.
+ */
+export const ATTACHMENT_COPY = {
+  playbackFailed: '재생할 수 없습니다',
+  retry: '다시 시도',
+  expired: '만료된 첨부입니다',
+  imageAlt: '첨부 이미지',
+  /** 확대 Dialog 제목(CMP-18). */
+  imageDialogTitle: '첨부 이미지',
+  /** 파일 선택 버튼 접근 이름. */
+  attach: '이미지 첨부',
+  remove: '첨부 제거',
+  uploading: '업로드 중',
+  tooLarge: '파일이 너무 큽니다(최대 10MB)',
+  unsupported: '지원하지 않는 형식입니다(PNG·JPEG·WebP)',
+  uploadFailed: '업로드하지 못했습니다',
+  /** 본문 없이 이미지만 보낼 때 채우는 본문(서버는 첨부 메시지도 본문 필수). */
+  imageOnlyBody: '[이미지]',
+} as const;

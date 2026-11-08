@@ -4,6 +4,8 @@ import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { MESSAGE_ACTION_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 import { MessageBody } from './MessageBody.js';
+import { AttachmentList } from './attachments/index.js';
+import type { AttachmentView } from '../../../../../packages/shared/src/index.js';
 import { MessageActionSheet, useLongPress, type MessageSheetAction } from './MessageActionSheet.js';
 import { DeleteMessageDialog } from './MessageItemDelete.js';
 import { MessageEditor } from './MessageItemEditor.js';
@@ -26,6 +28,8 @@ export interface MessageItemData {
   readonly replyCount?: number;
   /** 서버 `author_kind`(W-19b). `bot`이면 작성자 옆 CMP-26 배지 — 표시 이름으로 판정하지 않는다. */
   readonly authorKind?: 'human' | 'bot';
+  /** 서버 `attachments`(W-22). 삭제 자리표시자에서는 그리지 않는다. */
+  readonly attachments?: readonly AttachmentView[];
 }
 
 export interface MessageItemProps {
@@ -91,6 +95,7 @@ function MessageContent({ message, mentionNames }: { readonly message: MessageIt
   return (
     <>
       <MessageBody body={message.body} {...(mentionNames === undefined ? {} : { mentionNames })} />
+      {message.attachments !== undefined && <AttachmentList attachments={message.attachments} />}
       {message.editedAt !== undefined && (
         <span className="msg-edited" title={message.editedAt}>
           {MESSAGE_ACTION_COPY.edited}

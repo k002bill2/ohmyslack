@@ -9,7 +9,9 @@ import {
 } from './ime.js';
 import type { DraftStore } from './drafts.js';
 import { MENTION_DRAFT_SUFFIX, filterCandidates, insertMention, mentionIdsIn, mentionQuery, parseSelections, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
-import { COMPOSER_COPY, MENTION_EMPTY_TEXT, MENTION_POPOVER_COPY, overText, remainingText } from '../../ui/copy.js';
+import { ComposerAttachments } from './attachments/ComposerAttachments.js';
+import { useComposerAttachments, type UploadFn } from './attachments/composer-upload.js';
+import { ATTACHMENT_COPY, COMPOSER_COPY, MENTION_EMPTY_TEXT, MENTION_POPOVER_COPY, overText, remainingText } from '../../ui/copy.js';
 import './composer-copy.css';
 
 export type MentionKey = 'Enter' | 'Tab' | 'Escape' | 'ArrowUp' | 'ArrowDown';
@@ -20,7 +22,9 @@ export interface ComposerProps {
   /** placeholder(G-28). 라벨을 대신하지 않는다. */
   readonly placeholder?: string;
   /** 전송 1회. 작성기는 호출 직후 비워진다(UI_STATES §2-5 전이 3 — 늦은 ACK는 작성기를 건드리지 않음). 멘션 ID는 CMP-12 선택분. */
-  readonly onSend: (body: string, mentionUserIds?: readonly string[]) => void;
+  readonly onSend: (body: string, mentionUserIds?: readonly string[], attachmentIds?: readonly string[]) => void;
+  /** 이미지 첨부 업로드(W-22). 있을 때만 첨부 버튼·칩을 렌더한다. 결과 ID는 `onSend` 세 번째 인자로 결속한다. */
+  readonly onUpload?: UploadFn;
   /** CMP-12 멘션 후보 열림(`aria-expanded=true`). 열려 있으면 Enter/Tab/Esc/↑/↓를 후보에 넘긴다(§7-4 순위 3). */
   readonly mentionOpen?: boolean;
   readonly onMentionKey?: (key: MentionKey) => void;
@@ -53,8 +57,9 @@ export function counterAnnouncement(length: number, max: number): string {
 }
 
 /** CMP-11 Composer — IME 안전 Enter(디자인 §7-4). 키 판정은 `ime.ts`의 순수 함수가 한다. */
-export function Composer({ label, placeholder, onSend, mentionOpen = false, onMentionKey, draft, mentions, showHint = false, mentionScope = 'channel' }: ComposerProps) {
+export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = false, onMentionKey, draft, mentions, showHint = false, mentionScope = 'channel' }: ComposerProps) {
   const [text, setText] = useState(() => draft?.store.get(draft.key) ?? '');
+  const files = useComposerAttachments(onUpload);
   const [picker, setPicker] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   // 선택한 멘션도 초안과 함께 보존·복원한다(Codex r1 P2).
@@ -128,11 +133,18 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
     }
   };
 
+  /** 업로드 중·실패 칩이 있으면 보내지 않는다(잘못된 attachment_ids 방지). 본문이 비어도 완료 첨부가 있으면 자리 문구로 보낸다. */
+  const imageOnly = text.trim() === '' && files.ids.length > 0;
+  const sendable = !files.blocked && (imageOnly || canSend(text));
   const send = () => {
-    if (!canSend(text)) return;
+    if (!sendable) return;
+    const body = imageOnly ? ATTACHMENT_COPY.imageOnlyBody : text;
     const ids = mentionIdsIn(text, selected);
-    if (ids.length > 0) onSend(text, ids);
-    else onSend(text);
+    const attachmentIds = files.ids;
+    if (attachmentIds.length > 0) onSend(body, ids.length > 0 ? ids : undefined, attachmentIds);
+    else if (ids.length > 0) onSend(body, ids);
+    else onSend(body);
+    files.clear();
     setSelected([]);
     setPicker(null);
     draft?.store.delete(draft.key);
@@ -256,7 +268,24 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
         {counterAnnouncement(length, MESSAGE_BODY_MAX_CODE_POINTS)}
       </p>
       {/* 시안 01·05: 원형 아이콘 전송 버튼. 보이는 글자는 시각적으로 숨기고 접근 이름 「전송」 유지. */}
-      <button type="button" className="btn btn-primary composer-send" aria-label="전송" disabled={!canSend(text)} onClick={send}>
+      {onUpload !== undefined && (
+        <ComposerAttachments
+          chips={files.chips}
+          full={files.full}
+          uploading={files.uploading}
+          onAdd={files.add}
+          onRemove={files.remove}
+          onRetry={files.retry}
+        />
+      )}
+      <button
+        type="button"
+        className="btn btn-primary composer-send"
+        aria-label="전송"
+        disabled={!sendable}
+        {...(files.uploading ? { 'aria-busy': true } : {})}
+        onClick={send}
+      >
         <svg className="composer-send-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
           <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
