@@ -49,7 +49,7 @@ describe('createPgMembersStore', () => {
     expect(fx.released()).toBe(1);
   });
 
-  it('비활성화 분기: 없음·마지막 owner·actor 무효는 ROLLBACK, 성공은 세션 id를 돌려준다', async () => {
+  it('비활성화 분기: 없음·봇·마지막 owner·actor 무효는 ROLLBACK, 성공은 세션 id를 돌려준다', async () => {
     const run = async (target: unknown[], others: number, actorOk: boolean) => {
       const fx = fakePool((sql) => {
         if (sql.includes('FROM users u WHERE u.id')) return ok(target);
@@ -62,15 +62,19 @@ describe('createPgMembersStore', () => {
       return { result, last: fx.log.at(-1) };
     };
     expect(await run([], 1, true)).toEqual({ result: { ok: false, reason: 'not_found' }, last: 'ROLLBACK' });
-    expect(await run([{ status: 'active', is_owner: true }], 0, true)).toEqual({
+    expect(await run([{ status: 'active', kind: 'bot', is_owner: false }], 1, true)).toEqual({
+      result: { ok: false, reason: 'not_found' },
+      last: 'ROLLBACK',
+    });
+    expect(await run([{ status: 'active', kind: 'human', is_owner: true }], 0, true)).toEqual({
       result: { ok: false, reason: 'last_owner' },
       last: 'ROLLBACK',
     });
-    expect(await run([{ status: 'active', is_owner: false }], 0, false)).toEqual({
+    expect(await run([{ status: 'active', kind: 'human', is_owner: false }], 0, false)).toEqual({
       result: { ok: false, reason: 'forbidden' },
       last: 'ROLLBACK',
     });
-    expect(await run([{ status: 'active', is_owner: true }], 1, true)).toEqual({
+    expect(await run([{ status: 'active', kind: 'human', is_owner: true }], 1, true)).toEqual({
       result: { ok: true, revokedSessionIds: ['s1'] },
       last: 'COMMIT',
     });

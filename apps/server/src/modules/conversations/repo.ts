@@ -40,8 +40,9 @@ export const ACCESS_SQL = `SELECT c.kind,
 
 const WORKSPACE_OF_SQL = 'SELECT workspace_id FROM workspace_members WHERE user_id = $1';
 
+/** 봇은 사람 DM 상대가 아니다 — 없는 상대와 같은 거부(봇 DM은 CLI create의 owner DM만, TRD §5-2 5항). */
 const ACTIVE_PEER_SQL = `SELECT 1 FROM users u JOIN workspace_members wm ON wm.user_id = u.id
-  WHERE u.id = $1 AND u.status = 'active' AND wm.workspace_id = $2`;
+  WHERE u.id = $1 AND u.status = 'active' AND u.kind = 'human' AND wm.workspace_id = $2`;
 
 /** 이미 활성 멤버면 갱신하지 않는다(RETURNING 0행). 나간 멤버는 재참여로 joined_seq·joined_at을 새로 쓴다. */
 const UPSERT_MEMBER_SQL = `INSERT INTO conversation_members (conversation_id, user_id, joined_at, joined_seq, left_at)

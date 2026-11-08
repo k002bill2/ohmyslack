@@ -15,7 +15,10 @@ import { createTestSchema, type TestSchema } from '../support/test-db.js';
  */
 const SERVER_DIR = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = fileURLToPath(new URL('../../../../node_modules/.bin/tsx', import.meta.url));
-const MIGRATION = '0001_initial_schema.sql';
+/** 저장소의 마이그레이션 파일 전체(0002_bots 추가, W-18). 출력 순서 = 적용 순서. */
+const MIGRATIONS = ['0001_initial_schema.sql', '0002_bots.sql'];
+const LISTED = MIGRATIONS.map((name) => `${name}\n`).join('');
+const N = MIGRATIONS.length;
 
 let schema: TestSchema;
 let databaseUrl: string;
@@ -67,28 +70,28 @@ describe('migrate CLI (실DB, 격리 스키마)', () => {
   it('dry-run은 적용 예정 목록만 내고 DB에 쓰지 않는다(schema_migrations도 만들지 않음)', async () => {
     const { code, io } = await run(['--dry-run']);
     expect(code).toBe(0);
-    expect(io.out()).toBe(`${MIGRATION}\nMIGRATE DRY-RUN pending=1 total=0\n`);
+    expect(io.out()).toBe(`${LISTED}MIGRATE DRY-RUN pending=${N} total=0\n`);
     expect(await ledgerExists()).toBe(false);
     const tables = await schema.pool.query('SELECT 1 FROM information_schema.tables WHERE table_schema = $1', [schema.name]);
     expect(tables.rowCount).toBe(0);
     assertNoSecrets(io.out() + io.err());
   });
 
-  it('적용 → 새 파일 이름과 MIGRATE OK applied=1 total=1, 재실행은 applied=0(멱등)', async () => {
+  it('적용 → 새 파일 이름과 MIGRATE OK applied=N total=N, 재실행은 applied=0(멱등)', async () => {
     const first = await run([]);
     expect(first.code).toBe(0);
-    expect(first.io.out()).toBe(`${MIGRATION}\nMIGRATE OK applied=1 total=1\n`);
-    expect(await ledgerCount()).toBe(1);
+    expect(first.io.out()).toBe(`${LISTED}MIGRATE OK applied=${N} total=${N}\n`);
+    expect(await ledgerCount()).toBe(N);
     const users = await schema.pool.query("SELECT to_regclass('users')::text AS reg");
     expect(users.rows[0]).toEqual({ reg: 'users' });
 
     const second = await run([]);
     expect(second.code).toBe(0);
-    expect(second.io.out()).toBe('MIGRATE OK applied=0 total=1\n');
-    expect(await ledgerCount()).toBe(1);
+    expect(second.io.out()).toBe(`MIGRATE OK applied=0 total=${N}\n`);
+    expect(await ledgerCount()).toBe(N);
 
     const dry = await run(['--dry-run']);
-    expect(dry.io.out()).toBe('MIGRATE DRY-RUN pending=0 total=1\n');
+    expect(dry.io.out()).toBe(`MIGRATE DRY-RUN pending=0 total=${N}\n`);
     assertNoSecrets(first.io.out() + first.io.err() + second.io.out() + second.io.err() + dry.io.out());
   });
 
@@ -126,7 +129,7 @@ describe('migrate CLI (실DB, 격리 스키마)', () => {
   it('bin/migrate.ts 프로세스: dry-run 종료 0, 원격 호스트는 종료 2', { timeout: 30_000 }, async () => {
     const exec = promisify(execFile);
     const ok = await exec(TSX, ['bin/migrate.ts', '--dry-run'], { cwd: SERVER_DIR, env: { ...process.env, DATABASE_URL: databaseUrl } });
-    expect(ok.stdout.trim().split('\n').at(-1)).toBe('MIGRATE DRY-RUN pending=1 total=0');
+    expect(ok.stdout.trim().split('\n').at(-1)).toBe(`MIGRATE DRY-RUN pending=${N} total=0`);
     expect(await ledgerExists()).toBe(false);
 
     const remote = new URL(databaseUrl);

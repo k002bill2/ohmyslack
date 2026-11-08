@@ -38,13 +38,14 @@ async function deactivateIn(client: pg.PoolClient, actorId: string, targetId: st
   // 마지막 owner 판정(409)을 actor 재확인(403)보다 먼저 한다: 두 owner가 서로를 동시에 비활성화하면 뒤 요청은 S10 409.
   // owner 행을 먼저 잠가 owner를 바꾸는 비활성화를 직렬화한다. 이후 문장은 READ COMMITTED 새 스냅숏으로 다시 센다.
   await client.query("SELECT 1 FROM workspace_members WHERE role = 'owner' FOR UPDATE");
-  const target = await client.query<{ status: string; is_owner: boolean }>(
-    `SELECT u.status, EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = u.id AND m.role = 'owner') AS is_owner
+  const target = await client.query<{ status: string; kind: string; is_owner: boolean }>(
+    `SELECT u.status, u.kind, EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = u.id AND m.role = 'owner') AS is_owner
        FROM users u WHERE u.id = $1 FOR UPDATE`,
     [targetId],
   );
   const row = target.rows[0];
-  if (row === undefined) return { ok: false, reason: 'not_found' };
+  // 봇은 멤버 관리 대상이 아니다 — 없는 대상과 같은 거부(봇 비활성화는 CLI disable만: 토큰 폐기·close 훅 포함).
+  if (row === undefined || row.kind !== 'human') return { ok: false, reason: 'not_found' };
   if (row.is_owner && row.status === 'active') {
     const others = await client.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM workspace_members m JOIN users u ON u.id = m.user_id

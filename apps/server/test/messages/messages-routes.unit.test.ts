@@ -62,6 +62,7 @@ function memoryMessages(members: Map<string, Set<string>>): MessagesFixture {
         conversationId: n.conversationId,
         seq,
         authorId: n.authorId,
+        authorKind: 'human',
         clientMessageId: n.clientMessageId,
         threadRootId: n.threadRootId,
         body: n.body,
@@ -129,7 +130,7 @@ interface Sess {
 type App = ReturnType<typeof testApp>;
 
 function user(id: string, email: string): UserRecord {
-  return { id, emailNorm: email, displayName: email, passwordHash: storedHash, status: 'active', role: 'member' };
+  return { id, emailNorm: email, displayName: email, kind: 'human', passwordHash: storedHash, status: 'active', role: 'member' };
 }
 
 async function signIn(app: App, email: string): Promise<Sess> {

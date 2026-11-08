@@ -20,7 +20,8 @@ import type {
 type Queryable = Pick<pg.Pool | pg.PoolClient, 'query'>;
 
 /** 현재 상태 projection. mention은 삭제 시 행이 지워지므로 tombstone은 자연히 빈 배열이다. */
-export const MESSAGE_COLUMNS = `m.id, m.conversation_id, m.seq::text AS seq, m.author_id, m.client_message_id, m.thread_root_id, m.body,
+export const MESSAGE_COLUMNS = `m.id, m.conversation_id, m.seq::text AS seq, m.author_id,
+  (SELECT u.kind FROM users u WHERE u.id = m.author_id) AS author_kind, m.client_message_id, m.thread_root_id, m.body,
   m.created_at, m.edited_at, m.deleted_at,
   COALESCE((SELECT array_agg(mm.user_id::text ORDER BY mm.user_id) FROM message_mentions mm WHERE mm.message_id = m.id), '{}'::text[])
     AS mention_user_ids,
@@ -39,6 +40,7 @@ export interface MessageRow {
   conversation_id: string;
   seq: string;
   author_id: string;
+  author_kind: 'human' | 'bot';
   client_message_id: string;
   thread_root_id: string | null;
   body: string | null;
@@ -55,6 +57,7 @@ export function toRecord(r: MessageRow): MessageRecord {
     conversationId: r.conversation_id,
     seq: Number(r.seq),
     authorId: r.author_id,
+    authorKind: r.author_kind,
     clientMessageId: r.client_message_id,
     threadRootId: r.thread_root_id,
     body: r.body,

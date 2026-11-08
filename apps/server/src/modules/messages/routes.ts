@@ -57,6 +57,7 @@ export function toView(m: MessageRecord): MessageView {
     conversation_id: m.conversationId,
     seq: m.seq,
     author_id: m.authorId,
+    author_kind: m.authorKind,
     client_message_id: m.clientMessageId,
     thread_root_id: m.threadRootId,
     body: m.body,

@@ -15,6 +15,7 @@ function record(over: Partial<MessageRecord> = {}): MessageRecord {
     conversationId: 'c1',
     seq: 3,
     authorId: 'u1',
+    authorKind: 'human',
     clientMessageId: 'k1',
     threadRootId: null,
     body: 'hi',

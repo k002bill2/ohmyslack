@@ -6,8 +6,9 @@ interface UserRow {
   id: string;
   email_norm: string;
   display_name: string;
-  password_hash: string;
+  password_hash: string | null;
   status: 'active' | 'disabled';
+  kind: 'human' | 'bot';
   role: 'owner' | 'member' | null;
 }
 
@@ -21,21 +22,31 @@ interface SessionRow {
   revoked_at: Date | null;
 }
 
-const USER_SELECT = `SELECT u.id, u.email_norm, u.display_name, u.password_hash, u.status,
+const USER_SELECT = `SELECT u.id, u.email_norm, u.display_name, u.password_hash, u.status, u.kind,
   (SELECT m.role FROM workspace_members m WHERE m.user_id = u.id ORDER BY m.role = 'owner' DESC LIMIT 1) AS role
   FROM users u`;
 
 const SESSION_COLUMNS = 'id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at';
 
+export class UserInvariantError extends Error {
+  override readonly name = 'UserInvariantError';
+}
+
+/**
+ * 행 → 판별 유니온. 사람인데 해시가 없거나 봇인데 해시가 있으면 DB CHECK가 막지만, 타입 경계에서도 거부한다
+ * (오류 문구에 행 값을 넣지 않는다).
+ */
 function toUser(row: UserRow): UserRecord {
-  return {
+  const base = {
     id: row.id,
     emailNorm: row.email_norm,
     displayName: row.display_name,
-    passwordHash: row.password_hash,
     status: row.status,
     role: row.role ?? 'member',
-  };
+  } as const;
+  if (row.kind === 'bot' && row.password_hash === null) return { ...base, kind: 'bot', passwordHash: null };
+  if (row.kind === 'human' && row.password_hash !== null) return { ...base, kind: 'human', passwordHash: row.password_hash };
+  throw new UserInvariantError('users 행의 kind·password_hash 불변식 위반');
 }
 
 function toSession(row: SessionRow): SessionRecord {

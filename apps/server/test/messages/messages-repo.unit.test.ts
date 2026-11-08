@@ -36,6 +36,7 @@ function row(over: Record<string, unknown> = {}) {
     conversation_id: 'c1',
     seq: '6',
     author_id: U1,
+    author_kind: 'human' as const,
     client_message_id: 'k1',
     thread_root_id: null,
     body: 'hi',

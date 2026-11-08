@@ -71,6 +71,8 @@ export const messageSchema = z.object({
   conversation_id: z.uuid(),
   seq: z.number().int(),
   author_id: z.uuid(),
+  /** 작성자 종류(TRD §5-2 8: 서버가 users.kind에서 결정, 요청 입력 아님). */
+  author_kind: z.enum(['human', 'bot']),
   client_message_id: z.uuid(),
   thread_root_id: z.uuid().nullable(),
   body: z.string().nullable(),
@@ -83,6 +85,7 @@ export const messageSchema = z.object({
 });
 
 export type MessageView = z.infer<typeof messageSchema>;
+export type MessageAuthorKind = MessageView['author_kind'];
 
 export const messageWriteResponseSchema = z.object({
   message: messageSchema,

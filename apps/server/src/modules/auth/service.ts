@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import type { AuthEvents } from './events.js';
 import type { LoginLimiter } from './login-limiter.js';
 import { hashPassword, normalizeEmail, verifyPassword } from './password.js';
-import type { AuthStore, SessionRecord, UserRecord } from './store.js';
+import type { AuthStore, HumanUserRecord, SessionRecord, UserRecord } from './store.js';
 
 /** 세션 수명(정본: TRD §5 30일 sliding, §5-1 S8 절대 90일). */
 export const SESSION_SLIDING_MS = 30 * 24 * 60 * 60 * 1000;
@@ -39,13 +39,19 @@ export type LoginResult =
   | { readonly ok: true; readonly token: string; readonly user: UserRecord; readonly session: SessionRecord }
   | { readonly ok: false; readonly reason: 'rate_limited' | 'invalid_credentials' };
 
+/** 세션을 받을 수 있는 계정: 사람만. 초대 수락처럼 방금 만든 계정은 `kind` 없이 와도 사람으로 본다. */
+export type SessionCandidate = HumanUserRecord | (Omit<HumanUserRecord, 'kind'> & { readonly kind?: 'human' });
+
 export type IssuedSession = { readonly token: string; readonly user: UserRecord; readonly session: SessionRecord };
 
 export interface AuthService {
   /** 성공 시 요청에 실려 온 기존 세션(previousToken)을 새 세션 insert **전에** 폐기한다(고아 세션 방지, NC-07). */
   login(email: string, secret: string, previousToken?: string): Promise<LoginResult>;
-  /** 검증을 마친 활성 계정에 새 세션을 발급한다(초대 수락). 기존 세션은 먼저 폐기한다. */
-  issueSession(user: UserRecord, previousToken?: string): Promise<IssuedSession>;
+  /**
+   * 검증을 마친 활성 **사람** 계정에 새 세션을 발급한다(초대 수락). 기존 세션은 먼저 폐기한다.
+   * 봇은 타입으로 받지 않는다(TRD §5-2 1항: 봇 세션 0). `kind`를 생략한 새 계정은 사람으로 확정한다.
+   */
+  issueSession(user: SessionCandidate, previousToken?: string): Promise<IssuedSession>;
   authenticate(token: string | undefined): Promise<Authenticated | undefined>;
   /** authenticate와 같은 판정이지만 세션을 연장하지 않는다(WS 트래픽, TRD §5-1 S7). */
   peek(token: string | undefined): Promise<Authenticated | undefined>;
@@ -81,10 +87,15 @@ export async function primeDummyHash(): Promise<void> {
   await getDummyHash();
 }
 
-async function checkCredentials(store: AuthStore, email: string, secret: string): Promise<UserRecord | undefined> {
-  const user = await store.findUserByEmail(normalizeEmail(email));
-  const ok = await verifyPassword(secret, user?.passwordHash ?? (await getDummyHash()));
-  return ok && user !== undefined && user.status === 'active' ? user : undefined;
+/**
+ * 봇 계정(TRD §5-2 1항)은 없는 계정과 **같은 경로**를 탄다: 더미 해시로 한 번 검증하고 일반 실패로 끝난다
+ * (오류·제한 기록·응답 시간 경로가 사람 로그인 실패와 구별되지 않고, 세션 행을 만들지 않는다).
+ */
+async function checkCredentials(store: AuthStore, email: string, secret: string): Promise<HumanUserRecord | undefined> {
+  const found = await store.findUserByEmail(normalizeEmail(email));
+  const human = found?.kind === 'human' ? found : undefined;
+  const ok = await verifyPassword(secret, human?.passwordHash ?? (await getDummyHash()));
+  return ok && human !== undefined && human.status === 'active' ? human : undefined;
 }
 
 /**
@@ -105,7 +116,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   const now = (): Date => new Date(clock());
   const serial = createSerialQueue();
 
-  async function verifyAttempt(email: string, secret: string): Promise<UserRecord | 'rate_limited' | undefined> {
+  async function verifyAttempt(email: string, secret: string): Promise<HumanUserRecord | 'rate_limited' | undefined> {
     const key = normalizeEmail(email);
     if (!limiter.isAllowed(key)) return 'rate_limited';
     const user = await checkCredentials(store, email, secret);
@@ -125,7 +136,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     if (session !== undefined && session.revokedAt === null) await revoke(session);
   }
 
-  async function issueSession(user: UserRecord, previousToken?: string): Promise<IssuedSession> {
+  async function issueSession(candidate: SessionCandidate, previousToken?: string): Promise<IssuedSession> {
+    const user: HumanUserRecord = { ...candidate, kind: 'human' };
     await revokeByToken(previousToken);
     const token = randomBytes(TOKEN_BYTES).toString('base64url');
     const createdAt = now();
@@ -149,7 +161,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     if (session === undefined || session.revokedAt !== null || session.expiresAt <= at) return undefined;
     if (at.getTime() >= session.createdAt.getTime() + SESSION_ABSOLUTE_MS) return undefined;
     const user = await store.findUserById(session.userId);
-    if (user === undefined || user.status !== 'active') return undefined;
+    // 봇은 세션이 없다(§5-2). 행이 어떻게든 생겨도 메인 리스너 인증으로 쓰지 않는다.
+    if (user === undefined || user.status !== 'active' || user.kind !== 'human') return undefined;
     return { user, token, session };
   };
 

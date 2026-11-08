@@ -85,7 +85,7 @@ interface Sess {
 type App = ReturnType<typeof testApp>;
 
 function user(id: string, email: string, role: 'owner' | 'member'): UserRecord {
-  return { id, emailNorm: email, displayName: email, passwordHash: storedHash, status: 'active', role };
+  return { id, emailNorm: email, displayName: email, kind: 'human', passwordHash: storedHash, status: 'active', role };
 }
 
 async function signIn(app: App, email: string): Promise<Sess> {

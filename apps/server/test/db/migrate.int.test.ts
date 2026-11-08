@@ -6,6 +6,7 @@ import { MIGRATIONS_DIR, migrate } from '../../src/db/migrate.js';
 import { createTestSchema, withClient, type TestSchema } from '../support/test-db.js';
 
 const TRD_TABLES = [
+  'bot_tokens',
   'conversation_changes',
   'conversation_members',
   'conversation_read_state',
@@ -47,10 +48,12 @@ describe('db migrate', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  it('applies 0001 to an empty schema and creates all 14 TRD tables', async () => {
+  it('applies all migrations (0001, 0002) to an empty schema and creates all 15 TRD tables', async () => {
     const { pool, name } = await freshSchema();
     const result = await withClient(pool, (client) => migrate(client, MIGRATIONS_DIR));
-    expect(result.applied).toEqual(['0001_initial_schema.sql']);
+    // 0002_bots 추가(W-18)로 목록 고정 대신 포함·순서 단언.
+    expect(result.applied).toEqual(expect.arrayContaining(['0001_initial_schema.sql', '0002_bots.sql']));
+    expect(result.applied.indexOf('0001_initial_schema.sql')).toBeLessThan(result.applied.indexOf('0002_bots.sql'));
     const tables = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name <> 'schema_migrations' ORDER BY table_name`,
       [name],
@@ -79,9 +82,10 @@ describe('db migrate', () => {
     try {
       await migrate(client);
       const rerun = await migrate(client);
-      expect(rerun).toEqual({ applied: [], skipped: ['0001_initial_schema.sql'] });
+      expect(rerun.applied).toEqual([]);
+      expect(rerun.skipped).toEqual(expect.arrayContaining(['0001_initial_schema.sql', '0002_bots.sql']));
       const ledger = await client.query('SELECT name, applied_at, sha256 FROM schema_migrations');
-      expect(ledger.rows).toHaveLength(1);
+      expect(ledger.rows).toHaveLength(rerun.skipped.length);
       expect(ledger.rows[0].sha256).toMatch(/^[0-9a-f]{64}$/);
     } finally {
       client.release();

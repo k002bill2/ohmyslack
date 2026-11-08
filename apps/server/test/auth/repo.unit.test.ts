@@ -19,7 +19,7 @@ const sessionRow = { id: 's', user_id: 'u', token_hash: 'h', created_at: at, las
 
 describe('createPgAuthStore', () => {
   it('maps user rows and defaults a missing role to member', async () => {
-    const { pool, calls } = fakePool([{ id: 'u', email_norm: 'a@b', display_name: 'A', password_hash: 'p', status: 'active', role: null }]);
+    const { pool, calls } = fakePool([{ id: 'u', email_norm: 'a@b', display_name: 'A', password_hash: 'p', status: 'active', kind: 'human', role: null }]);
     const store = createPgAuthStore(pool);
     expect((await store.findUserByEmail('a@b'))?.role).toBe('member');
     expect((await store.findUserById('u'))?.emailNorm).toBe('a@b');
