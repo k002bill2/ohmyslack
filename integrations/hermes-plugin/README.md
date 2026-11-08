@@ -11,9 +11,9 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
    - 복사: `cp -R integrations/hermes-plugin/ohmyslack ~/.hermes/profiles/<profile>/plugins/ohmyslack`
    - default 프로필에서만 돌릴 때는 `~/.hermes/plugins/ohmyslack`입니다.
    - 확인: `hermes -p <profile> plugins list --plain --no-bundled`에 `ohmyslack`이 보여야 합니다.
-3. Hermes `.env`에 아래 env 값을 넣습니다. 이 저장소에는 값을 남기지 않습니다.
-4. `hermes plugins enable ohmyslack`을 실행합니다. 이 명령은 config.yaml의 `plugins.enabled`에 이름을 추가합니다. bundled가 아닌 플러그인이라 capability 동의 절차가 한 번 나옵니다.
-5. 게이트웨이를 재시작합니다(`hermes gateway restart` 또는 평소 쓰는 방법). 재시작 후 `hermes gateway status`에 `ohmyslack`이 connected로 표시되는지 확인합니다.
+3. 같은 프로필의 Hermes `.env`(default가 아니면 `~/.hermes/profiles/<profile>/.env`)에 아래 env 값을 넣습니다. 이 저장소에는 값을 남기지 않습니다.
+4. `hermes -p <profile> plugins enable ohmyslack`을 실행합니다(default 프로필이면 `-p <profile>` 생략). 이 명령은 config.yaml의 `plugins.enabled`에 이름을 추가합니다. bundled가 아닌 플러그인이라 capability 동의 절차가 한 번 나옵니다.
+5. 같은 프로필의 게이트웨이를 재시작합니다(`hermes -p <profile> gateway restart` 또는 평소 쓰는 방법). 재시작 후 `hermes -p <profile> gateway status`에 `ohmyslack`이 connected로 표시되는지 확인합니다.
 
 ## env
 
