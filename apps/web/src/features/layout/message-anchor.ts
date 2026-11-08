@@ -47,6 +47,8 @@ interface Anchor {
   readonly conversationId: string;
   /** `?thread=`가 있으면 스레드 패널 안에서 찾는다. */
   readonly inThread: boolean;
+  /** 해시를 읽은 시점의 스레드 원문 id — 스레드를 닫거나 바꾸면 버린다(Codex r3 P2). */
+  readonly threadRootId: string | null;
 }
 
 function readAnchor(history: RouteHistory | undefined): Anchor | null {
@@ -54,7 +56,8 @@ function readAnchor(history: RouteHistory | undefined): Anchor | null {
   const messageId = parseMessageAnchor(history.hash());
   const route = parseRoute(history.pathname());
   if (messageId === null || route.kind !== 'conversation') return null;
-  return { messageId, conversationId: route.conversationId, inThread: parseThreadParam(history.search?.() ?? '') !== null };
+  const threadRootId = parseThreadParam(history.search?.() ?? '');
+  return { messageId, conversationId: route.conversationId, inThread: threadRootId !== null, threadRootId };
 }
 
 /** 스크롤 컨테이너: 스레드 패널 또는 본문 메시지 목록. */
@@ -77,6 +80,8 @@ export interface MessageAnchorInput {
   readonly shell: RefObject<HTMLElement | null>;
   /** 현재 선택된 대화(셸 상태). */
   readonly conversationId: string | null;
+  /** 현재 열린 스레드 원문 id(셸 상태). */
+  readonly threadRootId: string | null;
   /** 스냅샷 메시지(바뀔 때마다 다시 찾는다). */
   readonly messages: readonly Message[];
   /** 현재 대화 이력 조회가 끝났는가. */
@@ -124,6 +129,7 @@ export function useMessageAnchor({
   history,
   shell,
   conversationId,
+  threadRootId,
   messages,
   historyReady,
   repliesReady,
@@ -138,7 +144,7 @@ export function useMessageAnchor({
 
   useEffect(() => {
     if (anchor === null) return;
-    if (anchor.conversationId !== conversationId) {
+    if (anchor.conversationId !== conversationId || (anchor.inThread && anchor.threadRootId !== threadRootId)) {
       setAnchor(null);
       return;
     }
@@ -164,7 +170,7 @@ export function useMessageAnchor({
     );
     return () => clearTimeout(timer);
     // reveal·missing은 매 렌더 새 함수지만 ref·setState만 쓴다 — 데이터 변화에만 다시 찾는다.
-  }, [anchor, conversationId, messages, historyReady, repliesReady, threadOpen, history, shell]);
+  }, [anchor, conversationId, threadRootId, messages, historyReady, repliesReady, threadOpen, history, shell]);
 
   return notice;
 }

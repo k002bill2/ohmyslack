@@ -108,6 +108,18 @@ describe('W-23b 구독 전 활성 SW 보장', () => {
     await ensureActiveWorker({ installing: null, waiting: null, update: async () => undefined });
   });
 
+  it('update()가 끝나지 않아도(네트워크 지연) 전체 대기에 상한을 적용하고 진행한다 — Codex r3 P2', async () => {
+    vi.useFakeTimers();
+    const waiting = worker('installed');
+    const p = ensureActiveWorker({ installing: null, waiting, update: () => new Promise(() => undefined) }, 1000);
+    let done = false;
+    void p.then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(done).toBe(true);
+  });
+
   it('browserPushEnv.pushManager는 활성 SW 보장 후에 pushManager를 돌려준다', async () => {
     const installing = worker('installing');
     const pushManager = { getSubscription: async () => null };

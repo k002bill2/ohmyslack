@@ -34,10 +34,23 @@ function activated(worker: WorkerLike, timeoutMs: number): Promise<void> {
   });
 }
 
-export async function ensureActiveWorker(registration: RegistrationLike, timeoutMs = SW_ACTIVATE_TIMEOUT_MS): Promise<void> {
+async function settle(registration: RegistrationLike, timeoutMs: number): Promise<void> {
   if (registration.waiting !== null && registration.installing === null) {
     await registration.update().catch(() => undefined);
   }
   const pending = registration.installing ?? registration.waiting;
   if (pending !== null) await activated(pending, timeoutMs);
+}
+
+/** `update()`가 네트워크 지연으로 끝나지 않아도 전체 대기는 `timeoutMs`를 넘지 않는다(Codex r3 P2). */
+export async function ensureActiveWorker(registration: RegistrationLike, timeoutMs = SW_ACTIVATE_TIMEOUT_MS): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([settle(registration, timeoutMs), limit]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

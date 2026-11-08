@@ -1,5 +1,5 @@
 /** W-23 Codex P2-3: 알림 탭 `/c/:id(?thread=:root)#message-:id` → 대상 메시지 스크롤·강조, 없으면 안내, 잘못된 해시 무시. */
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory } from '../../src/app/route.js';
 import { createMemoryDataSource, type DataSource, type Snapshot } from '../../src/data';
@@ -232,5 +232,25 @@ describe('W-23b Codex 확인 라운드 P2 반영', () => {
     });
     expect(view.container.querySelector('.thread-panel')?.textContent).toContain(MESSAGE_ANCHOR_COPY.notFound);
     expect(history.entries().at(-1)).toBe(`/c/${C1}?thread=${M1}`);
+  });
+
+  it('답글을 기다리는 동안 스레드를 닫으면 대기를 취소한다(이전 알림 안내가 다른 화면에 뜨지 않게) — Codex r3 P2', () => {
+    const { ds } = slowReplies();
+    const history = createMemoryHistory(`/c/${C1}?thread=${M1}#message-${MISSING}`);
+    const view = render(<AppShell dataSource={ds} history={history} />);
+    act(() => {
+      vi.advanceTimersByTime(ANCHOR_GRACE_MS);
+    });
+    act(() => {
+      fireEvent.click(view.container.querySelector<HTMLButtonElement>('.thread-close')!);
+    });
+    expect(view.container.querySelector('.thread-panel')).toBeNull();
+    // 안내는 ANCHOR_NOTICE_MS 뒤 사라지므로, 그보다 짧게 진행하며 매 단계 확인한다.
+    for (let i = 0; i < 4; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(ANCHOR_GRACE_MS);
+      });
+      expect(screen.queryByText(MESSAGE_ANCHOR_COPY.notFound)).toBeNull();
+    }
   });
 });
