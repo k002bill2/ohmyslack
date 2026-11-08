@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { AttachmentView } from '../../../../../../packages/shared/src/index.js';
 import { Dialog } from '../../../ui/Dialog.js';
 import { ATTACHMENT_COPY } from '../../../ui/copy.js';
@@ -22,11 +23,14 @@ export function ImageAttachment({ attachment }: { readonly attachment: Attachmen
       <button type="button" className="attachment-image-open" onClick={() => setOpen(true)}>
         <img className="attachment-thumb" src={src} alt={ATTACHMENT_COPY.imageAlt} loading="lazy" {...size} onError={() => setBroken(true)} />
       </button>
-      {open && (
-        <Dialog title={ATTACHMENT_COPY.imageDialogTitle} onClose={() => setOpen(false)}>
-          <img className="attachment-full" src={src} alt={ATTACHMENT_COPY.imageAlt} onError={() => setOpen(false)} />
-        </Dialog>
-      )}
+      {/* body 직속 portal — Dialog가 backdrop 형제(앱 전체)를 inert로 만든다(Codex r1 P2, DeleteMessageDialog와 같은 구조). */}
+      {open &&
+        createPortal(
+          <Dialog title={ATTACHMENT_COPY.imageDialogTitle} onClose={() => setOpen(false)}>
+            <img className="attachment-full" src={src} alt={ATTACHMENT_COPY.imageAlt} onError={() => setOpen(false)} />
+          </Dialog>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -32,6 +32,20 @@ describe('CMP-29 ImageAttachment', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('Codex r1 P2: 확대 Dialog는 body 직속 portal — 앱의 다른 영역(형제)이 inert가 된다', () => {
+    const a = attachment({ mime: 'image/png' });
+    const { container } = render(
+      <div>
+        <button type="button">사이드바</button>
+        <ImageAttachment attachment={a} />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: ATTACHMENT_COPY.imageAlt }));
+    const dialog = screen.getByRole('dialog', { name: ATTACHMENT_COPY.imageDialogTitle });
+    expect(container.contains(dialog)).toBe(false);
+    expect(container.inert).toBe(true);
+  });
+
   it('만료 → 자리표시자, img 없음', () => {
     render(<ImageAttachment attachment={attachment({ mime: 'image/jpeg', expired: true })} />);
     expect(screen.getByText(ATTACHMENT_COPY.expired)).toBeTruthy();
