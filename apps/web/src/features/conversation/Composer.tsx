@@ -199,7 +199,8 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
         }}
       />
       {pickerOpen && (
-        <div className="mention-picker">
+        // 팝오버 어디를 눌러도 textarea 포커스를 유지한다(키보드 이동이 끊기지 않게).
+        <div className="mention-picker" onMouseDown={(e) => e.preventDefault()}>
           {/* 머리말·도움말은 listbox 밖 — 옵션 수·키보드 이동에 영향 없음(결정 3). */}
           <p className="mention-heading">
             {mentionScope === 'dm' ? MENTION_POPOVER_COPY.dmHeading : MENTION_POPOVER_COPY.channelHeading}

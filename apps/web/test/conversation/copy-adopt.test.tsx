@@ -128,6 +128,12 @@ describe('멘션 팝오버 머리말·도움말', () => {
     expect(screen.queryByText('이 채널의 멤버')).toBeNull();
   });
 
+  it('머리말·도움말을 눌러도 작성기 포커스를 빼앗지 않는다(mousedown 기본 동작 취소)', () => {
+    open();
+    expect(fireEvent.mouseDown(screen.getByText('이 채널의 멤버'))).toBe(false);
+    expect(fireEvent.mouseDown(screen.getByText('↑↓ 이동 · Enter 선택 · Esc 닫기'))).toBe(false);
+  });
+
   it('결과 없음 문구는 현행 유지', () => {
     const box = open();
     fireEvent.change(box, { target: { value: '@zz' } });
