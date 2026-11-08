@@ -50,4 +50,5 @@ async function shutdown(): Promise<void> {
   await Promise.allSettled([app.close(), botApp?.close()]);
   await pool.end();
 }
-for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => void shutdown());
+// 종료 동작을 "close 후 즉시 exit"로 한정한다 — 남은 타이머가 있어도 프로세스가 매달리지 않게(기존 기본 종료와 같은 결과).
+for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => void shutdown().finally(() => process.exit(0)));
