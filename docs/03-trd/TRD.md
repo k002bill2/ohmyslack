@@ -79,7 +79,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 
 ## 3. HTTP 계약
 
-모든 요청은 same-origin JSON, UUID, UTC RFC3339를 사용합니다. 사용자 권한은 서버 세션으로 결정하고 body의 `user_id`를 권한 판정에 사용하지 않습니다. 목록은 cursor paging, 최대 100개이며 offset은 금지합니다. 오류는 `{error:{code,request_id}}`이며 본문·token·SQL·stack을 포함하지 않습니다.
+모든 요청은 same-origin JSON, UUID, UTC RFC3339를 사용합니다(첨부 업로드 body는 원시 바이트, §6-1; 봇 리스너 요청은 §5-2). 사용자 권한은 서버 세션으로 결정하고 body의 `user_id`를 권한 판정에 사용하지 않습니다. 목록은 cursor paging, 최대 100개이며 offset은 금지합니다. 오류는 `{error:{code,request_id}}`이며 본문·token·SQL·stack을 포함하지 않습니다.
 
 | Route | 계약·권한 |
 |---|---|
@@ -192,7 +192,7 @@ TR-SEC 추가 행(R3.3, ADR-001): **TR-SEC-13** 봇 토큰 경계(§5-2) — 토
 
 ### 5-2. 봇 인증·권한 (R3.3, ADR-001 §3-a–e)
 
-봇 리스너와 봇 토큰 요청에 한해, 위 §5 본문·§5-1과 충돌하면 이 절이 우선합니다(사람 요청·메인 리스너 규칙은 바꾸지 않습니다). 수치는 단일 사용자 운영 **제안값**이며 미측정입니다. 구현 전 Security 리뷰에서 확인합니다.
+봇 리스너와 봇 토큰 요청에 한해, 위 §3·§4·§5 본문·§5-1과 충돌하면 이 절이 우선합니다(사람 요청·메인 리스너 규칙은 바꾸지 않습니다). 수치는 단일 사용자 운영 **제안값**이며 미측정입니다. 구현 전 Security 리뷰에서 확인합니다.
 
 1. **봇 계정**: `users.kind='bot'`, `password_hash` NULL, workspace role `member`. 생성·비활성화·토큰 발급/회전/폐기는 로컬 명령 `apps/server/bin/bot-admin.ts`(비노출 출력, 원격 경로 없음)만 사용합니다. 로그인 서비스는 kind=bot을 일반 실패와 같은 오류로 거부하고 `sessions` 행을 만들지 않습니다.
 2. **토큰**: CSPRNG 32바이트 base64url에 접두사 `omsb_`(로그 마스킹·유출 스캔용). DB에는 SHA-256만 저장합니다. 원문은 발급 시 1회 출력합니다. 회전은 새 토큰 발급 → 어댑터 교체 → 옛 토큰 폐기 순서이며 봇당 미폐기 토큰은 2개까지입니다. 폐기·봇 비활성화 시 열린 봇 WS를 5초 안에 close합니다(TR-SEC-04와 같은 sweep). 만료 시각은 두지 않고(ADR-001 D-7 ★, 로컬 전용·회전 CLI로 관리) `last_used_at`을 기록합니다.

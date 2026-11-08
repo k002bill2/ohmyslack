@@ -122,7 +122,7 @@
 | 멘션 n | `mention_count > 0` | CMP-04 숫자 배지 | — | `mention_count = 0` |
 | 새 답글 | `unread_thread_count > 0` | 이름 뒤 작은 점, 숫자 없음, `aria-label="새 답글 있는 스레드 n개"` | — | `unread_thread_count = 0` |
 | 나간 채널 | 본인이 `DELETE …/membership` 성공(목록에 유지 — P FR-CONV-02) | muted + 「나간 채널 · 다시 참여」 버튼 | 「다시 참여」 → `POST /api/conversations/{id}/join` | join 2xx → 기본 |
-| Jarvis DM | 봇 계정과의 owner DM(P FR-BOT-03, ADR-001 §3-d) | DM 목록 **최상단 고정** + CMP-26 표시(문구 → §8 Q-H1) | 선택 → `/c/:conversationId`. **숨기기·나가기 없음**(봇 DM은 owner가 나갈 수 없음 — 서버 계약 P FR-BOT-03) | — |
+| Jarvis DM | 봇 계정과의 owner DM(P FR-BOT-03, ADR-001 §3-d) | DM 목록 **최상단 고정** + CMP-26 표시(문구 → §8 Q-H1) | 선택 → `/c/:conversationId`. **숨기기·나가기 없음**(DM에는 나가기 동작이 없다 — 「채널 나가기」는 채널만, §2-4. 봇 DM을 서버가 나가기 거부하는지는 P·T·ADR-001에 명시 없음 — 해석) | — |
 
 **UnreadBadge**
 
@@ -158,7 +158,7 @@
 
 **DateSeparator**: 「오늘」 / 「어제」 / `YYYY-MM-DD`. 고유 상태 없음. 날짜 계산은 `Intl.DateTimeFormat('ko-KR')`(D §7-5).
 
-### 2-5. CMP-07 `MessageItem` · CMP-08 `MessageBody` — 메시지 상태 (정본: D §6-3, P FR-MSG-02·03, T §2·§3·§4)
+### 2-5. CMP-07 `MessageItem` · CMP-08 `MessageBody` · CMP-26–29 — 메시지 상태 (정본: D §6-3, P FR-MSG-02·03, T §2·§3·§4)
 
 **판정 원칙(D §2-1 D4, §6-3).** 저장 판정은 HTTP 결과로 한다. WS는 알림 경로다. Jarvis 결정(★)에 따라 T R3.1이 `client_message_id`를 전송 응답과 `message.created`에 넣었으므로, 「저장 여부 확인 중」의 **자동 해소를 기본 경로**로 하고 수동 「다시 시도」는 fallback으로 둔다(D §6-3 전이 4와 다른 점은 §8 I-3).
 
