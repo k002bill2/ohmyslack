@@ -100,7 +100,7 @@ export function registerMemberRoutes(app: FastifyInstance, deps: MemberRouteDeps
 
   app.get('/api/members', { config: { access: 'account' }, preHandler: account }, async (): Promise<MembersResponse> => {
     const members = await deps.store.listActiveMembers();
-    return { members: members.map((m) => ({ id: m.id, display_name: m.displayName, role: m.role })) };
+    return { members: members.map((m) => ({ id: m.id, display_name: m.displayName, role: m.role, kind: m.kind })) };
   });
 
   app.post('/api/admin/members/:user_id/deactivate', { config: { access: 'admin' }, preHandler: admin }, (request, reply) =>

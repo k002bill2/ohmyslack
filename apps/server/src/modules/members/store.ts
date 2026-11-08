@@ -17,6 +17,7 @@ export interface MemberSummary {
   readonly id: string;
   readonly displayName: string;
   readonly role: 'owner' | 'member';
+  readonly kind: 'human' | 'bot';
 }
 
 /** 수락 실패 사유는 응답에서 구분하지 않는다(S3·NC-20). 저장소도 실패를 하나로만 알린다. */

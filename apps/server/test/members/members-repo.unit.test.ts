@@ -82,11 +82,11 @@ describe('createPgMembersStore', () => {
 
   it('발급·폐기·목록 매핑', async () => {
     const fx = fakePool((sql) =>
-      sql.startsWith('SELECT u.id') ? ok([{ id: 'u', display_name: 'A', role: 'owner' }]) : { rows: [], rowCount: 0 },
+      sql.startsWith('SELECT u.id') ? ok([{ id: 'u', display_name: 'A', role: 'owner', kind: 'bot' }]) : { rows: [], rowCount: 0 },
     );
     const store = createPgMembersStore(fx.pool);
     await store.insertInvite({ id: 'i', tokenHash: 'h', createdBy: 'u', expiresAt: new Date() });
     expect(await store.revokeInvite('i', new Date())).toBe(false);
-    expect(await store.listActiveMembers()).toEqual([{ id: 'u', displayName: 'A', role: 'owner' }]);
+    expect(await store.listActiveMembers()).toEqual([{ id: 'u', displayName: 'A', role: 'owner', kind: 'bot' }]);
   });
 });

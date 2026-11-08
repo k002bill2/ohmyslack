@@ -27,6 +27,8 @@ export const membersResponseSchema = z.object({
       id: z.uuid(),
       display_name: z.string(),
       role: z.enum(['owner', 'member']),
+      /** `users.kind`(서버 결정값, W-19b). 봇은 DM 시작 후보·멤버 비활성화 대상이 아니다. */
+      kind: z.enum(['human', 'bot']),
     }),
   ),
 });
