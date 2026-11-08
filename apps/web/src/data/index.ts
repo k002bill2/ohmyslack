@@ -3,6 +3,7 @@
  * 값 필드는 TRD §3 `GET /api/conversations` 항목 필드(unread_count·mention_count·unread_thread_count)와 대응한다.
  */
 import type { PendingMessage } from '../features/conversation';
+import type { PushServerApi } from '../features/pwa';
 import type { AttachmentView } from '../../../../packages/shared/src/index.js';
 
 export type SpaceKind = 'channel' | 'dm';
@@ -131,6 +132,8 @@ export interface DataSource extends SpacesApi, MembershipApi {
     mentionUserIds?: readonly string[],
     attachmentIds?: readonly string[],
   ): void;
+  /** Web Push 구독 API(W-23, CMP-30). 없으면 PushSettings를 렌더하지 않는다. */
+  readonly push?: PushServerApi;
   /** `POST /api/attachments?conversation_id=`(원시 바이트, W-21). 성공하면 미결속 첨부 — `send`의 `attachmentIds`로 결속한다. */
   uploadAttachment?(conversationId: string, file: Blob): Promise<ActionResult<AttachmentView>>;
   /** 현재 대화가 바뀔 때 호출(구독·이력 로드). 메모리 구현은 없음. */

@@ -25,6 +25,19 @@ describe('check-log-leak', () => {
     expect(Object.keys(LOG_CANARIES)).toEqual(expect.arrayContaining(['body', 'credential', 'token']));
   });
 
+  it('includes the bot token and push endpoint canaries (FR-OPS-03 R3.3)', () => {
+    expect(Object.keys(LOG_CANARIES)).toEqual(expect.arrayContaining(['bot', 'push_endpoint']));
+    // 호스트만 로그에 남기는 규칙(TRD §6-2)이므로 카나리아는 endpoint 경로 쪽에 둔다 — 호스트 문자열이 섞이면 정상 로그가 오탐된다.
+    expect(LOG_CANARIES.push_endpoint).not.toMatch(/push\.apple\.com|googleapis|mozilla/);
+  });
+
+  it('fails (1) when a full push endpoint URL leaks into a log line', async () => {
+    const root = reportsRoot({ 'push.log': `{"event":"push_send_result","endpoint":"https://web.push.apple.com/${LOG_CANARIES.push_endpoint}"}\n` });
+    const ctx = captureCtx(root, {});
+    expect(await run([], ctx)).toBe(1);
+    expect(ctx.lines.join('\n')).toContain('push_endpoint 카나리아');
+  });
+
   it('passes (0) with 검사 대상 없음 when there are no int logs', async () => {
     const ctx = captureCtx(reportsRoot(null), {});
     expect(await run([], ctx)).toBe(0);

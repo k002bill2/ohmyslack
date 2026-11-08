@@ -110,7 +110,7 @@ describe('features/pwa/sw 라우팅', () => {
     vi.stubGlobal('ServiceWorkerGlobalScope', class {});
     vi.stubGlobal('caches', fakeCacheStorage().storage);
     await import('../../src/features/pwa/sw.js');
-    expect(add.mock.calls.map((c) => c[0]).sort()).toEqual(['activate', 'fetch', 'install']);
+    expect(add.mock.calls.map((c) => c[0]).sort()).toEqual(['activate', 'fetch', 'install', 'notificationclick', 'push']);
     add.mockRestore();
   });
 });

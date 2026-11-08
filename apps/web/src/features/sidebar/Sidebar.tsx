@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { Account, ListState, Space } from '../../data';
 import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
@@ -31,6 +31,8 @@ export interface SidebarProps {
   readonly onManageMembers?: () => void;
   /** 하단 「로그아웃」. */
   readonly onLogout?: () => void;
+  /** 계정 영역 알림 설정(CMP-30, ★Q-H4). 없으면 렌더하지 않는다. */
+  readonly pushSettings?: ReactNode;
   /** 「나간 채널 · 다시 참여」(UI_STATES §2-3) → `POST …/join`. 없으면 버튼을 렌더하지 않는다. */
   readonly onRejoin?: (id: string) => void;
 }
@@ -192,6 +194,7 @@ export function Sidebar(props: SidebarProps) {
       {account !== undefined && (
         <div className="sidebar-account">
           <AccountCard account={account} />
+          {props.pushSettings}
           {account.role === 'owner' && props.onManageMembers && (
             <button type="button" className="btn btn-secondary" onClick={props.onManageMembers}>
               {MEMBER_ADMIN_COPY.title}

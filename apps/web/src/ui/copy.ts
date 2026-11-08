@@ -289,3 +289,32 @@ export const ATTACHMENT_COPY = {
   /** 본문 없이 이미지만 보낼 때 채우는 본문(서버는 첨부 메시지도 본문 필수). */
   imageOnlyBody: '[이미지]',
 } as const;
+
+/**
+ * Web Push 알림 고정 문구(W-23, TRD §6-2). 정본 미정(UI_STATES §8 Q-H5) — Jarvis ★ 임시 결정.
+ * 서비스 워커가 쓴다 — 메시지 본문·대화 이름·작성자 이름은 표시하지 않는다.
+ */
+export const PUSH_NOTIFICATION_COPY = {
+  title: 'ohmyslack',
+  botTitle: 'Jarvis',
+  body: '새 메시지가 있습니다',
+} as const;
+
+/**
+ * CMP-30 PushSettings 문구(W-23). 정본 미정(UI_STATES §8 Q-H4) — Jarvis ★ 임시 결정.
+ * 위치: 사이드바 계정 영역 + Jarvis DM 첫 진입 시 1회 안내(Q-H4 제안).
+ */
+export const PUSH_SETTINGS_COPY = {
+  title: '알림',
+  unsupported: '이 브라우저에서는 알림을 받을 수 없습니다.',
+  iosInstall: '홈 화면에 추가하면 이 기기에서 알림을 받을 수 있습니다.',
+  openInstallHint: '설치 안내 보기',
+  enable: '알림 켜기',
+  denied: '알림이 차단되어 있습니다. 시스템 설정에서 이 앱의 알림을 허용해 주세요.',
+  subscribed: '이 기기에서 알림을 받는 중입니다.',
+  disable: '끄기',
+  failed: '알림을 등록하지 못했습니다.',
+  retry: RETRY_LABEL,
+  botHint: 'Jarvis의 새 메시지를 알림으로 받을 수 있습니다.',
+  dismissHint: '닫기',
+} as const;

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR, migrate } from '../../src/db/migrate.js';
 import { createTestSchema, withClient, type TestSchema } from '../support/test-db.js';
 
-// 0003_attachments(W-21)로 attachment_blobs·attachments 2개 추가(이름 정렬 순).
+// 0003_attachments(W-21)로 attachment_blobs·attachments 2개 추가(이름 정렬 순). 0004_push(W-23)로 push_subscriptions 추가.
 const TRD_TABLES = [
   'attachment_blobs',
   'attachments',
@@ -17,6 +17,7 @@ const TRD_TABLES = [
   'invites',
   'message_mentions',
   'messages',
+  'push_subscriptions',
   'sessions',
   'sync_clock',
   'thread_read_state',
