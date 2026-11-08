@@ -12,7 +12,7 @@
 | 대상 커밋 | `74b822e` (main, 깨끗한 detached worktree) |
 | `pnpm verify` | **PASS** — exit 0, `=== VERIFY PASSED` |
 | `check:fr-coverage --mode=gate` | **FAIL** — exit 1, `실패:` 17줄 + 미구현 집계 1(FR-OPS-02) = 18건(아래 3절). 수동·실기·측정 증거 미완, 발견 F-1(키맵)·F-4(작성기 포커스 링) |
-| 수동 QA 14건 | PASS 3(BOOT-01·CLIENT-07·OPS-04) · FAIL 0 · 미검증 5 · 파일 없음(미실행) 6 — 7절 수정 반영 후 |
+| 수동 QA 14건 | PASS 4(BOOT-01·CLIENT-07·OPS-04·SYNC-01) · FAIL 0 · 미검증 5(CLIENT-01·02·04·OPS-01·02) · 파일 없음/미실행 5(CLIENT-03·MSG-08·SYNC-04·SYNC-07·OPS-03) — 7절 수정·8절 측정 반영 후 (SYNC-01은 이전 집계에서 미실행 템플릿으로 셌음) |
 | G1 신청 가능 여부 | **아직 불가** — 3절 "남은 일" 완료 후 판정 모드 재실행 필요 |
 | 교차 검증 | Codex 1라운드: P1 2·P2 2 지적(CLIENT-07 과대 PASS 2건, 전송 중 그레이스케일 증거, 소수 폭 대체 증거) — 전부 반영. F-1·F-2·F-3 코드 주장은 Codex가 소스로 재확인 |
 
@@ -36,7 +36,7 @@
 | 5 | QA-FR-MSG-08 파일 없음 | 미실행 | 디자인 §7-4 매트릭스 7항목 × 4환경(macOS Safari·Chrome, iOS Safari·PWA) 한글 실기 | 영환님(실기 IME) |
 | 6 | QA-FR-SYNC-04 파일 없음 | 미실행 | 맥·iPhone 동시 전경에서 읽음 → 배지 2초 안 갱신 | 영환님(실기) |
 | 7 | QA-FR-SYNC-07 파일 없음 | 미실행 | iPhone PWA 5분 백그라운드 후 복귀 | 영환님(실기) |
-| 8–9 | FR-SYNC-01 지정 테스트 결과 없음 + QA 미검증 | 미실행. (b) 절차 실행 불가(F-2) | F-2 해결 후 `PERF_OBSERVER_WAIT_S=300 pnpm perf:latency` + 측정 빌드 관측 | Developer → QA |
+| 8–9 | ~~FR-SYNC-01 지정 테스트 결과 없음 + QA 미검증~~ **닫힘** | 8절: (a) p95 40.8ms·오류 0, (b) p95 128ms → QA-FR-SYNC-01 PASS | — | — |
 | 10 | QA-FR-OPS-01 미검증 | 미실행 | 점검 명령 8개 **[조회·승인 필요]** | 영환님 승인 → QA |
 | 11 | QA-FR-OPS-02 미검증 | 자동 드릴 `DRILL OK 7/7` 기록됨 | 승인자 확인 칸 서명 | 영환님 |
 | 12 | QA-FR-OPS-03 파일 없음 | 미실행 | Tailscale Serve 쪽 로그 점검(조회 승인 필요) | 영환님 승인 → QA |
@@ -82,3 +82,9 @@
 
 - 게이트: 브랜치에서 `pnpm verify` exit 0(단위 shared 5·server 298·tools 144·web 515, 통합 39파일 115건).
 - 교차 검증: Codex F-1/F-4 3라운드(r1 P2 5 → r2 P2 1 → r3 0), F-2 1라운드(P2 1, 반영). 전부 반영.
+
+## 8. FR-SYNC-01 측정 (2026-11-08 KST, 커밋 f17566b)
+
+- 1차 15:39–15:54: **무효.** 관측 탭이 ego-browser 백그라운드 태스크 스페이스라 rAF가 1–2회/s로 제한됨(`visibilityState`는 visible). CDP `Page.bringToFront`·포커스 에뮬레이션으로 해소 안 됨 → 사람이 ego-browser 창을 앞에 띄워야 함. `raf` p95 686ms는 판정에서 제외.
+- 2차 15:55–16:11: 영환님이 창을 전경에 둠(부하 전 rAF 62회/s). (a) 3000건·오류 0·전달 57000/57000·p95 40.8ms, (b) `raf` p95 128ms·p99 155ms·max 358ms·표본 3000. 부하 중 전경 유지 근거는 표본 전체의 `raf-commit` p95 1ms·max 53ms(제한 상태면 수백 ms). → QA-FR-SYNC-01 **PASS**.
+- 게이트 재실행: `check:fr-coverage --mode=gate` 실패 줄 16 → 14(SYNC-01 2줄 해소), 여전히 exit 1(실기·승인 항목).
