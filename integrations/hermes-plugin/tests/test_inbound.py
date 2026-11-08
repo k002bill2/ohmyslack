@@ -284,3 +284,21 @@ def test_manifest_marks_token_secret():
     manifest = yaml.safe_load((Path(__file__).resolve().parents[1] / "ohmyslack" / "plugin.yaml").read_text())
     token = [e for e in manifest["requires_env"] if e["name"] == "OHMYSLACK_BOT_TOKEN"][0]
     assert token["secret"] is True
+
+
+async def test_catch_up_does_not_run_edits_or_count_aux_root(server, make_adapter, tmp_path):
+    from ohmyslack.cursor import CursorState, CursorStore
+    CursorStore(tmp_path / "cursor.json").save(CursorState(change_id=server.next_change, saved_at=time.time()))
+    edited = make_message(body="edited while offline", age=60)
+    edited["edited_at"] = edited["created_at"]
+    old_root = make_message(body="old root", age=3 * 3600)
+    reply = make_message(body="reply in old thread", age=30, thread_root_id=old_root["id"])
+    server.page_size = 10
+    server.add(edited)
+    server.add(reply)
+    server.add(old_root)  # 서버가 답글 변경과 함께 싣는 원문 projection
+    adapter = make_adapter()
+    assert await adapter.connect()
+    await wait_for(lambda: server.sockets)
+    assert [e.message_id for e in adapter.events] == [reply["id"]]
+    assert _posts_ok(server) == []  # 원문 projection은 밀린 지시로 세지 않음

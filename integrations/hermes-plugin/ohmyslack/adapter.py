@@ -227,8 +227,13 @@ class OhmySlackAdapter(BasePlatformAdapter):
             page = await self._client.get_sync(cursor, through)
             if through is None:
                 through = int(page["through_cursor"])
-            for change in page.get("changes") or ():
-                await self._ingest(str(change.get("conversation_id") or ""), change.get("message") or {})
+            changes = page.get("changes") or ()
+            # 답글 변경 시 서버는 원문 projection도 함께 싣는다(sync/repo.ts:75-78) — 그 원문은 새 지시가 아니다.
+            reply_roots = {str((c.get("message") or {}).get("thread_root_id") or "") for c in changes}
+            for change in changes:
+                m = change.get("message") or {}
+                aux_root = m.get("thread_root_id") is None and str(m.get("id") or "") in reply_roots
+                await self._ingest(str(change.get("conversation_id") or ""), m, aux_root=aux_root)
             cursor = int(page["next_cursor"])
             self._save_cursor(cursor)
             if not page.get("has_more"):
@@ -270,15 +275,19 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return (bool(author) and author != self._me_id and author == self._owner_id
                 and m.get("deleted_at") is None and m.get("body") is not None)
 
-    async def _ingest(self, conversation_id: str, m: dict) -> None:
+    async def _ingest(self, conversation_id: str, m: dict, *, aux_root: bool = False) -> None:
         mid = str(m.get("id") or "")
         if not mid or not conversation_id or not self._is_owner_instruction(m):
             return
         if self._dedup.is_duplicate(mid):
             return
+        if m.get("edited_at") is not None:
+            # sync change에는 op가 없다 — 수정 projection은 새 지시로 실행하지 않는다(WS message.updated와 동일).
+            self._remember(mid)
+            return
         created = _epoch(m.get("created_at"))
         if created is None or self._clock() - created > BACKLOG_LIMIT_SECONDS:
-            if m.get("edited_at") is None:
+            if not aux_root:
                 self._backlog[conversation_id] = self._backlog.get(conversation_id, 0) + 1
             self._remember(mid)
             return
@@ -305,10 +314,15 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._cursor.save(CursorState(change_id=self._watermark, saved_at=self._clock(), recent_ids=self._recent))
 
     async def _flush_backlog(self) -> None:
-        pending, self._backlog = self._backlog, {}
-        for cid, n in pending.items():
-            if n > 0:
-                await self.send(cid, BACKLOG_NOTICE.format(n=n))
+        for cid, n in list(self._backlog.items()):
+            if n <= 0:
+                self._backlog.pop(cid, None)
+                continue
+            result = await self.send(cid, BACKLOG_NOTICE.format(n=n))
+            if result.success:  # 실패분은 보존해 다음 flush(재연결·구독 ACK)에서 다시 보낸다
+                self._backlog[cid] = self._backlog.get(cid, n) - n
+                if self._backlog[cid] <= 0:
+                    self._backlog.pop(cid, None)
 
     # ---------- outbound ----------
     def _thread_root(self, reply_to: Optional[str], metadata: Optional[dict]) -> Optional[str]:
@@ -324,7 +338,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
         if self._client is None:
             return SendResult(success=False, error="ohmyslack: not connected", retryable=True, error_kind="transient")
         root = self._thread_root(reply_to, metadata)
-        ids = []
+        ids: list[str] = []
         try:
             for chunk in self.truncate_message(content or "", self.MAX_MESSAGE_LENGTH):
                 res = await self._client.post_message(str(chat_id), chunk, thread_root_id=root)
@@ -333,16 +347,27 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
         except BotApiError as exc:
             limited = exc.status == 429
-            return SendResult(success=False, error=f"ohmyslack: HTTP {exc.status}", retryable=limited,
-                              retry_after=exc.retry_after, error_kind="rate_limited" if limited else "unknown")
+            return self._failed_send(ids, f"ohmyslack: HTTP {exc.status}", retryable=limited,
+                                     retry_after=exc.retry_after, kind="rate_limited" if limited else "unknown")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            return SendResult(success=False, error=f"ohmyslack: {type(exc).__name__}", retryable=True,
-                              error_kind="transient")
+            return self._failed_send(ids, f"ohmyslack: {type(exc).__name__}", retryable=True, kind="transient")
         for mid in ids:
             if root:
                 self._root_of[mid] = root
         return SendResult(success=True, message_id=ids[-1] if ids else None,
                           continuation_message_ids=tuple(ids) if len(ids) > 1 else ())
+
+    @staticmethod
+    def _failed_send(ids: list[str], error: str, *, retryable: bool, kind: str,
+                     retry_after: Optional[float] = None) -> SendResult:
+        if ids:
+            # 일부 청크가 이미 게시됨: base `_send_with_retry`가 전체를 다시 보내 중복 게시하지 않도록
+            # 재시도 불가로 돌려주고 게시된 id를 싣는다(Codex r2 P2).
+            return SendResult(success=False, error=f"{error} (partial: {len(ids)} chunk(s) posted)",
+                              retryable=False, error_kind=kind, continuation_message_ids=tuple(ids),
+                              raw_response={"partial_message_ids": list(ids)})
+        return SendResult(success=False, error=error, retryable=retryable, retry_after=retry_after,
+                          error_kind=kind)
 
     async def edit_message(self, chat_id: str, message_id: str, content: str, *,
                            finalize: bool = False) -> SendResult:

@@ -166,3 +166,41 @@ def test_cursor_store_atomic_and_tolerant(tmp_path):
     assert set(raw) == {"change_id", "saved_at", "recent_ids"}
     store.path.write_text("{broken")
     assert store.load() is None
+
+
+# ---------- Codex r2 회귀 ----------
+async def test_partial_send_failure_is_not_retryable(server, make_adapter):
+    adapter = make_adapter()
+    assert await adapter.connect()
+    # 첫 청크는 게시되고 두 번째 청크부터 429가 소진된 상황
+    adapter._client.post_message = _wrap_post(adapter._client.post_message, fail_from=2)
+    res = await adapter.send(DM_ID, "c" * 9000)
+    assert not res.success and res.retryable is False
+    assert len(res.continuation_message_ids) == 1
+    assert res.raw_response["partial_message_ids"] == list(res.continuation_message_ids)
+
+
+def _wrap_post(fn, *, fail_from):
+    from ohmyslack.client import BotApiError
+    calls = {"n": 0}
+
+    async def wrapped(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] >= fail_from:
+            raise BotApiError(429, "/conversations", retry_after=1.0)
+        return await fn(*args, **kwargs)
+
+    return wrapped
+
+
+async def test_backlog_notice_kept_when_post_fails(server, make_adapter):
+    adapter = make_adapter()
+    assert await adapter.connect()
+    adapter._backlog = {DM_ID: 2}
+    server.post_429 = 10
+    await adapter._flush_backlog()
+    assert adapter._backlog == {DM_ID: 2}
+    server.post_429 = 0
+    await adapter._flush_backlog()
+    assert adapter._backlog == {}
+    assert [p["body"] for p in _ok(server)] == ["오프라인 동안 받은 2건은 처리하지 않았습니다"]
