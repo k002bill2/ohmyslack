@@ -325,9 +325,12 @@ class OhmySlackAdapter(BasePlatformAdapter):
             n = self._backlog.pop(cid, 0)  # await 전에 꺼내 동시 flush의 중복 게시를 막는다
             if n <= 0:
                 continue
-            result = await self.send(cid, BACKLOG_NOTICE.format(n=n))
-            if not result.success:  # 실패분은 되돌려 다음 flush(재연결·구독 ACK)에서 다시 보낸다
-                self._backlog[cid] = self._backlog.get(cid, 0) + n
+            posted = False
+            try:
+                posted = (await self.send(cid, BACKLOG_NOTICE.format(n=n))).success
+            finally:
+                if not posted:  # 실패·예외·취소 모두 되돌려 다음 flush(재연결·구독 ACK)에서 다시 보낸다(Codex r4 P2)
+                    self._backlog[cid] = self._backlog.get(cid, 0) + n
 
     # ---------- outbound ----------
     def _thread_root(self, reply_to: Optional[str], metadata: Optional[dict]) -> Optional[str]:
@@ -344,33 +347,40 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="ohmyslack: not connected", retryable=True, error_kind="transient")
         root = self._thread_root(reply_to, metadata)
         ids: list[str] = []
+        chunks = self.truncate_message(content or "", self.MAX_MESSAGE_LENGTH)
         try:
-            for chunk in self.truncate_message(content or "", self.MAX_MESSAGE_LENGTH):
+            for chunk in chunks:
                 res = await self._client.post_message(str(chat_id), chunk, thread_root_id=root)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
         except BotApiError as exc:
             limited = exc.status == 429
-            return self._failed_send(ids, f"ohmyslack: HTTP {exc.status}", retryable=limited,
+            return self._failed_send(ids, f"ohmyslack: HTTP {exc.status}", retryable=limited, total=len(chunks),
                                      retry_after=exc.retry_after, kind="rate_limited" if limited else "unknown")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            return self._failed_send(ids, f"ohmyslack: {type(exc).__name__}", retryable=True, kind="transient")
+            return self._failed_send(ids, f"ohmyslack: {type(exc).__name__}", retryable=True, kind="transient",
+                                     total=len(chunks))
         for mid in ids:
             if root:
                 self._root_of[mid] = root
         return SendResult(success=True, message_id=ids[-1] if ids else None,
                           continuation_message_ids=tuple(ids) if len(ids) > 1 else ())
 
+    def _send_retry_is_final(self, result: SendResult) -> bool:
+        # 부분 게시는 남은 청크만 이어 보낼 수 없으므로(_resume_partial_send 미구현) 재시도 대기 없이 그대로 반환.
+        return self._is_partial_delivery(result)
+
     @staticmethod
-    def _failed_send(ids: list[str], error: str, *, retryable: bool, kind: str,
+    def _failed_send(ids: list[str], error: str, *, retryable: bool, kind: str, total: int,
                      retry_after: Optional[float] = None) -> SendResult:
         if ids:
-            # 일부 청크가 이미 게시됨: base `_send_with_retry`가 전체를 다시 보내 중복 게시하지 않도록
-            # 재시도 불가로 돌려주고 게시된 id를 싣는다(Codex r2 P2).
+            # 일부 청크가 이미 게시됨: base 계약 `raw_response["partial_overflow"]`(base.py `_is_partial_delivery`)로
+            # 알려 `_send_with_retry`의 재시도·plain-text fallback·delivery 재전송이 앞 청크를 다시 올리지 않게 한다.
             return SendResult(success=False, error=f"{error} (partial: {len(ids)} chunk(s) posted)",
                               retryable=False, error_kind=kind, continuation_message_ids=tuple(ids),
-                              raw_response={"partial_message_ids": list(ids)})
+                              raw_response={"partial_overflow": True, "delivered_chunks": len(ids),
+                                            "total_chunks": total, "partial_message_ids": list(ids)})
         return SendResult(success=False, error=error, retryable=retryable, retry_after=retry_after,
                           error_kind=kind)
 
