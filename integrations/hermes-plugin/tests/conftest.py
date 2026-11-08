@@ -66,6 +66,7 @@ class FakeBotServer:
         self.ws_fail = 0
         self.ws_status = 503
         self.post_429 = 0
+        self.ok_posts_before_429: Optional[int] = None  # 성공 게시 N건 이후로는 계속 429
         self.page_size = 2
         self.requests: list[tuple[str, str, dict]] = []
         self.posts: list[dict] = []
@@ -130,8 +131,9 @@ class FakeBotServer:
     async def post(self, request):
         self._log(request)
         payload = await request.json()
-        if self.post_429 > 0:
-            self.post_429 -= 1
+        ok_so_far = sum(1 for p in self.posts if p["_status"] == 200)
+        if self.post_429 > 0 or (self.ok_posts_before_429 is not None and ok_so_far >= self.ok_posts_before_429):
+            self.post_429 = max(0, self.post_429 - 1)
             self.posts.append({**payload, "_status": 429})
             return web.json_response({"error": "rate_limited"}, status=429, headers={"Retry-After": "1"})
         self.posts.append({**payload, "_status": 200, "conversation_id": request.match_info["cid"]})

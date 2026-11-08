@@ -204,3 +204,62 @@ async def test_backlog_notice_kept_when_post_fails(server, make_adapter):
     await adapter._flush_backlog()
     assert adapter._backlog == {}
     assert [p["body"] for p in _ok(server)] == ["오프라인 동안 받은 2건은 처리하지 않았습니다"]
+
+
+# ---------- FIX r2 회귀 (Codex r4 P2, r3 잔여 P2) ----------
+NOTICE_2 = "오프라인 동안 받은 2건은 처리하지 않았습니다"
+
+
+async def test_backlog_restored_when_notice_send_is_cancelled(server, make_adapter):
+    import asyncio
+    adapter = make_adapter()
+    assert await adapter.connect()
+    adapter._backlog = {DM_ID: 2}
+    started, never = asyncio.Event(), asyncio.Event()
+
+    async def blocked_post(*_args, **_kwargs):
+        started.set()
+        await never.wait()
+
+    adapter._client.post_message = blocked_post
+    task = asyncio.create_task(adapter._flush_backlog())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert adapter._backlog == {DM_ID: 2}
+    await adapter.disconnect()
+    assert await adapter.connect()  # 재연결 시 _open이 flush → 안내 1건
+    await wait_for(lambda: [p["body"] for p in _ok(server)] == [NOTICE_2])
+    assert adapter._backlog == {}
+
+
+async def test_concurrent_flush_posts_notice_once(server, make_adapter):
+    import asyncio
+    adapter = make_adapter()
+    assert await adapter.connect()
+    adapter._backlog = {DM_ID: 2}
+    real_post = adapter._client.post_message
+
+    async def slow_post(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return await real_post(*args, **kwargs)
+
+    adapter._client.post_message = slow_post
+    await asyncio.gather(adapter._flush_backlog(), adapter._flush_backlog())
+    assert [p["body"] for p in _ok(server)] == [NOTICE_2]
+    assert adapter._backlog == {}
+
+
+async def test_partial_send_through_base_send_with_retry_posts_head_once(server, make_adapter):
+    adapter = make_adapter()
+    assert await adapter.connect()
+    server.ok_posts_before_429 = 1  # 첫 청크만 게시, 두 번째 청크는 429 소진
+    text = "d" * 4001
+    head = _split(text)[0]
+    res = await adapter._send_with_retry(chat_id=DM_ID, content=text)  # 실제 base 경로(재시도·plain fallback)
+    assert not res.success
+    assert res.raw_response["partial_overflow"] is True
+    assert (res.raw_response["delivered_chunks"], res.raw_response["total_chunks"]) == (1, 2)
+    assert [p["body"] for p in _ok(server)] == [head]  # 첫 청크 정확히 1회, fallback 재게시 없음
+    assert {p["body"] for p in server.posts} <= set(_split(text))  # 429 시도 포함 plain-text fallback 시도 0
