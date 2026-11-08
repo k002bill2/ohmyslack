@@ -30,6 +30,7 @@ describe('FR-MSG-10 제한된 서식', () => {
       '1. 하나',
       '2. 둘',
       '[나쁜](javascript:alert(1)) **닫히지 않음 `열린 코드 [x](',
+      '[메일](mailto:a@b.co) [스크립트](javascript:void0)',
     ].join('\n');
     const root = view(body);
     const heading = root.querySelector('[role="heading"]') as HTMLElement;
@@ -43,8 +44,9 @@ describe('FR-MSG-10 제한된 서식', () => {
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
     expect(Array.from(root.querySelectorAll('ul > li')).map((li) => li.textContent)).toEqual(['첫째', '둘째']);
     expect(Array.from(root.querySelectorAll('ol > li')).map((li) => li.textContent)).toEqual(['하나', '둘']);
-    const last = Array.from(root.querySelectorAll('p.msg-paragraph')).at(-1) as HTMLElement;
-    expect(last.textContent).toBe('[나쁜](javascript:alert(1)) **닫히지 않음 `열린 코드 [x](');
+    const last = root.querySelector('p.msg-paragraph:last-child') as HTMLElement;
+    expect(last.textContent).toBe('[나쁜](javascript:alert(1)) **닫히지 않음 `열린 코드 [x](\n[메일](mailto:a@b.co) [스크립트](javascript:void0)'.replace('\n', ''));
+    expect(root.querySelectorAll('a')).toHaveLength(1);
     expect(last.querySelector('a, strong, code')).toBeNull();
     expect(root.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
     expectInert(root);
