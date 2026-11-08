@@ -46,7 +46,7 @@ export type PushState = 'loading' | 'unsupported' | 'ios-install' | 'default' | 
 /** 이 탭의 서버 구독 id(endpoint별). 새로 고치면 사라지고, 다음 진입 때 upsert로 다시 받는다. */
 let knownSubscription: { readonly endpoint: string; readonly id: string } | null = null;
 
-/** 테스트용: 메모리 구독 id를 비운다. */
+/** 메모리 구독 id를 비운다(세션 종료 시 LiveApp, 테스트). */
 export function resetPushMemory(): void {
   knownSubscription = null;
 }

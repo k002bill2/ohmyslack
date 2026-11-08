@@ -44,6 +44,11 @@ function recipientsOf(event: MessageChange, botDm: boolean, rootAuthorId: string
   return { everyone: botDm && message.threadRootId === null, userIds: [...userIds] };
 }
 
+/** 묶음 창(60초)이 지난 항목을 지운다 — 창 밖 항목은 판정에 쓰이지 않으므로 맵이 무한히 자라지 않게(W-23b). */
+export function pruneCoalesce(lastSent: Map<string, number>, now: number, windowMs = PUSH_COALESCE_WINDOW_MS): void {
+  for (const [key, at] of lastSent) if (now - at >= windowMs) lastSent.delete(key);
+}
+
 export function createPushService(deps: PushServiceDeps): PushService {
   const { store, logger, clock, config } = deps;
   const send = deps.send ?? webPushSend;
@@ -112,6 +117,7 @@ export function createPushService(deps: PushServiceDeps): PushService {
       from_bot: message.authorKind === 'bot',
     });
     const body = JSON.stringify(payload);
+    pruneCoalesce(lastSent, now);
     for (const target of targets) {
       if (target.userId === message.authorId) continue;
       const key = `${target.id}:${message.conversationId}`;
