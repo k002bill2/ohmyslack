@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WS_ACTIONS } from '../../src/http/access.js';
 import type { Session } from '../auth/members-int-harness.js';
+import { bot as botCall, setupBotListener, teardownBotListener } from '../bots/bot-listener-harness.js';
 import { as, convState, createChannel, req, setupConvInt, teardownConvInt, type ConvIntContext, type Method } from './conv-int-harness.js';
 
 /**
@@ -81,5 +82,42 @@ describe('접근 매트릭스', () => {
     expect(disc.channels).toEqual([{ id: fx.channel, name: 'matrix' }]);
     expect(await convState(ctx.schema)).toEqual(before);
     expect(ctx.ended.length).toBe(ended);
+  });
+});
+
+describe('접근 매트릭스 — 봇 행위자(TRD §5-2 5항)', () => {
+  it('봇 리스너의 모든 등록 라우트에서 봇은 참여하지 않은 대화·메시지에 404이고 대화 데이터가 바뀌지 않는다', async () => {
+    const lc = await setupBotListener();
+    try {
+      const owner = await as(lc.conv.app, 'a');
+      const channel = await createChannel(lc.conv.app, owner, 'bot-matrix');
+      const root = (await req(lc.conv.app, 'POST', `/api/conversations/${channel}/messages`, owner, {
+        client_message_id: '00000000-0000-4000-8000-0000000000aa',
+        body: 'x',
+      })).json<{ message: { id: string } }>().message.id;
+      const before = await convState(lc.conv.schema);
+      const routes = (lc.botApp.botAccessRoutes ?? []).filter((r) => r.method !== 'HEAD');
+      const scoped = routes.filter((r) => r.url.includes(':id') || r.url.endsWith('/snapshot') || r.url.endsWith('/read-state'));
+      expect(scoped.length).toBe(6);
+      for (const route of scoped) {
+        const target = route.url.includes('/messages/:id') ? root : channel;
+        let path = route.url.replace('/api/bot/v1/', '').replace(':id', target);
+        if (path === 'sync/snapshot') path = `sync/snapshot?conversation_id=${channel}`;
+        const body = route.method === 'GET' ? undefined : { ...BODY, client_message_id: '00000000-0000-4000-8000-0000000000bb', conversation_id: channel, last_read_seq: 1 };
+        const cleanBody =
+          body === undefined
+            ? undefined
+            : route.url.endsWith('/read-state')
+              ? { conversation_id: channel, last_read_seq: 1 }
+              : route.method === 'PATCH'
+                ? { body: 'x' }
+                : { client_message_id: body.client_message_id, body: 'x' };
+        const res = await botCall(lc, route.method, path, cleanBody);
+        expect(res.status, `${route.method} ${route.url}`).toBe(404);
+      }
+      expect(await convState(lc.conv.schema)).toEqual(before);
+    } finally {
+      await teardownBotListener(lc);
+    }
   });
 });
