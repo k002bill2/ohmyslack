@@ -15,6 +15,7 @@ import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
 import { startsNewDay, useNewMessagesSeq } from './message-dividers.js';
+import { useMessageAnchor } from './message-anchor.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
@@ -260,6 +261,16 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const threadOpen = space !== undefined && root !== undefined && space.left !== true;
   const collapsed = isSidebarCollapsed(viewport, threadOpen);
   const bp = viewport.breakpoint;
+  const historyReady = snap.loadedHistory === undefined || snap.loadedHistory === state.conversationId;
+  // 알림 탭 `#message-:id` → 대상 메시지 스크롤·강조(W-23 Codex P2-3).
+  const repliesReady = state.threadRootId === null || snap.loadedReplies === undefined || snap.loadedReplies.includes(state.threadRootId);
+  const anchorNotice = useMessageAnchor({ history, shell, conversationId: state.conversationId, threadRootId: state.threadRootId, messages: snap.messages, historyReady, repliesReady, threadOpen });
+  const anchorNoticeEl = (inThread: boolean) =>
+    anchorNotice !== null && anchorNotice.inThread === inThread && (
+      <p className="message-anchor-notice" role="status">
+        {anchorNotice.text}
+      </p>
+    );
 
   // F1: 스레드가 닫히면 그 스레드를 연 원문의 「답글」 버튼으로 포커스 복귀.
   useEffect(() => {
@@ -457,7 +468,14 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const pane = space && (
     <ConversationPane
       space={space}
-      {...(space.bot === true && pushEnv !== null && dataSource.push ? { notice: <PushBotHint env={pushEnv} server={dataSource.push} /> } : {})}
+      notice={
+        <>
+          {space.bot === true && pushEnv !== null && dataSource.push && <PushBotHint env={pushEnv} server={dataSource.push} />}
+          {/* 스레드 대상 안내는 스레드가 닫혀 있을 때만 대화 화면에(열려 있으면 패널이 그린다). */}
+          {anchorNoticeEl(false)}
+          {!threadOpen && anchorNoticeEl(true)}
+        </>
+      }
       roots={snap.messages.filter((m) => m.conversationId === space.id && m.rootId === undefined)}
       breakpoint={bp}
       inert={bp === 'medium' && threadOpen}
@@ -479,7 +497,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
       holding={snap.connection === 'catching-up'}
-      historyReady={snap.loadedHistory === undefined || snap.loadedHistory === space.id}
+      historyReady={historyReady}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
@@ -498,6 +516,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       messageActions={messageActions}
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
       spaceTitle={spaceTitle(space)}
+      notice={anchorNoticeEl(true)}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       mentionsSelf={(m) => mentionsSelfOf(m, snap.account?.displayName, snap.account?.id, mentionNames)}
     />

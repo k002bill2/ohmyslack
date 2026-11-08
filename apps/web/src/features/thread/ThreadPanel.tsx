@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
 import { Composer, MessageItem, lastServerSeq, scrolledToBottom, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
@@ -27,6 +27,8 @@ export interface ThreadPanelProps {
   readonly mentionNames?: readonly string[];
   /** 「나를 멘션」 판정 — 대화 목록과 같은 규칙. */
   readonly mentionsSelf?: (message: MessageItemData) => boolean;
+  /** 헤더 아래 안내(알림 탭 대상 없음 등, W-23b). */
+  readonly notice?: ReactNode;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -65,7 +67,7 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
   const actions = {
     timePlacement,
@@ -142,6 +144,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
         </div>
         {variant !== 'compact' && closeButton}
       </div>
+      {notice}
       <ul className="thread-root">
         {/* 원문이 바뀌면 다시 마운트 — 편집·삭제 확인 상태가 다른 메시지로 이어지지 않게(Codex r1 P1). */}
         <MessageItem key={root.id} message={root} {...actions} mentionsSelf={selfMention(root)} />

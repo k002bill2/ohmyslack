@@ -76,7 +76,12 @@ export function createPgPushStore(pool: pg.Pool): PushStore {
         `INSERT INTO push_subscriptions (id, user_id, session_id, endpoint, p256dh, auth, vapid_key_id, created_at, last_success_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
          ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id,
-           p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, vapid_key_id = EXCLUDED.vapid_key_id, last_success_at = NULL
+           p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, vapid_key_id = EXCLUDED.vapid_key_id,
+           -- 같은 기기 재등록(앱 재실행마다 upsert)은 성공 기록을 지우지 않는다. 키·p256dh·auth가 바뀐 경우만 초기화.
+           last_success_at = CASE
+             WHEN push_subscriptions.p256dh = EXCLUDED.p256dh AND push_subscriptions.auth = EXCLUDED.auth
+              AND push_subscriptions.vapid_key_id = EXCLUDED.vapid_key_id THEN push_subscriptions.last_success_at
+             ELSE NULL END
          RETURNING id`,
         [randomUUID(), sub.userId, sub.sessionId, sub.endpoint, sub.p256dh, sub.auth, sub.keyId, sub.at],
       );

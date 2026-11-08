@@ -70,6 +70,8 @@ export interface Snapshot {
    * 이력 조회가 없는 구현(메모리)은 생략한다 — 생략은 「항상 로드됨」으로 본다(W-11d 구분선 고정 시점, Codex r2 P2).
    */
   readonly loadedHistory?: string | null;
+  /** 기존 답글을 끝까지 읽은 스레드 root id들. 답글 조회가 없는 구현(메모리)은 생략 — 「항상 로드됨」(W-23b 위치 복원). */
+  readonly loadedReplies?: readonly string[];
 }
 
 /** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */

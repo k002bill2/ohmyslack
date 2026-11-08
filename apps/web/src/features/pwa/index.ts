@@ -18,6 +18,7 @@ export { InstallCard } from './InstallCard.js';
 export {
   browserPushEnv,
   PushSettings,
+  resetPushMemory,
   type PushEnv,
   type PushServerApi,
   type PushState,
