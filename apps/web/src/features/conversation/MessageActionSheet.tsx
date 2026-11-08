@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent 
 import { createPortal } from 'react-dom';
 import { Dialog } from '../../ui/Dialog.js';
 import { CANCEL_LABEL, MESSAGE_ACTION_COPY } from '../../ui/copy.js';
-import { CONVERSATION_DESIGN_COPY } from './copy.js';
+import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 
 /** 시트 항목 — 고른 뒤 시트를 먼저 닫고(언마운트) 소유자가 동작을 적용한다(Dialog 중첩 금지). */
 export type MessageSheetAction = 'reply' | 'edit' | 'delete';

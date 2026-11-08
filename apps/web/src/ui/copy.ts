@@ -71,11 +71,17 @@ export const MESSAGE_STATUS_COPY = {
 
 /** CMP-11 Composer(G-28·G-29·G-30). */
 export const COMPOSER_COPY = {
-  messagePlaceholder: '메시지 입력',
-  replyPlaceholder: '답글 입력',
+  /** 답글 작성기 placeholder(시안 문구 채택, 결정 3). 접근 이름은 `replyLabel` 그대로. */
+  replyPlaceholder: '답글 남기기',
   replyLabel: '답글 작성',
   limit: '4,000자까지 입력할 수 있습니다',
+  /** 작성기 도움말(결정 3): wide·medium에서 작성기 아래 작게, compact는 렌더하지 않는다. */
+  hint: 'Enter 전송 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter는 무시',
 } as const;
+
+/** 본문 작성기 placeholder(결정 3): 채널 「#이름에 남기기」, DM 「상대 이름에게 남기기」. `name`에는 `#`이 없다. */
+export const messagePlaceholder = (space: { readonly kind: 'channel' | 'dm'; readonly name: string }): string =>
+  space.kind === 'channel' ? `#${space.name}에 남기기` : `${space.name}에게 남기기`;
 
 /** G-29 본문 작성기 접근 이름(예: 「#공지에 메시지 작성」). */
 export const messageComposerLabel = (spaceTitle: string): string => `${spaceTitle}에 메시지 작성`;
@@ -89,6 +95,13 @@ export const THREAD_EMPTY_TEXT = '첫 답글을 남겨 보세요';
 
 /** CMP-12 멘션 후보 결과 없음(G-21). 컴포넌트 미구현 — 상수만. */
 export const MENTION_EMPTY_TEXT = '일치하는 참여자가 없습니다';
+
+/** CMP-12 멘션 팝오버 머리말·하단 도움말(결정 3). 머리말은 listbox 밖에 둔다. */
+export const MENTION_POPOVER_COPY = {
+  channelHeading: '이 채널의 멤버',
+  dmHeading: '이 대화의 멤버',
+  hint: '↑↓ 이동 · Enter 선택 · Esc 닫기',
+} as const;
 
 /** CMP-04 배지 접근 이름(G-32). 99 초과는 「멘션 99개 이상」. */
 export const mentionCountLabel = (count: number, cap: number): string =>
@@ -207,6 +220,19 @@ export const MESSAGE_ACTION_COPY = {
 export const THREAD_SUMMARY_COPY = {
   replies: (count: number): string => `답글 ${count}`,
   newReplies: '새 답글',
+} as const;
+
+/** 시안 W-11b 대화 문구(결정 3으로 정본 채택 — `features/conversation/copy.ts`에서 이동, 값 그대로). */
+export const CONVERSATION_DESIGN_COPY = {
+  /** 시안 01 「나를 멘션」 라벨(CMP-07 멘션 강조). */
+  mentionedSelf: '나를 멘션',
+  /** UI_STATES §2-4 CMP-09. */
+  newMessages: '여기부터 새 메시지',
+  /** UI_STATES §2-4 CMP-10. */
+  today: '오늘',
+  yesterday: '어제',
+  /** 시안 08 / UI_STATES §3 메시지 액션 — compact 액션 시트 제목·접근성 대체 버튼. */
+  messageActions: '메시지 작업',
 } as const;
 
 /** 나간 채널(UI_STATES §2-3 SpaceListItem·§2-5 ConversationHeader·MessageList 「나간 채널」 행 문구 그대로, W-10j). */

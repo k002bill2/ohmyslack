@@ -5,7 +5,7 @@ import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivi
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
-import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel } from '../../ui/copy.js';
+import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { InstallCard, useInstallPrompt } from '../pwa';
@@ -186,7 +186,9 @@ function ConversationPane(props: {
           <Composer
             key={space.id}
             label={messageComposerLabel(spaceTitle(space))}
-            placeholder={COMPOSER_COPY.messagePlaceholder}
+            placeholder={messagePlaceholder(space)}
+            showHint={breakpoint !== 'compact'}
+            mentionScope={space.kind}
             onSend={props.onSend}
             draft={{ store: props.drafts, key: space.id }}
             {...(membership?.mentions === undefined ? {} : { mentions: membership.mentions })}

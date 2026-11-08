@@ -81,17 +81,17 @@ describe('G-28·G-29·G-30 작성기', () => {
     expect(screen.getByText('4,000자까지 입력할 수 있습니다').getAttribute('aria-live')).toBe('polite');
   });
 
-  it('G-28·G-29 본문 작성기: 이름 「#general에 메시지 작성」, placeholder 「메시지 입력」', async () => {
+  it('G-28·G-29 본문 작성기: 이름 「#general에 메시지 작성」, placeholder 「#general에 남기기」(결정 3)', async () => {
     installViewport(1400);
     const user = userEvent.setup();
     render(<App dataSource={memory(seed())} />);
     await user.click(screen.getByRole('button', { name: 'general' }));
     const box = screen.getByRole('textbox', { name: '#general에 메시지 작성' });
-    expect(box.getAttribute('placeholder')).toBe('메시지 입력');
+    expect(box.getAttribute('placeholder')).toBe('#general에 남기기');
     expect(document.body.textContent).not.toMatch(/Workspace|워크스페이스/);
   });
 
-  it('G-22·G-28·G-29 스레드: 빈 상태 「첫 답글을 남겨 보세요」, 이름 「답글 작성」, placeholder 「답글 입력」', () => {
+  it('G-22·G-28·G-29 스레드: 빈 상태 「첫 답글을 남겨 보세요」, 이름 「답글 작성」, placeholder 「답글 남기기」(결정 3)', () => {
     render(
       <ThreadPanel
         variant="wide"
@@ -103,7 +103,7 @@ describe('G-28·G-29·G-30 작성기', () => {
       />,
     );
     expect(screen.getByText('첫 답글을 남겨 보세요')).toBeTruthy();
-    expect(screen.getByRole('textbox', { name: '답글 작성' }).getAttribute('placeholder')).toBe('답글 입력');
+    expect(screen.getByRole('textbox', { name: '답글 작성' }).getAttribute('placeholder')).toBe('답글 남기기');
   });
 });
 
