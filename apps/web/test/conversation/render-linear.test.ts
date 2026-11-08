@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { parseBody } from '../../src/features/conversation/render.js';
 
 /**
@@ -10,15 +10,24 @@ const BATCH = 20;
 const RUNS = 7;
 const MAX_RATIO = 8;
 
-/** 배치 시간의 최솟값 — GC·스케줄링 잡음은 시간을 늘리기만 하므로 최솟값이 가장 안정적인 추정치다. */
-function minMs(body: string): number {
-  for (let i = 0; i < BATCH; i += 1) parseBody(body); // 워밍업(JIT)
-  const samples = Array.from({ length: RUNS }, () => {
-    const start = performance.now();
-    for (let i = 0; i < BATCH; i += 1) parseBody(body);
-    return performance.now() - start;
-  }).sort((a, b) => a - b);
-  return samples[0] ?? Number.POSITIVE_INFINITY;
+function batchMs(body: string): number {
+  const start = performance.now();
+  for (let i = 0; i < BATCH; i += 1) parseBody(body);
+  return performance.now() - start;
+}
+
+/**
+ * 1k·2k·4k를 번갈아 RUNS번 재고 각 길이의 최솟값을 쓴다. GC·JIT 단계 전환·coverage 계측 잡음은 시간을 늘리기만 하고,
+ * 교차 측정이라 한 길이만 잡음 구간에 몰리지 않는다.
+ */
+function interleavedMinMs(bodies: readonly string[]): readonly number[] {
+  const mins = bodies.map(() => Number.POSITIVE_INFINITY);
+  for (let r = 0; r < RUNS; r += 1) {
+    bodies.forEach((body, k) => {
+      mins[k] = Math.min(mins[k] ?? Number.POSITIVE_INFINITY, batchMs(body));
+    });
+  }
+  return mins;
 }
 
 function repeatTo(unit: string, length: number): string {
@@ -41,10 +50,13 @@ export const WORST: readonly (readonly [string, string])[] = [
 ];
 
 describe('FR-MSG-10 4,000자 최악 입력 선형 시간', () => {
+  // 모든 최악 입력 경로를 미리 최적화 단계까지 데워 첫 사례만 JIT 전환 비용을 떠안지 않게 한다.
+  beforeAll(() => {
+    for (let r = 0; r < 5; r += 1) for (const [, unit] of WORST) batchMs(repeatTo(unit, 4000));
+  });
+
   it.each(WORST)('FR-MSG-10 %s: 4,000자/1,000자 시간 비율 ≤ 8', (_name, unit) => {
-    const t1 = minMs(repeatTo(unit, 1000));
-    const t2 = minMs(repeatTo(unit, 2000));
-    const t4 = minMs(repeatTo(unit, 4000));
+    const [t1 = 0, t2 = 0, t4 = 0] = interleavedMinMs([repeatTo(unit, 1000), repeatTo(unit, 2000), repeatTo(unit, 4000)]);
     expect(repeatTo(unit, 4000)).toHaveLength(4000);
     // 너무 빨라 타이머 분해능 아래면 비율이 무의미하므로 바닥값을 둔다.
     const floor = 0.05;
