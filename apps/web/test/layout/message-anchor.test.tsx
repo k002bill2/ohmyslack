@@ -2,9 +2,9 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory } from '../../src/app/route.js';
-import { createMemoryDataSource, type Snapshot } from '../../src/data';
+import { createMemoryDataSource, type DataSource, type Snapshot } from '../../src/data';
 import { AppShell } from '../../src/features/layout';
-import { ANCHOR_GRACE_MS, ANCHOR_HIGHLIGHT_MS, ANCHOR_NOTICE_MS, parseMessageAnchor } from '../../src/features/layout/message-anchor.js';
+import { ANCHOR_GRACE_MS, ANCHOR_HIGHLIGHT_MS, ANCHOR_NOTICE_MS, ANCHOR_REPLIES_TIMEOUT_MS, parseMessageAnchor } from '../../src/features/layout/message-anchor.js';
 import { MESSAGE_ANCHOR_COPY } from '../../src/ui/copy.js';
 import { T0 } from '../helpers/fixtures.js';
 import { installViewport } from '../helpers/viewport.js';
@@ -164,5 +164,48 @@ describe('알림 탭 위치 복원', () => {
     act(() => vi.advanceTimersByTime(ANCHOR_GRACE_MS));
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(screen.queryByText(MESSAGE_ANCHOR_COPY.notFound)).toBeNull();
+  });
+});
+
+/** 답글 조회 완료(`loadedReplies`)를 조절하는 대역 — 처음엔 비어 있고, 답글은 `deliver()` 후에 보인다. */
+function slowReplies(): { ds: DataSource; deliver: () => void } {
+  const full = seed();
+  let snap: Snapshot = { ...full, messages: full.messages.filter((m) => m.rootId === undefined), loadedReplies: [] };
+  const listeners = new Set<() => void>();
+  const base = createMemoryDataSource(full);
+  const ds: DataSource = { ...base, getSnapshot: () => snap, subscribe: (l) => (listeners.add(l), () => listeners.delete(l)) };
+  const deliver = () => {
+    snap = { ...full, loadedReplies: [M1] };
+    listeners.forEach((l) => l());
+  };
+  return { ds, deliver };
+}
+
+describe('W-23b Codex r1 P2 반영', () => {
+  it('스레드 대상은 답글 조회가 끝날 때까지 부재로 판정하지 않고, 늦게 온 답글을 강조한다', () => {
+    const { ds, deliver } = slowReplies();
+    const history = createMemoryHistory(`/c/${C1}?thread=${M1}#message-${R1}`);
+    const view = render(<AppShell dataSource={ds} history={history} />);
+    act(() => {
+      vi.advanceTimersByTime(ANCHOR_GRACE_MS * 2);
+    });
+    expect(screen.queryByText(MESSAGE_ANCHOR_COPY.notFound)).toBeNull();
+    act(() => deliver());
+    const panel = view.container.querySelector('.thread-panel')!;
+    expect(item(panel, R1)?.getAttribute('data-highlighted')).toBe('true');
+    expect(history.entries().at(-1)).toBe(`/c/${C1}?thread=${M1}`);
+  });
+
+  it('답글 조회가 끝나지 않으면 상한 뒤 스레드 패널에 안내한다(compact도 보임)', () => {
+    installViewport(375);
+    const { ds } = slowReplies();
+    const history = createMemoryHistory(`/c/${C1}?thread=${M1}#message-${MISSING}`);
+    const view = render(<AppShell dataSource={ds} history={history} />);
+    act(() => {
+      vi.advanceTimersByTime(ANCHOR_REPLIES_TIMEOUT_MS);
+    });
+    const panel = view.container.querySelector('.thread-panel')!;
+    expect(panel.textContent).toContain(MESSAGE_ANCHOR_COPY.notFound);
+    expect(screen.getAllByText(MESSAGE_ANCHOR_COPY.notFound)).toHaveLength(1);
   });
 });

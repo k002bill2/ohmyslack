@@ -287,6 +287,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       connection,
       listState,
       loadedHistory,
+      loadedReplies: [...repliesLoaded],
       ...(account === undefined ? {} : { account }),
     });
     listeners.forEach((l) => l());
@@ -837,6 +838,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         const last = res.replies.at(-1);
         if (!res.has_more || last === undefined) {
           repliesLoaded = new Set(repliesLoaded).add(rootId);
+          emit();
           retryDeferredThreadReads();
           return;
         }
