@@ -125,4 +125,24 @@ describe('반응형: 390 폭 가로 넘침 0(CSS 단언)', () => {
     expect(rule('.attachment-thumb')).toMatch(/height:\s*auto/);
     expect(rule('.composer-chip-name')).toMatch(/text-overflow:\s*ellipsis/);
   });
+  /** `var(--x)`를 같은 규칙 묶음의 선언값으로 푼다(수치는 attachments.css 한 곳). */
+  const resolveVar = (body: string, value: string) => value.replace(/var\((--[\w-]+)\)/g, (_, name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(body)?.[1]?.trim() ?? '?');
+  const decl = (sel: string, prop: string) => {
+    const body = rule(sel);
+    const all = [...body.matchAll(new RegExp(`(?:^|[;\\s])${prop}:\\s*([^;]+);`, 'g'))];
+    return resolveVar(body, all.at(-1)?.[1]?.trim() ?? '');
+  };
+  it('W-22b: 썸네일은 최대 높이 320px·최대 폭 min(100%, 480px), contain(비율 유지)', () => {
+    expect(decl('.attachment-thumb', 'max-height')).toBe('320px');
+    expect(decl('.attachment-thumb', 'max-width')).toBe('min(100%, 480px)');
+    expect(decl('.attachment-thumb', 'object-fit')).toBe('contain');
+    expect(decl('.attachment-thumb', 'width')).toBe('auto');
+    expect(decl('.attachment-thumb', 'height')).toBe('auto');
+  });
+  it('W-22b: 확대 이미지는 화면 안(최대 90vw·85vh) contain, Dialog도 90vw', () => {
+    expect(decl('.attachment-full', 'max-height')).toBe('85vh');
+    expect(decl('.attachment-full', 'max-width')).toBe('min(100%, 90vw)');
+    expect(decl('.attachment-full', 'object-fit')).toBe('contain');
+    expect(decl('.dialog:has(.attachment-full)', 'max-width')).toBe('90vw');
+  });
 });
