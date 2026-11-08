@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PUSH_SETTINGS_COPY } from '../../ui/copy.js';
 import { detectInstallMode, InstallHint } from './install.js';
+import { ensureActiveWorker, type RegistrationLike } from './sw-ready.js';
 
 /**
  * CMP-30 PushSettings(W-23, UI_STATES §2-10, TRD §6-2). 브라우저 API·서버 호출은 주입한다(테스트).
@@ -66,7 +67,11 @@ export function browserPushEnv(): PushEnv {
     supported,
     permission: () => Notification.permission,
     requestPermission: () => Notification.requestPermission(),
-    pushManager: async () => (await navigator.serviceWorker.ready).pushManager as unknown as PushManagerLike,
+    pushManager: async () => {
+      const registration = await navigator.serviceWorker.ready;
+      await ensureActiveWorker(registration as unknown as RegistrationLike);
+      return registration.pushManager as unknown as PushManagerLike;
+    },
   };
 }
 

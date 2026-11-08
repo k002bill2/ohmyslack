@@ -5,7 +5,7 @@ import { App } from '../../src/App.js';
 import { createSwHandlers, parsePrecacheManifest } from '../../src/features/pwa';
 import { createSessionBus, readCheckpoint, writeCheckpoint } from '../../src/features/sync';
 import { memory } from '../helpers/fixtures.js';
-import { fakeCacheStorage, fetchEvent, request } from './fakes.js';
+import { fakeCacheStorage, fakeLifecycle, fetchEvent, request } from './fakes.js';
 
 beforeEach(() => {
   localStorage.clear();
@@ -22,7 +22,7 @@ describe('FR-CLIENT-04 본문 지속 캐시 금지', () => {
     ]);
     expect(entries.map((e) => e.url)).toEqual(['/assets/index-Ab12Cd34.js']);
     const fetcher = vi.fn(async () => new Response('net'));
-    const sw = createSwHandlers({ storage, fetcher, entries, origin: 'https://app.test' });
+    const sw = createSwHandlers({ storage, lifecycle: fakeLifecycle(), fetcher, entries, origin: 'https://app.test' });
     for (const req of [
       request('/api/messages'),
       request('/api/ws'),
