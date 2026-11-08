@@ -18,6 +18,15 @@ export const ANCHOR_GRACE_MS = 1500;
 /** 스레드 답글 조회가 끝나지 않을 때(실패·지연) 포기까지 기다리는 상한(ms) — Codex r1 P2. */
 export const ANCHOR_REPLIES_TIMEOUT_MS = 10_000;
 
+/**
+ * 이번 재실행에서 기다릴 시간. 상한은 앵커별로 처음 기다리기 시작한 시각에 고정한다 — 실시간 메시지가 계속 와서
+ * effect가 다시 돌아도 상한이 밀리지 않게(Codex 확인 라운드 P2). 유예(1.5초)는 렌더마다 다시 세되 상한을 넘지 않는다.
+ */
+function waitDelay(startedAt: number, waitReplies: boolean): number {
+  const left = Math.max(0, startedAt + ANCHOR_REPLIES_TIMEOUT_MS - Date.now());
+  return waitReplies ? left : Math.min(ANCHOR_GRACE_MS, left);
+}
+
 /** 보일 안내 — 스레드 대상이면 스레드 패널에, 아니면 대화 화면에 그린다(compact는 한 화면만 보임, Codex r1 P2). */
 export interface AnchorNotice {
   readonly text: string;
@@ -122,6 +131,7 @@ export function useMessageAnchor({
 }: MessageAnchorInput): AnchorNotice | null {
   const [anchor, setAnchor] = useState<Anchor | null>(() => readAnchor(history));
   const { notice, reveal, missing } = useAnchorFeedback();
+  const waitStart = useRef<{ readonly anchor: Anchor; readonly at: number } | null>(null);
 
   // SW `client.navigate`가 같은 문서의 해시만 바꾸면 `popstate`로 온다.
   useEffect(() => history?.listen(() => setAnchor(readAnchor(history))), [history]);
@@ -144,13 +154,13 @@ export function useMessageAnchor({
       finish();
       return;
     }
-    const waitReplies = anchor.inThread && !repliesReady;
+    if (waitStart.current?.anchor !== anchor) waitStart.current = { anchor, at: Date.now() };
     const timer = setTimeout(
       () => {
         missing(scopeOf(shell.current, anchor), anchor.inThread);
         finish();
       },
-      waitReplies ? ANCHOR_REPLIES_TIMEOUT_MS : ANCHOR_GRACE_MS,
+      waitDelay(waitStart.current.at, anchor.inThread && !repliesReady),
     );
     return () => clearTimeout(timer);
     // reveal·missing은 매 렌더 새 함수지만 ref·setState만 쓴다 — 데이터 변화에만 다시 찾는다.

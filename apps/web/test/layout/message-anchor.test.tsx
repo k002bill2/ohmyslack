@@ -168,7 +168,7 @@ describe('알림 탭 위치 복원', () => {
 });
 
 /** 답글 조회 완료(`loadedReplies`)를 조절하는 대역 — 처음엔 비어 있고, 답글은 `deliver()` 후에 보인다. */
-function slowReplies(): { ds: DataSource; deliver: () => void } {
+function slowReplies(): { ds: DataSource; deliver: () => void; bump: () => void } {
   const full = seed();
   let snap: Snapshot = { ...full, messages: full.messages.filter((m) => m.rootId === undefined), loadedReplies: [] };
   const listeners = new Set<() => void>();
@@ -178,7 +178,12 @@ function slowReplies(): { ds: DataSource; deliver: () => void } {
     snap = { ...full, loadedReplies: [M1] };
     listeners.forEach((l) => l());
   };
-  return { ds, deliver };
+  /** 실시간 수신처럼 메시지 배열만 새로 만든다(답글 조회는 그대로 미완료). */
+  const bump = () => {
+    snap = { ...snap, messages: [...snap.messages] };
+    listeners.forEach((l) => l());
+  };
+  return { ds, deliver, bump };
 }
 
 describe('W-23b Codex r1 P2 반영', () => {
@@ -207,5 +212,25 @@ describe('W-23b Codex r1 P2 반영', () => {
     const panel = view.container.querySelector('.thread-panel')!;
     expect(panel.textContent).toContain(MESSAGE_ANCHOR_COPY.notFound);
     expect(screen.getAllByText(MESSAGE_ANCHOR_COPY.notFound)).toHaveLength(1);
+  });
+});
+
+describe('W-23b Codex 확인 라운드 P2 반영', () => {
+  it('답글 조회가 멈춘 동안 실시간 메시지가 계속 와도 대기 상한은 처음 기다리기 시작한 시각 기준이다', () => {
+    const { ds, bump } = slowReplies();
+    const history = createMemoryHistory(`/c/${C1}?thread=${M1}#message-${MISSING}`);
+    const view = render(<AppShell dataSource={ds} history={history} />);
+    const step = ANCHOR_REPLIES_TIMEOUT_MS / 4;
+    for (let i = 0; i < 4; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(step);
+        bump();
+      });
+    }
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(view.container.querySelector('.thread-panel')?.textContent).toContain(MESSAGE_ANCHOR_COPY.notFound);
+    expect(history.entries().at(-1)).toBe(`/c/${C1}?thread=${M1}`);
   });
 });
