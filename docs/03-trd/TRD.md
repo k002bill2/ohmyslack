@@ -7,9 +7,9 @@ created: 2026-11-07
 
 # TRD — ohmyslack (내부 코드명)
 
-- 상태: R3 최종안
+- 상태: R3 최종안 (R3.3 개정, 2026-11-08 ADR-001 채택)
 - 작성자: GPT-Luna
-- 입력: BUZZ_ROUND2_DOCS.md, BUZZ_ROUND3_FINAL.md, PRD v1.2 R3, R1 개발설계서·디자인 레퍼런스, GPT-Sol·Claude-Opus·Claude-Fable R2 리뷰
+- 입력: BUZZ_ROUND2_DOCS.md, BUZZ_ROUND3_FINAL.md, PRD v1.3(R3.3 반영), `docs/decisions/ADR-001-hermes-agent-integration.md`, R1 개발설계서·디자인 레퍼런스, GPT-Sol·Claude-Opus·Claude-Fable R2 리뷰
 - 정합성: FR ID·우선순위·수용 기준은 PRD 정본을 따릅니다. 저장소·단계·테스트 계약은 개발설계서 정본을 따르고, 토큰·브레이크포인트·레이아웃·컴포넌트·IME 규칙은 디자인 레퍼런스 정본을 따릅니다.
 
 ## 1. 시스템과 범위
@@ -30,11 +30,15 @@ created: 2026-11-07
                               v
                   [PostgreSQL single ledger]
             messages + global changes + read cursors
+
+[Hermes gateway (same Mac)] ── Bearer ──► 127.0.0.1:<BOT_PORT>
+                    [bot listener: /api/bot/v1/** + WS]   (Serve 대상 아님, §5-2)
+[Fastify] ── outbound HTTPS ──► [Web Push service]       (§6-2)
 ~~~
 
 스택은 React + TypeScript + Vite, Node.js + Fastify, PostgreSQL, 같은 앱의 PWA입니다. 설치 기록의 Node 26.12.1은 확인된 설치 버전이지 승인된 runtime pin은 아닙니다. 목표 major는 Node 26이며, 착수 때 공식 Node.js release 표에서 26.x가 지원 LTS인지 확인하고 그 LTS 최신 보안 패치의 정확한 버전을 `.nvmrc`, `engines`, CI, lockfile에 함께 고정합니다. 26.x가 아직 지원 LTS가 아니면 당시 지원 중인 LTS major를 사용하고 이 문서를 갱신합니다. PostgreSQL 운영 버전과 연결 경계는 착수 전 확인 항목입니다.
 
-MVP는 본인 다기기 대화 동기화, 합성 계정으로 초대·DM 권한 검증, 채널·1:1 DM·1단 스레드·수정/삭제·멘션·unread·실시간·복구·모바일 PWA입니다. 타인 초대/tailnet 추가는 별도 승인입니다. Redis, Slack API/브리지, 오프라인 발신 큐, 사용자 본문 지속 캐시, 파일, 검색, presence, Push, 네이티브 앱, Electron은 MVP 의존성에서 제외합니다.
+MVP는 본인 다기기 대화 동기화, 합성 계정으로 초대·DM 권한 검증, 채널·1:1 DM·1단 스레드·수정/삭제·멘션·unread·실시간·복구·모바일 PWA입니다. 타인 초대/tailnet 추가는 별도 승인입니다. Redis, Slack API/브리지, 오프라인 발신 큐, 사용자 본문 지속 캐시, 검색, presence, 네이티브 앱, Electron은 MVP 의존성에서 제외합니다. **최소 첨부(§6-1)·Web Push(§6-2)·Hermes 봇(§5-2)은 v1.3에서 MVP에 포함**하며 일반 파일은 제외합니다.
 
 ## 2. 데이터 모델
 
@@ -43,7 +47,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | 테이블 | 주요 필드·제약 | 역할 |
 |---|---|---|
 | `workspaces` | `id uuid PK`, `name text NOT NULL`, `created_at timestamptz NOT NULL` | 고정 1개. 참조 FK는 `ON DELETE RESTRICT` |
-| `users` | `id uuid PK`, `email_norm text UNIQUE NOT NULL`, `display_name text NOT NULL`, `password_hash text NOT NULL`, `status text NOT NULL CHECK (status IN ('active','disabled'))` | 실제 계정 1명과 합성 계정. 비활성화의 기준 필드 |
+| `users` | `id uuid PK`, `email_norm text UNIQUE NOT NULL`, `display_name text NOT NULL`, `password_hash text NULL`, `status text NOT NULL CHECK (status IN ('active','disabled'))`, `kind text NOT NULL DEFAULT 'human' CHECK (kind IN ('human','bot'))`, `CHECK ((kind='human') = (password_hash IS NOT NULL))` | 실제 계정 1명과 합성 계정, 봇 계정(§5-2). 비활성화의 기준 필드. 봇의 `email_norm`은 `<slug>@bot.invalid`(RFC 2606 예약 TLD, 로그인 불가 식별자) |
 | `workspace_members` | `workspace_id`, `user_id`, `role text CHECK (role IN ('owner','member')) NOT NULL`, composite PK, 두 FK `ON DELETE RESTRICT` | 단일 workspace 멤버십·관리 권한 |
 | `invites` | `id uuid PK`, `token_hash text UNIQUE NOT NULL`, `created_by uuid NOT NULL`, `expires_at timestamptz NOT NULL`, nullable `used_at timestamptz`, nullable `revoked_at timestamptz` | 만료·1회 사용. 사용자 FK `RESTRICT`, token 원문 미저장 |
 | `sessions` | `id uuid PK`, `user_id uuid NOT NULL`, `token_hash text UNIQUE NOT NULL`, `created_at timestamptz NOT NULL`, `last_seen_at timestamptz NOT NULL`, `expires_at timestamptz NOT NULL`, nullable `revoked_at timestamptz` | 기기별 세션. 사용자 FK `ON DELETE CASCADE` |
@@ -56,10 +60,14 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `thread_read_state` | `(root_message_id,user_id)` PK, `last_read_seq bigint NOT NULL`, `updated_at` | 스레드별 읽음 위치. root FK `RESTRICT` |
 | `thread_unread_targets` | `(root_message_id,user_id)` PK, `qualified_at timestamptz NOT NULL` | PRD §7-7의 스레드 대상 자격을 기록; 편집·삭제 뒤에도 자격 유지. root/user FK `RESTRICT` |
 | `message_mentions` | `(message_id,user_id)` PK | 메시지와 멤버 FK `RESTRICT`; 수정 시 재계산, 삭제 시 같은 트랜잭션에서 제거 |
+| `bot_tokens` | `id uuid PK`, `bot_user_id uuid NOT NULL` FK users `ON DELETE CASCADE`, `token_hash text UNIQUE NOT NULL`(SHA-256), `label text NOT NULL`, `created_at`, nullable `last_used_at`, nullable `revoked_at`; 부분 unique: 봇당 미폐기 토큰 **최대 2개**(회전 겹침용, 서비스 검사) | 봇 인증(§5-2). 원문 미저장 |
+| `attachments` | `id uuid PK`, `conversation_id uuid NOT NULL`, `uploader_id uuid NOT NULL`, nullable `message_id uuid`(결속 전 NULL), `mime text CHECK (mime IN ('audio/mpeg','image/png','image/jpeg','image/webp'))`, `byte_size integer CHECK (byte_size BETWEEN 1 AND 10485760)`, `sha256 text NOT NULL`, nullable `duration_ms`/`width`/`height`, `created_at`, `expires_at timestamptz NOT NULL`, nullable `deleted_at` | 첨부 메타데이터(§6-1). `(conversation_id,message_id)`→messages 복합 FK `RESTRICT` |
+| `attachment_blobs` | `attachment_id uuid PK` FK `ON DELETE CASCADE`, `bytes bytea NOT NULL` | 바이트 분리 저장(목록 조회가 bytea를 읽지 않게). 보존 만료·메시지 삭제 시 행 삭제 |
+| `push_subscriptions` | `id uuid PK`, `user_id uuid NOT NULL` FK `CASCADE`, `session_id uuid` FK sessions `CASCADE`, `endpoint text UNIQUE NOT NULL`, `p256dh text NOT NULL`, `auth text NOT NULL`, `vapid_key_id text NOT NULL`, `created_at`, nullable `last_success_at` | 기기(세션)별 구독(§6-2). 로그아웃·세션 폐기 시 함께 삭제 |
 
 모든 `id`, `*_id`, `user_id`, `conversation_id`, `workspace_id`는 `uuid NOT NULL`이며 PK/FK 구성 컬럼은 예외 없이 타입이 일치합니다. 식별·관계 컬럼은 PK, FK, nullable 표기가 없는 한 `NOT NULL`입니다. 시각은 `timestamptz NOT NULL`(nullable로 표시된 종료·폐기 시각 제외), 정렬·읽음·변경 cursor는 `bigint NOT NULL`입니다. enum은 표의 `CHECK` 허용값으로 제한합니다. `name_norm`은 channel 행에서 필수, `normalized_pair_key`는 DM 행에서 필수입니다. `messages.body`/`deleted_at` 조합은 미삭제 본문 또는 삭제 tombstone만 허용합니다.
 
-필수 인덱스: `messages(conversation_id,seq DESC)`, `messages(conversation_id,thread_root_id,seq)`, `conversation_changes(change_id)`, `conversation_changes(conversation_id,change_id)`, `conversation_members(user_id,conversation_id)`, `message_mentions(user_id,message_id)`. 메시지 본문은 `text NOT NULL`이며 `length(body) <= 4000`; 삭제 행은 `body IS NULL AND deleted_at IS NOT NULL`입니다. 빈 메시지는 거부합니다. 길이는 Unicode code point 기준입니다.
+필수 인덱스: `messages(conversation_id,seq DESC)`, `messages(conversation_id,thread_root_id,seq)`, `conversation_changes(change_id)`, `conversation_changes(conversation_id,change_id)`, `conversation_members(user_id,conversation_id)`, `message_mentions(user_id,message_id)`, `attachments(message_id)`, `attachments(expires_at) WHERE deleted_at IS NULL`, `bot_tokens(bot_user_id) WHERE revoked_at IS NULL`. 메시지 본문은 `text NOT NULL`이며 `length(body) <= 4000`; 삭제 행은 `body IS NULL AND deleted_at IS NOT NULL`입니다. 빈 메시지는 거부합니다. **첨부 메시지도 비어 있지 않은 본문을 가집니다**(FR-MSG-01 불변, ADR-001 §3-g 선택 b) — 어댑터는 caption 또는 파일명, 웹은 자리 문구로 채웁니다. 길이는 Unicode code point 기준입니다.
 
 채널 이름은 앞뒤 공백을 제거하고 Unicode NFC 정규화 후 case-fold한 `name_norm`으로 유일성을 검사합니다. DM 쌍 키는 두 사용자 UUID를 정렬해 만든 고정 표현이며, 두 사용자 멤버십은 생성 트랜잭션에서 함께 만듭니다. `thread_root_id` 복합 FK는 `(conversation_id,id)` unique key를 참조하며 원문은 같은 대화에 있어야 하고 그 원문 자체는 `thread_root_id IS NULL`이어야 합니다. 복합 FK와 서비스 검증으로 대화 경계를 보장하고, root가 답글인 입력은 거부합니다. 물리 삭제 대신 tombstone을 사용합니다.
 
@@ -89,13 +97,17 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/conversations/{id}/members` | 활성 참여자 목록. 참여자만 접근 |
 | `GET /api/conversations/{id}/messages?before_seq=&after_seq=&around_seq=&limit=` | 접근 가능한 대화 이력. `roots_only=true`로 본문만, 기본 최대 100건 |
 | `GET /api/messages/{root_id}/replies?before_seq=&after_seq=&limit=` | 1단 답글 목록. root 대화 접근 검사 |
-| `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?}`; 생성 메시지(`client_message_id` 포함)·seq·global `change_id` 반환 |
+| `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?,attachment_ids?}`; 생성 메시지(`client_message_id` 포함)·seq·global `change_id` 반환. `attachment_ids`는 최대 4개, 같은 요청자가 올리고 아직 결속되지 않은 같은 대화 첨부만(§6-1). 멱등 payload 비교에 포함 |
 | `PATCH /api/messages/{id}` | 작성자만 수정. 새 `change_id`, 수정된 mention ID 반환 |
 | `DELETE /api/messages/{id}` | 작성자만 tombstone 처리. 과거 본문/mention replay 방지 |
 | `GET /api/sync?after={change_id}&through={change_id?}&limit=` | 계정 전역 catch-up. 첫 페이지에서 watermark `through_cursor` 확정, 후속 페이지에 그대로 전달 |
 | `GET /api/sync/snapshot?conversation_id=&before_seq=&limit=` | cursor 만료(410) 또는 새 기기 초기화. 응답에 요청 시작점의 `snapshot_cursor`, 선택 대화의 현재 메시지 상태 페이지, `has_more`와 `next_before_seq` 포함 |
 | `PUT /api/read-state` | `{conversation_id,thread_root_id?,last_read_seq}`; 유효 위치 검사 후 단조 병합 |
 | `GET /api/healthz` | 비민감 상태만 공개 |
+| `POST /api/attachments?conversation_id=` | conversation write. 원시 바이트 body + `Content-Type`; 미결속 `attachment_id` 반환(§6-1) |
+| `GET /api/attachments/{id}` | `access: attachment`(첨부의 대화 read 검사). HTTP Range(206) 지원, 응답 헤더는 §6-1 |
+| `GET /api/push/vapid-public-key` | account. VAPID 공개키; push 비활성 시 404(§6-2) |
+| `POST /api/push/subscriptions`, `DELETE /api/push/subscriptions/{id}` | account. 현재 세션 기기의 구독 등록·해제(§6-2) |
 
 `GET /api/conversations` 각 항목은 `last_seq`, `last_read_seq`, `unread_count`, `mention_count`, `unread_thread_count`, `unread_threads[{root_message_id,last_read_seq,last_reply_seq,unread_reply_count,mention_count}]`를 포함합니다. 본문 `unread_count`는 읽지 않은 top-level 원문만 셉니다. `unread_threads`는 PRD §7-7에서 정한 자격이 있는 스레드만 포함하고, 대상별 `unread_reply_count`는 자기 답글·삭제 답글을 제외합니다. `mention_count`는 본인이 작성하지 않은 접근 가능 미열람 원문/답글에서 본인을 대상으로 한 mention만 세며, 본문 수에 스레드 수를 더하지 않습니다. 이 목록 응답은 사이드바 badge와 복귀 후 read-state snapshot의 데이터원이며 N+1 unread 요청을 만들지 않습니다. 답글 화면은 replies 응답과 사용자 read state로 표시합니다.
 
@@ -103,18 +115,18 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 
 새 기기에 저장된 sync checkpoint가 없으면 먼저 현재 conversation list와 read snapshot을 읽고, 활성 대화별 `GET /api/sync/snapshot?conversation_id=...`에서 최근 100개 메시지 단위의 현재 상태를 채웁니다. 오래된 이력은 일반 messages paging으로 요청합니다. 첫 snapshot 응답의 `snapshot_cursor` 이후 모든 대화 snapshot 완료까지 `/api/sync?after=snapshot_cursor`로 다시 catch-up하고, conversation list/read snapshot을 한 번 더 읽은 뒤 catch-up watermark를 기기 checkpoint로 저장합니다. cursor 만료(410)도 같은 절차를 사용합니다. 체크포인트는 기기별 숫자 metadata만 저장할 수 있고 메시지 본문·인증 응답은 지속 저장하지 않습니다. 이 절차가 끝날 때까지 UI는 최신으로 표시하지 않습니다.
 
-상태 코드는 400 입력/범위 오류, 401 인증 또는 비활성 계정, 403 참여자가 관리자 권한/타인 메시지 쓰기를 요청한 경우, 404 비멤버가 대화 단위 자원에 접근한 경우(존재 은폐), 409 멱등 충돌, 410 만료 cursor, 429 로그인 제한, 5xx 일반 오류입니다. 모든 route에 schema와 payload 상한 검증을 적용합니다.
+상태 코드는 400 입력/범위 오류, 401 인증 또는 비활성 계정, 403 참여자가 관리자 권한/타인 메시지 쓰기를 요청한 경우, 404 비멤버가 대화 단위 자원에 접근한 경우(존재 은폐), 409 멱등 충돌, 410 만료 cursor, 413 첨부 상한 초과(§6-1), 415 허용목록 밖 첨부 형식(§6-1), 429 로그인 제한·봇 rate limit(§5-2), 5xx 일반 오류입니다. 모든 route에 schema와 payload 상한 검증을 적용합니다.
 
 ## 4. WebSocket·동기화
 
-Endpoint는 same-origin `/api/ws`입니다. handshake에서 cookie session, 정확한 Origin, 활성 사용자 확인을 합니다. 모든 대화 접근은 개발설계서 정본의 `conversations.service.assertAccess(userId, conversationId, action)` 단일 경계를 통과합니다.
+Endpoint는 same-origin `/api/ws`입니다. handshake에서 cookie session, 정확한 Origin, 활성 사용자 확인을 합니다. 모든 대화 접근은 개발설계서 정본의 `conversations.service.assertAccess(userId, conversationId, action)` 단일 경계를 통과합니다. 봇 연결은 §5-2의 **별도 봇 리스너** `/api/bot/v1/ws`에서 같은 이벤트 스키마를 씁니다. handshake는 `Authorization: Bearer`이며 쿠키·Origin을 받지 않습니다.
 
 | 이벤트 | 방향·필드 |
 |---|---|
 | `conversation.subscribe` | client→server: `conversation_id`, `after_cursor`(마지막 완료된 sync checkpoint) |
 | `conversation.subscribed` | server→client: `conversation_id`, `through_cursor` ACK |
-| `message.created` | server→client: `conversation_id`, `change_id`, `message{id,seq,author_id,client_message_id,thread_root_id,body,created_at,mention_user_ids,root_reply_count?}` |
-| `message.updated` | server→client: `conversation_id`, `change_id`, 현재 message projection 및 `mention_user_ids` |
+| `message.created` | server→client: `conversation_id`, `change_id`, `message{id,seq,author_id,author_kind,client_message_id,thread_root_id,body,created_at,mention_user_ids,root_reply_count?,attachments[{id,mime,byte_size,duration_ms?,width?,height?}]}`; `author_kind`는 `users.kind`에서 서버가 채움(이력·sync projection 동일) |
+| `message.updated` | server→client: `conversation_id`, `change_id`, 현재 message projection(`author_kind`·`attachments` 포함) 및 `mention_user_ids` |
 | `message.deleted` | server→client: `conversation_id`, `change_id`, `message_id`, `seq`, `deleted_at`; body·mention 없음 |
 | `read.updated` | server→client: `conversation_id`, `thread_root_id?`, `last_read_seq`, `updated_at`; null root은 본문 읽음 |
 | `sync.required` | server→client: REST catch-up 수행 지시 |
@@ -134,7 +146,7 @@ cursor 만료 시 410 snapshot 절차를 사용하고 완료 전 최신 상태�
 - 상태 변경 HTTP는 session-bound CSRF custom header와 정확한 Origin 검사를 통과해야 합니다. `GET /api/me`가 session-bound `csrf_token`을 반환하고, 변경 요청은 `X-CSRF-Token`으로 돌려줍니다. GET/HEAD 부작용은 금지합니다.
 - WS handshake와 각 subscription에서 cookie session·Origin·membership을 확인합니다. 인증 token은 URL·localStorage·로그에 두지 않습니다.
 - 대화 목록·이력·수정·삭제·읽음·sync·subscribe는 같은 서버 접근 검사를 사용합니다. 비참여자는 대화 ID의 존재를 추론할 수 없습니다.
-- 메시지는 안전한 text node로 렌더합니다. 줄바꿈·코드 fence는 inert text/code block으로 표시하고, 자동 링크는 `https`·`http`만 허용합니다. raw HTML과 다른 위험 scheme은 실행하지 않습니다. 메시지 본문 최대 4,000 Unicode code point, WS frame 최대 64 KiB입니다. 초과 입력은 저장 전에 거부합니다.
+- 메시지는 안전한 text node로 렌더합니다. 줄바꿈·코드 fence는 inert text/code block으로 표시하고, 자동 링크는 `https`·`http`만 허용합니다. raw HTML과 다른 위험 scheme은 실행하지 않습니다. 메시지 본문 최대 4,000 Unicode code point, WS frame 최대 64 KiB입니다. 초과 입력은 저장 전에 거부합니다. 첨부 업로드 body 상한은 §6-1 값입니다(이 라우트만 예외, 전역 64 KiB 유지).
 - 로그인 실패는 계정과 source IP별 15분 동안 최대 5회 허용하고 이후 15분 차단합니다. 차단 만료 뒤 정상 자격 증명 로그인 성공 시 해당 제한 카운터를 초기화합니다. 계정 존재를 드러내지 않는 동일 오류 응답을 사용합니다. 제한값은 단일 사용자 운영을 위한 제안값이며 구현 전 보안 검토에서 확인합니다.
 - sync change 보존은 30일 또는 100,000개 change row 중 먼저 도달하는 경계까지입니다. 경계 이전 cursor는 410입니다. 삭제 본문을 담은 change snapshot은 존재하지 않습니다.
 - 로그·계측에서 본문·초안·이메일·IP·user agent·식별 ID·token·cookie·URL query·raw stack을 제외합니다.
@@ -147,7 +159,7 @@ cursor 만료 시 410 snapshot 절차를 사용하고 완료 전 최신 상태�
 | TR-SEC-04 | revoke·비활성화 WS 전파 | 5초 내 close, 후속 HTTP 401 |
 | TR-SEC-05 | 안전한 입력 표시 | 합성 script·위험 링크 실행 0 |
 | TR-SEC-06 | HTTP/WS schema 및 크기 제한 | 잘못된 입력 저장 없이 거절; 4,000 code point·64 KiB 경계 검사 |
-| TR-SEC-07 | tailnet 전용 노출 | 앱 listener는 loopback만; public port·Funnel 없음; Tailscale Serve HTTPS endpoint 허용 |
+| TR-SEC-07 | tailnet 전용 노출 | 앱·봇 listener 모두 loopback만; 봇 listener 포트는 Serve 설정에 없음; public port·Funnel 없음; Tailscale Serve HTTPS endpoint 허용 |
 | TR-SEC-08 | 사용자 본문 지속 캐시 금지 | Cache API/IndexedDB/localStorage에 본문·인증 응답 없음 |
 | TR-SEC-09 | 개인정보 없는 계측 allowlist | 허용목록 외 필드 0; 계측 실패가 메시지 처리를 막지 않음 |
 | TR-SEC-10 | 백업/복원 경계 | 별도 승인·격리 복원 대조; shared-infra 변경 없음 |
@@ -163,7 +175,7 @@ cursor 만료 시 410 snapshot 절차를 사용하고 완료 전 최신 상태�
 | S3 | 초대 폐기 | `POST /api/invites/{id}/revoke` 추가(owner, `admin` 메타). 폐기·사용·만료 token 수락은 같은 오류로 거부 | §6 #3, FR-AUTH-01 |
 | S4 | 자격 증명 복구 | 로컬 전용 명령 `apps/server/bin/reset-password.ts`(비노출 입력). 성공 시 대상 계정 **전 세션 revoke + WS 5초 내 close** | §6 #4, NC-21 |
 | S5 | HTTP 캐시 | `/api/**` 모든 응답 `Cache-Control: no-store` | §6 #5, NC-02 |
-| S6 | 보안 헤더(정본 이동) | 모든 HTML·API 응답: `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. 디자인 §6의 `Referrer-Policy`는 이 행을 인용 | §6 #6, NC-13 |
+| S6 | 보안 헤더(정본 이동) | 모든 HTML·API 응답: `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. 디자인 §6의 `Referrer-Policy`는 이 행을 인용. 첨부 오디오는 `default-src 'self'`(media-src 폴백)로 허용하며, 첨부 다운로드 응답에만 `Content-Security-Policy: sandbox; default-src 'none'`을 씁니다(§6-1, R3.3) | §6 #6, NC-13 |
 | S7 | 세션 만료와 WS | 만료 시각 도달 시 열린 WS를 close(1008). WS 트래픽은 세션을 연장하지 않음(HTTP 인증 요청만 연장) | §6 #7, NC-10 |
 | S8 | 세션 절대 상한 | sliding 30일 + **절대 90일** | §6 #9 |
 | S9 | 비밀번호 해시·정책 | Node 26 내장 `crypto.argon2`(argon2id), memory 19456 KiB·passes 2·parallelism 1·tag 32바이트·salt 16바이트, PHC 문자열로 저장. 길이 12–128자(code point), 그 외 조합 규칙 없음 | §6 #13, NC-20 |
@@ -174,15 +186,49 @@ cursor 만료 시 410 snapshot 절차를 사용하고 완료 전 최신 상태�
 
 TR-SEC 추가 행: **TR-SEC-11** 세션 cookie 속성(`HttpOnly`·`Secure`·`SameSite=Lax`·`Path=/`·host-only, 절대 90일) — 통합 테스트로 Set-Cookie 단언(NC-08). **TR-SEC-12** 로그인 제한(S1) — FR-AUTH-06.
 
+TR-SEC 추가 행(R3.3, ADR-001): **TR-SEC-13** 봇 토큰 경계(§5-2) — 토큰 원문 DB·로그 0, 폐기·회전 후 옛 토큰 401·열린 봇 WS 5초 내 close, 봇 토큰으로 사람 `/api/**` 401·사람 쿠키로 봇 경로 401, `Origin`/`Cookie` 동봉 봇 요청 400, 봇 listener는 Serve에서 닿지 않음(FR-BOT-02). **TR-SEC-14** 첨부 응답 헤더·형식 판정(§6-1) — 매직 바이트 판정 불일치 415·상한 초과 413·저장 0, 다운로드 응답에 `no-store`·`nosniff`·`sandbox` CSP, 비참여자 404(FR-OPS-05). **TR-SEC-15** push payload 무본문·endpoint 허용목록(§6-2) — payload 허용 키 밖 필드 0(본문·대화 이름·작성자 이름 0), 허용목록 밖·비 https endpoint 등록 거부, 404/410 구독 삭제(FR-CLIENT-05). 따라서 TR-SEC 집합은 TR-SEC-01–15입니다.
+
 위 표는 설계 제안이며 보안 감사나 구현 검증 결과가 아닙니다. 코드·DB·`.env`·인증정보·shared-infra에 접근하지 않았습니다.
+
+### 5-2. 봇 인증·권한 (R3.3, ADR-001 §3-a–e)
+
+봇 리스너와 봇 토큰 요청에 한해, 위 §5 본문·§5-1과 충돌하면 이 절이 우선합니다(사람 요청·메인 리스너 규칙은 바꾸지 않습니다). 수치는 단일 사용자 운영 **제안값**이며 미측정입니다. 구현 전 Security 리뷰에서 확인합니다.
+
+1. **봇 계정**: `users.kind='bot'`, `password_hash` NULL, workspace role `member`. 생성·비활성화·토큰 발급/회전/폐기는 로컬 명령 `apps/server/bin/bot-admin.ts`(비노출 출력, 원격 경로 없음)만 사용합니다. 로그인 서비스는 kind=bot을 일반 실패와 같은 오류로 거부하고 `sessions` 행을 만들지 않습니다.
+2. **토큰**: CSPRNG 32바이트 base64url에 접두사 `omsb_`(로그 마스킹·유출 스캔용). DB에는 SHA-256만 저장합니다. 원문은 발급 시 1회 출력합니다. 회전은 새 토큰 발급 → 어댑터 교체 → 옛 토큰 폐기 순서이며 봇당 미폐기 토큰은 2개까지입니다. 폐기·봇 비활성화 시 열린 봇 WS를 5초 안에 close합니다(TR-SEC-04와 같은 sweep). 만료 시각은 두지 않고(ADR-001 D-7 ★, 로컬 전용·회전 CLI로 관리) `last_used_at`을 기록합니다.
+3. **봇 리스너**: 별도 Fastify 인스턴스가 `127.0.0.1:<BOT_PORT>`에만 바인드합니다(bind 가드 재사용). Tailscale Serve 설정에 넣지 않습니다. 등록 라우트는 `/api/bot/v1/**`뿐이며 Host 허용목록은 `127.0.0.1:<BOT_PORT>`·`localhost:<BOT_PORT>`입니다. 메인 리스너는 `Authorization` 헤더를 인증에 쓰지 않습니다.
+4. **CSRF·Origin 예외 범위**: 봇 리스너에서만 CSRF 헤더·Origin 일치 검사를 적용하지 않습니다. 근거: 쿠키를 인증에 쓰지 않으므로 브라우저 자동 자격 증명 첨부가 없습니다. 대신 **`Origin` 또는 `Cookie` 헤더가 있는 요청은 400으로 거부**(브라우저발 요청 차단)합니다. 메인 리스너의 기존 규칙(security.ts 전역 훅, accountGuard CSRF)은 바꾸지 않습니다.
+5. **멤버십 상한**: 봇은 ① 봇 생성 시 CLI가 만드는 owner와의 DM ② owner가 웹에서 명시적으로 봇을 추가한 채널(P1)에만 참여합니다. 봇 토큰으로 `POST /api/dms`·채널 참여·멤버 목록 조회는 등록하지 않습니다. 접근 검사는 기존 `assertAccess` 단일 경계를 그대로 씁니다.
+6. **봇 라우트(최소)**: `GET /api/bot/v1/me`(봇 id, owner_user_id, 참여 대화 id 목록), `GET /api/bot/v1/conversations/{id}/messages`, `GET /api/bot/v1/messages/{root_id}/replies`, `POST /api/bot/v1/conversations/{id}/messages`, `PATCH /api/bot/v1/messages/{id}`, `GET /api/bot/v1/sync`, `POST /api/bot/v1/attachments`, `GET /api/bot/v1/attachments/{id}`, `PUT /api/bot/v1/read-state`, WS `/api/bot/v1/ws`. 요청·응답 스키마는 사람 라우트와 같은 shared zod 스키마입니다.
+7. **rate limit(봇 토큰별, 메모리)**: 메시지 생성 30건/분, 수정 60건/분, 첨부 업로드 10건/분·100 MiB/일. 초과 시 429, 저장 0.
+8. **작성자 종류 노출**: 모든 메시지 projection에 `author_kind`를 싣습니다. 어댑터의 owner 판정은 `GET /api/bot/v1/me`의 `owner_user_id`와 서버가 채운 `author_id` 비교로 합니다(본문 내용으로 판정 금지).
 
 ## 6. Tailscale Serve와 PWA
 
 Tailscale Serve HTTPS는 tailnet에서 로컬 reverse proxy로 제안합니다. 앱 백엔드 listener는 `127.0.0.1:<port>`만 사용하며, tailnet HTTPS 접점은 Tailscale Serve가 제공합니다. Funnel, router port forwarding, LAN bind, `0.0.0.0` listener는 금지합니다. Serve hostname은 비밀이 아니므로 앱 인증을 유지하고 Mac sleep/offline은 명시적으로 표시합니다. DB port는 Serve하지 않습니다.
 
-PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=standalone`을 사용합니다. 아이콘 세트와 관련 크기·purpose·apple touch icon은 디자인 레퍼런스 §9-2 정본을 따릅니다. service worker는 해시된 app shell 정적 파일만 캐시하고 `/api/**`, 메시지·읽음·인증·초대 응답과 WS를 우회합니다. 본문은 Cache API·IndexedDB·localStorage에 저장하지 않고 화면 메모리에서만 일시 보유합니다. 오프라인 발신 큐는 없고 server ACK 전 성공 표시도 없습니다. 로그아웃 시 화면 데이터를 비웁니다.
+PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=standalone`을 사용합니다. 아이콘 세트와 관련 크기·purpose·apple touch icon은 디자인 레퍼런스 §9-2 정본을 따릅니다. service worker는 해시된 app shell 정적 파일만 캐시하고 `/api/**`, 메시지·읽음·인증·초대 응답과 WS를 우회합니다. 첨부(`/api/attachments/**`)도 우회합니다. push 이벤트 핸들러는 알림 표시만 하고 본문을 저장하지 않습니다. 본문은 Cache API·IndexedDB·localStorage에 저장하지 않고 화면 메모리에서만 일시 보유합니다. 오프라인 발신 큐는 없고 server ACK 전 성공 표시도 없습니다. 로그아웃 시 화면 데이터를 비웁니다.
 
-반응형 구간·레이아웃 폭·IME·키보드 동작·상태 문구는 디자인 레퍼런스의 브레이크포인트·레이아웃·IME 규칙을 정본으로 따릅니다. PWA Push/offline messaging을 약속하지 않습니다. iOS Safari별 설치·cookie·WS 동작은 QA 확인 대상입니다.
+반응형 구간·레이아웃 폭·IME·키보드 동작·상태 문구는 디자인 레퍼런스의 브레이크포인트·레이아웃·IME 규칙을 정본으로 따릅니다. offline messaging은 약속하지 않습니다. Web Push는 §6-2 범위로 제공합니다. iOS Safari별 설치·cookie·WS 동작은 QA 확인 대상입니다.
+
+### 6-1. 첨부 (R3.3, ADR-001 §3-g, PRD FR-OPS-05)
+
+- 허용 형식: `audio/mpeg`(mp3), `image/png`, `image/jpeg`, `image/webp`. **서버가 매직 바이트로 판정**하고 선언 `Content-Type`·파일명과 다르면 415입니다. SVG·HTML·PDF 등은 FR-OPS-09(P1) 전까지 거부합니다.
+- 상한: 파일당 10 MiB(10,485,760바이트), 메시지당 4개. 업로드 라우트만 body 상한 예외입니다. 초과 시 413, 저장 0.
+- 저장: PostgreSQL `attachment_blobs`(ADR-001 D-4 ★ — 단일 원장·백업/복원 일관성). 대안(로컬 디스크 디렉터리)은 ADR-001 §3-g.
+- 결속: 업로드 → `attachment_id`(미결속, 1시간 내 메시지에 결속 안 되면 삭제) → 메시지 생성 시 `attachment_ids`로 결속합니다.
+- 보존: 오디오 30일, 이미지 90일(제안) 경과 시 바이트를 삭제하고 메타데이터는 「만료된 첨부」 자리표시자로 유지합니다. 메시지 삭제 시 즉시 바이트를 삭제합니다.
+- 다운로드 응답: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: inline`(허용 미디어만), **HTTP Range(206) 지원**(iOS 오디오 재생 — 실기 QA 확인 필요).
+- 권한: `access: attachment` 메타 → 첨부의 `conversation_id`로 `assertAccess(read)`. 비참여자 404.
+
+### 6-2. Web Push (R3.3, ADR-001 §3-i, PRD FR-CLIENT-05)
+
+- 범위: 사람 계정의 구독 기기에 ① Jarvis DM의 새 최상위 메시지·자기 스레드 답글 ② 자기 멘션을 보냅니다. 자기 메시지·이미 읽은 대화는 보내지 않습니다. 같은 대화 알림은 60초 안에 1건으로 묶습니다(`Topic` 헤더로 교체).
+- payload: `{v:1, kind:"message", conversation_id, thread_root_id?, from_bot:boolean}`만 보냅니다. **본문·대화 이름·작성자 이름 미포함.** 표시 문구는 SW 고정(「새 메시지가 있습니다」, Jarvis DM이면 「Jarvis」)입니다. iOS는 silent push 금지이므로 SW는 `event.waitUntil(showNotification())`를 반드시 호출합니다.
+- VAPID: P-256 키쌍을 로컬 명령 `apps/server/bin/vapid-keygen.ts`로 생성합니다. 개인키는 서버 비밀 파일(600, 저장소 밖)·환경 변수 경로로만 주입하고, 미설정 시 push 기능만 비활성(기동은 계속)하며 `/api/push/vapid-public-key`는 404입니다. `sub`는 `mailto:` 실제 주소(공백·꺾쇠 금지)입니다. 키 회전 = 전 구독 재등록(`vapid_key_id`로 구분).
+- 전송: 서버 → push service outbound HTTPS. `TTL` 헤더 필수(제안 86400). 404·410 응답 시 구독을 삭제합니다. endpoint는 https + 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com`)만 등록합니다.
+- 근거 URL: https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/ , https://webkit.org/blog/12945/meet-web-push/ , RFC 8030·8291·8292.
+- **확인 필요:** tailnet 전용 origin(`*.ts.net`)에서의 iOS 홈 화면 PWA 구독·수신은 공식 근거가 없습니다. 개발설계서 W-23(Web Push)의 선행 조건으로 실기 시험(QA-FR-CLIENT-05)을 먼저 수행합니다(ADR-001 D-3).
 
 ## 7. NFR·운영
 
@@ -199,7 +245,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 
 WebSocket heartbeat 제안은 25초 간격, 2회 연속 미응답 시 dead connection 정리입니다. 이는 모바일 네트워크에서 검증 전인 설정값입니다.
 
-계측은 로컬 allowlist만 사용합니다: `message_send_result(outcome enum, conv_kind enum, has_thread boolean, duration_ms bucket)`, `sync_result(trigger enum, outcome enum, caught_up_count bucket, duration_ms bucket)`, `read_sync_result(outcome enum, duration_ms bucket)`, `auth_denied(action enum, reason enum, count)`, `client_state(state enum, count)`. metric key·enum·7일 보관은 PRD §10 정본을 따릅니다. PII·본문·식별자·IP·UA·raw error를 금지하며 합성 부하 결과는 환경·실패율과 함께 별도 기록합니다.
+계측은 로컬 allowlist만 사용합니다: `message_send_result(outcome enum, conv_kind enum, has_thread boolean, duration_ms bucket)`, `sync_result(trigger enum, outcome enum, caught_up_count bucket, duration_ms bucket)`, `read_sync_result(outcome enum, duration_ms bucket)`, `auth_denied(action enum, reason enum, count)`, `client_state(state enum, count)`, `bot_delivery_result(direction enum{in,out}, outcome enum, has_attachment boolean, duration_ms bucket)`, `push_send_result(outcome enum{sent,expired,failed})`(R3.3, 식별자·본문·endpoint 미기록). metric key·enum·7일 보관은 PRD §10 정본을 따릅니다. PII·본문·식별자·IP·UA·raw error를 금지하며 합성 부하 결과는 환경·실패율과 함께 별도 기록합니다.
 
 SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지 않습니다. 백업은 승인된 shared-infra 절차를 변경 없이 사용하는 안이며 이번에 실행하지 않았습니다. 복원은 격리 DB에서 message 수, edit/delete 상태, DM membership, seq/change cursor, read cursor를 대조합니다. 백업 보존·삭제 본문의 과거 사본 제거·RPO/RTO·복구 책임자는 확정 필요입니다.
 
@@ -231,6 +277,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 | R3 최종안 | 2026-11-07 | R2 Must-fix 반영, 정본 문서 참조, 커밋순 전역 sync cursor·P0 API·읽음·삭제 replay·수치·DDL 계약 확정 |
 | R3.1 (Jarvis 정합) | 2026-11-07 | 디자인 ⚖️-D1 해소: 전송 응답과 `message.created` projection에 `client_message_id` 추가(저장된 컬럼 노출만, 계약 의미 변경 없음). Node 26.13.0 LTS 확인(nodejs.org dist index, 2026-10-28 배포) — 착수 시 고정값 |
 | R3.2 (Jarvis 보안 결정) | 2026-11-07 | 위협 모델 §6 공백 해소: §5-1 S1–S13, TR-SEC-11·12, 초대 폐기 route |
+| R3.3 (ADR-001) | 2026-11-08 | Hermes 연동 P0 승격(영환님 결정, ADR-001 D-1–D-7 ★ 채택): `users.kind`·`bot_tokens`·`attachments`·`attachment_blobs`·`push_subscriptions`, 봇 리스너(§5-2), 첨부(§6-1)·Web Push(§6-2) 라우트, `author_kind`·`attachments` projection, 413/415, TR-SEC-13–15, §1·§6 「파일·Push MVP 제외」 문장 정정, 계측 2종 |
 
 ## 리뷰 반영 기록
 
