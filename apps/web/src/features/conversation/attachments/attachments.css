@@ -38,12 +38,37 @@
   background: none;
   cursor: zoom-in;
 }
+/*
+ * 썸네일·확대 크기 상한(W-22b, CMP-29) — 수치는 이 블록 한 곳. 세로로 긴 이미지도 원본 높이로 늘지 않고 비율을 지킨 채 상자 안에 든다.
+ * 확대 이미지는 body portal(Dialog) 안이라 조상 변수가 닿지 않으므로 요소 자신에 선언한다.
+ */
 .attachment-thumb,
 .attachment-full {
+  --attachment-thumb-max-height: 320px;
+  --attachment-thumb-max-width: 480px;
+  --attachment-full-max-width: 90vw;
+  --attachment-full-max-height: 85vh;
   display: block;
   max-width: 100%;
   height: auto;
   border-radius: var(--radius-md);
+}
+.attachment-thumb {
+  width: auto;
+  max-width: min(100%, var(--attachment-thumb-max-width));
+  max-height: var(--attachment-thumb-max-height);
+  object-fit: contain;
+}
+.attachment-full {
+  width: auto;
+  max-width: min(100%, var(--attachment-full-max-width));
+  max-height: var(--attachment-full-max-height);
+  margin-inline: auto;
+  object-fit: contain;
+}
+/* 확대 Dialog 자체도 화면 안(90vw): 큰 원본이 Dialog 폭을 밀어 가로 넘침을 만들지 않게. */
+.dialog:has(.attachment-full) {
+  max-width: 90vw;
 }
 .attachment-expired {
   margin: 0;

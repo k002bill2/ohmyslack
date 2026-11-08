@@ -129,6 +129,7 @@ describe('conversations 라우트: 목록·탐색·생성', () => {
           kind: 'channel',
           name: fx.convs.get(id)?.name,
           peer_user_id: null,
+          peer_kind: null,
           last_seq: 3,
           last_read_seq: 1,
           unread_count: 0,

@@ -93,7 +93,7 @@ describe('봇 DM 고정·배지(사이드바)', () => {
     expect(document.querySelector('[data-space-id="jarvis"]')?.getAttribute('aria-label')).toBe('jarvis 봇');
   });
 
-  it('http-source: GET /api/members kind=bot 상대 DM에만 bot 표시가 붙어 최상단에 고정된다(표시 이름 무관)', async () => {
+  it('http-source: 목록 peer_kind=bot 상대 DM에만 bot 표시가 붙어 최상단에 고정된다(표시 이름 무관)', async () => {
     installViewport(1280);
     const server = new FakeServer();
     server.on('GET /api/members', () => ({
@@ -111,8 +111,8 @@ describe('봇 DM 고정·배지(사이드바)', () => {
       body: {
         conversations: [
           summary(),
-          summary({ id: U(20), kind: 'dm', name: null, peer_user_id: PEER }),
-          summary({ id: U(21), kind: 'dm', name: null, peer_user_id: BOT }),
+          summary({ id: U(20), kind: 'dm', name: null, peer_user_id: PEER, peer_kind: 'human' }),
+          summary({ id: U(21), kind: 'dm', name: null, peer_user_id: BOT, peer_kind: 'bot' }),
         ],
         next_cursor: null,
       },
@@ -132,6 +132,49 @@ describe('봇 DM 고정·배지(사이드바)', () => {
     await settle();
     const dms = [...document.querySelectorAll('[data-space-id]')].filter((b) => b.getAttribute('data-space-id') !== summary().id);
     expect(dms.map((b) => b.querySelector('.space-name')?.textContent)).toEqual(['비서', 'Jarvis']);
+    expect(dms[0]?.querySelector('.bot-badge')).not.toBeNull();
+    expect(dms[1]?.querySelector('.bot-badge')).toBeNull();
+  });
+
+  it('W-22b(Codex W-19b P2): 비활성 봇(GET /api/members에 없음)도 peer_kind=bot이면 배지·최상단 고정 유지', async () => {
+    installViewport(1280);
+    const server = new FakeServer();
+    server.on('GET /api/members', () => ({
+      status: 200,
+      body: {
+        members: [
+          { id: ME, display_name: 'A', role: 'owner', kind: 'human' },
+          { id: PEER, display_name: 'Jarvis', role: 'member', kind: 'human' },
+        ],
+      },
+    }));
+    server.on('GET /api/conversations', () => ({
+      status: 200,
+      body: {
+        conversations: [
+          summary(),
+          summary({ id: U(20), kind: 'dm', name: null, peer_user_id: PEER, peer_kind: 'human' }),
+          summary({ id: U(21), kind: 'dm', name: null, peer_user_id: BOT, peer_kind: 'bot' }),
+        ],
+        next_cursor: null,
+      },
+    }));
+    const storage = new MemoryStorage();
+    render(
+      <LiveApp
+        fetch={server.fetch}
+        history={createMemoryHistory('/')}
+        replacePath={() => undefined}
+        readHash={() => ''}
+        createSource={(deps) =>
+          createHttpDataSource({ ...deps, wsUrl: 'wss://oms.test/api/ws', createSocket: server.createSocket, storage, isOnline: () => true, setTimer: () => 0, clearTimer: () => undefined })
+        }
+      />,
+    );
+    await settle();
+    const dms = [...document.querySelectorAll('[data-space-id]')].filter((b) => b.getAttribute('data-space-id') !== summary().id);
+    expect(dms.map((b) => b.querySelector('.bot-badge') !== null)).toEqual([true, false]);
+    expect(dms[1]?.querySelector('.space-name')?.textContent).toBe('Jarvis');
     expect(dms[0]?.querySelector('.bot-badge')).not.toBeNull();
     expect(dms[1]?.querySelector('.bot-badge')).toBeNull();
   });
