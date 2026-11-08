@@ -31,6 +31,8 @@ function toMessage(view: MessageView, prev: Message | undefined, author: AuthorN
     deleted: view.deleted_at !== null,
     ...(view.edited_at === null ? {} : { editedAt: view.edited_at }),
     authorKind: view.author_kind,
+    // 구 서버·테스트 픽스처는 필드가 없을 수 있다 — 없거나 비면 키를 두지 않는다.
+    ...(Array.isArray(view.attachments) && view.attachments.length > 0 ? { attachments: view.attachments } : {}),
   };
 }
 

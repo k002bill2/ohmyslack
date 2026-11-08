@@ -39,9 +39,11 @@ export interface ApiDeps {
 export function createApi(deps: ApiDeps) {
   let csrf: string | null = null;
 
-  const request = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
+  /** `raw`: JSON 대신 원시 바이트(첨부 업로드, TRD §3 `POST /api/attachments`) — `Content-Type`은 파일 형식. */
+  const request = async <T>(method: string, path: string, body?: unknown, raw?: { readonly bytes: Blob; readonly type: string }): Promise<T> => {
     const headers: Record<string, string> = { Accept: 'application/json' };
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (raw !== undefined) headers['Content-Type'] = raw.type;
+    else if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && method !== 'HEAD' && csrf !== null) headers['X-CSRF-Token'] = csrf;
     let res: Response;
     try {
@@ -49,7 +51,7 @@ export function createApi(deps: ApiDeps) {
         method,
         credentials: 'same-origin',
         headers,
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(raw !== undefined ? { body: raw.bytes } : body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch {
       deps.onNetwork?.(false);
@@ -68,6 +70,8 @@ export function createApi(deps: ApiDeps) {
   return {
     get: <T>(path: string) => request<T>('GET', path),
     post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
+    /** 원시 바이트 `POST`(첨부 업로드, W-22). 바이트는 그대로 보내고 어디에도 저장하지 않는다(B7). */
+    upload: <T>(path: string, bytes: Blob, type: string) => request<T>('POST', path, undefined, { bytes, type }),
     /** `PATCH`(메시지 수정, W-10i). */
     patch: <T>(path: string, body: unknown) => request<T>('PATCH', path, body),
     /** `PUT`(읽음 위치 저장, TRD §3 `PUT /api/read-state`). */

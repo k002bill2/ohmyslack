@@ -7,6 +7,7 @@
 import type {
   ConversationMembersResponse,
   ConversationRef,
+  AttachmentUploadResponse,
   MessageDeleteResponse,
   ConversationsResponse,
   DiscoverResponse,
@@ -150,6 +151,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let nextMentions: readonly string[] | undefined;
   /** 전송 대기 항목의 멘션 ID(다시 시도도 같은 ID로 보낸다). */
   const mentionsFor = new Map<string, readonly string[]>();
+  let nextAttachments: readonly string[] | undefined;
+  /** 전송 대기 항목의 첨부 ID(업로드 완료분만, 다시 시도도 같은 ID). 메모리 전용(B7). */
+  const attachmentsFor = new Map<string, readonly string[]>();
   /** 이번 세션에 나간 채널(서버 목록은 `left_at IS NULL`만 준다 — REPORT 계약 부족). 다시 참여하면 지운다. */
   let leftChannels: ReadonlyMap<string, Space> = new Map();
   /** 목록 + 나간 채널(목록에 다시 나타나면 목록이 이긴다). */
@@ -338,12 +342,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     post: async (req): Promise<PostResult> => {
       const rootId = rootFor.get(req.clientMessageId);
       const mentionIds = mentionsFor.get(req.clientMessageId);
+      const attachmentIds = attachmentsFor.get(req.clientMessageId);
       try {
         const res = await api.post<MessageWriteResponse>(`/api/conversations/${encodeURIComponent(req.conversationId)}/messages`, {
           client_message_id: req.clientMessageId,
           body: req.body,
           ...(rootId === undefined ? {} : { thread_root_id: rootId }),
           ...(mentionIds === undefined ? {} : { mention_user_ids: mentionIds }),
+          ...(attachmentIds === undefined ? {} : { attachment_ids: attachmentIds }),
         });
         if (!ended) fold = foldView(res.change_id, res.message);
         return { ok: true, messageId: res.message.id };
@@ -356,6 +362,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       const id = deps.newClientMessageId?.() ?? crypto.randomUUID();
       if (nextRoot !== undefined) rootFor.set(id, nextRoot);
       if (nextMentions !== undefined && nextMentions.length > 0) mentionsFor.set(id, nextMentions);
+      if (nextAttachments !== undefined && nextAttachments.length > 0) attachmentsFor.set(id, nextAttachments);
       createdFor.set(id, new Date().toISOString());
       return id;
     },
@@ -937,12 +944,24 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    send(target, body, mentionUserIds) {
+    send(target, body, mentionUserIds, attachmentIds) {
       nextRoot = target.rootId;
       nextMentions = mentionUserIds;
+      nextAttachments = attachmentIds;
       void sendController.submit(target.conversationId, body);
       nextRoot = undefined;
       nextMentions = undefined;
+      nextAttachments = undefined;
+    },
+    uploadAttachment(conversationId, file) {
+      return attempt(async () => {
+        const res = await api.upload<AttachmentUploadResponse>(
+          `/api/attachments?conversation_id=${encodeURIComponent(conversationId)}`,
+          file,
+          file.type,
+        );
+        return res.attachment;
+      });
     },
     open(conversationId) {
       if (ended || conversationId === current) return;

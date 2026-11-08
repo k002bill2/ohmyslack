@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
+import type { UploadFn } from '../conversation/attachments/composer-upload.js';
 import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useMessageRoving, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
@@ -92,7 +93,9 @@ function ConversationPane(props: {
   readonly drafts: DraftStore;
   readonly onBack: () => void;
   readonly onReply: (id: string) => void;
-  readonly onSend: (body: string, mentionUserIds?: readonly string[]) => void;
+  readonly onSend: (body: string, mentionUserIds?: readonly string[], attachmentIds?: readonly string[]) => void;
+  /** 이미지 첨부 업로드(W-22, 본문 작성기만). 없으면 첨부 UI를 렌더하지 않는다. */
+  readonly onUpload?: UploadFn;
   readonly onRetry: (clientMessageId: string) => void;
   readonly onDiscard: (clientMessageId: string) => void;
   readonly itemActions?: ItemActions;
@@ -202,6 +205,7 @@ function ConversationPane(props: {
             showHint={breakpoint !== 'compact'}
             mentionScope={space.kind}
             onSend={props.onSend}
+            {...(props.onUpload === undefined ? {} : { onUpload: props.onUpload })}
             draft={{ store: props.drafts, key: space.id }}
             {...(membership?.mentions === undefined ? {} : { mentions: membership.mentions })}
           />
@@ -454,7 +458,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       drafts={drafts}
       onBack={() => dispatch({ type: 'back' })}
       onReply={(id) => dispatch({ type: 'open-thread', rootId: id })}
-      onSend={(body, mentionUserIds) => dataSource.send({ conversationId: space.id }, body, mentionUserIds)}
+      onSend={(body, mentionUserIds, attachmentIds) => dataSource.send({ conversationId: space.id }, body, mentionUserIds, attachmentIds)}
+      {...(dataSource.uploadAttachment === undefined
+        ? {}
+        : { onUpload: (file: File) => dataSource.uploadAttachment?.(space.id, file) ?? Promise.resolve({ ok: false as const, status: 'network' as const }) })}
       onRetry={retry}
       onDiscard={discard}
       itemActions={{

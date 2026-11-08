@@ -1,0 +1,111 @@
+/* CMP-27–29 첨부(W-22). 390 폭에서도 가로 넘침 0: 목록·썸네일·플레이어 모두 max-width 100%. */
+.msg-item > .attachment-list {
+  flex: 1 0 100%;
+}
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+  max-width: 100%;
+}
+.attachment-item,
+.attachment {
+  min-width: 0;
+  max-width: 100%;
+}
+.attachment-audio {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.attachment-audio-player {
+  width: 100%;
+  max-width: 100%;
+}
+.attachment-duration {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.attachment-image-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.attachment-thumb,
+.attachment-full {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+}
+.attachment-expired {
+  margin: 0;
+  font-style: italic;
+  color: var(--text-muted);
+}
+.attachment-failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+/* Composer 첨부(이미지 업로드). */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+  max-width: 100%;
+}
+.composer-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.composer-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-chip-size,
+.composer-chip-state {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.composer-chip-failed {
+  border-color: var(--danger-solid);
+}
+.composer-attach-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+}

@@ -3,6 +3,7 @@
  * 값 필드는 TRD §3 `GET /api/conversations` 항목 필드(unread_count·mention_count·unread_thread_count)와 대응한다.
  */
 import type { PendingMessage } from '../features/conversation';
+import type { AttachmentView } from '../../../../packages/shared/src/index.js';
 
 export type SpaceKind = 'channel' | 'dm';
 
@@ -40,6 +41,8 @@ export interface Message {
   readonly editedAt?: string;
   /** 서버 projection `author_kind`(W-19b). `bot`이면 CMP-26 배지. 없으면 사람으로 본다. */
   readonly authorKind?: 'human' | 'bot';
+  /** 서버 projection `attachments`(W-21/W-22). 사람·봇 메시지 공통 CMP-27. */
+  readonly attachments?: readonly AttachmentView[];
 }
 
 /** 디자인 §6-4 연결 상태 4종. */
@@ -122,7 +125,14 @@ export interface SpacesApi {
 export interface DataSource extends SpacesApi, MembershipApi {
   getSnapshot(): Snapshot;
   subscribe(listener: () => void): () => void;
-  send(target: { readonly conversationId: string; readonly rootId?: string }, body: string, mentionUserIds?: readonly string[]): void;
+  send(
+    target: { readonly conversationId: string; readonly rootId?: string },
+    body: string,
+    mentionUserIds?: readonly string[],
+    attachmentIds?: readonly string[],
+  ): void;
+  /** `POST /api/attachments?conversation_id=`(원시 바이트, W-21). 성공하면 미결속 첨부 — `send`의 `attachmentIds`로 결속한다. */
+  uploadAttachment?(conversationId: string, file: Blob): Promise<ActionResult<AttachmentView>>;
   /** 현재 대화가 바뀔 때 호출(구독·이력 로드). 메모리 구현은 없음. */
   open?(conversationId: string | null): void;
   /** 스레드를 열거나(root id) 닫을 때(null) 호출 — 기존 답글 조회. 메모리 구현은 없음. */
