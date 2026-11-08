@@ -6,6 +6,8 @@
 export interface MentionCandidate {
   readonly id: string;
   readonly displayName: string;
+  /** 봇 참여자(W-19b) — 후보에 남기고 CMP-26 배지만 붙인다(Jarvis DM 안 멘션 허용). */
+  readonly bot?: boolean;
 }
 
 export interface MentionSelection {

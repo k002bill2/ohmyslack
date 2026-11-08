@@ -137,7 +137,7 @@ describe('초대 발급·수락·폐기', () => {
     expect(res.json().members.map((m: { role: string }) => m.role).sort()).toEqual(['member', 'owner']);
     await ctx.schema.pool.query("UPDATE users SET status = 'disabled' WHERE id = $1", [ctx.memberId]);
     const after = await call(ctx.app, 'GET', '/api/members', owner);
-    expect(after.json().members).toEqual([{ id: ctx.ownerId, display_name: 'owner', role: 'owner' }]);
+    expect(after.json().members).toEqual([{ id: ctx.ownerId, display_name: 'owner', role: 'owner', kind: 'human' }]);
     expect((await call(ctx.app, 'GET', '/api/members')).statusCode).toBe(401);
   });
 });

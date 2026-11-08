@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { ActionResult } from '../../data/index.js';
+import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { MESSAGE_ACTION_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 import { MessageBody } from './MessageBody.js';
@@ -23,6 +24,8 @@ export interface MessageItemData {
   readonly editedAt?: string;
   readonly deleted?: boolean;
   readonly replyCount?: number;
+  /** 서버 `author_kind`(W-19b). `bot`이면 작성자 옆 CMP-26 배지 — 표시 이름으로 판정하지 않는다. */
+  readonly authorKind?: 'human' | 'bot';
 }
 
 export interface MessageItemProps {
@@ -61,8 +64,8 @@ export interface MessageItemProps {
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
 
 /** 디자인 §7-2 `aria-label="홍길동, 오후 3:12"` 형식(작성자, 시각). */
-export function messageLabel(author: string, createdAt: string): string {
-  return `${author}, ${TIME.format(new Date(createdAt))}`;
+export function messageLabel(author: string, createdAt: string, bot = false): string {
+  return `${withBotLabel(author, bot)}, ${TIME.format(new Date(createdAt))}`;
 }
 
 /**
@@ -166,10 +169,14 @@ function MessageItemView(props: MessageItemProps) {
       className={itemClass}
       onKeyDown={onKeyDown}
       data-message-id={message.id}
-      aria-label={messageLabel(message.author, message.createdAt)}
+      aria-label={messageLabel(message.author, message.createdAt, message.authorKind === 'bot')}
       {...longPress}
     >
-      <span className="msg-author">{message.author}</span>
+      {/* 배지는 작성자 span 안 — msg-item은 flex-wrap이라 형제로 두면 좁은 폭에서 배지만 다음 줄로 갈 수 있다. */}
+      <span className="msg-author">
+        {message.author}
+        {message.authorKind === 'bot' && <BotBadge />}
+      </span>
       {placement === 'inline' && <MessageTime message={message} placement="inline" />}
       {mentioned && <span className="msg-mention-label">{CONVERSATION_DESIGN_COPY.mentionedSelf}</span>}
       {isEditing ? (

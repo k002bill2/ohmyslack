@@ -6,6 +6,7 @@ interface MemberRow {
   id: string;
   display_name: string;
   role: 'owner' | 'member';
+  kind: 'human' | 'bot';
 }
 
 /** 수락 UPDATE: 미사용·미폐기·미만료 token만 한 번 교환한다(동시 수락 중 1건만 RETURNING). */
@@ -111,10 +112,10 @@ export function createPgMembersStore(pool: pg.Pool): MembersStore {
     },
     async listActiveMembers() {
       const res = await pool.query<MemberRow>(
-        `SELECT u.id, u.display_name, m.role FROM users u JOIN workspace_members m ON m.user_id = u.id
+        `SELECT u.id, u.display_name, m.role, u.kind FROM users u JOIN workspace_members m ON m.user_id = u.id
          WHERE u.status = 'active' ORDER BY u.display_name, u.id`,
       );
-      return res.rows.map((r): MemberSummary => ({ id: r.id, displayName: r.display_name, role: r.role }));
+      return res.rows.map((r): MemberSummary => ({ id: r.id, displayName: r.display_name, role: r.role, kind: r.kind }));
     },
     deactivate(actorId, targetId, at) {
       return inTransaction<DeactivateResult>(pool, async (client) => {

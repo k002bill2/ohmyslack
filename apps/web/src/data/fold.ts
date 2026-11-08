@@ -30,6 +30,7 @@ function toMessage(view: MessageView, prev: Message | undefined, author: AuthorN
     clientMessageId: view.client_message_id,
     deleted: view.deleted_at !== null,
     ...(view.edited_at === null ? {} : { editedAt: view.edited_at }),
+    authorKind: view.author_kind,
   };
 }
 

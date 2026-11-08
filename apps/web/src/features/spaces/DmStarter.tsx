@@ -34,7 +34,8 @@ export function DmStarter({ labelledBy, selfId, load, start, onStarted }: DmStar
       setView({ kind: 'error', failure: res });
       return;
     }
-    const others = res.value.filter((m) => m.id !== selfId);
+    // 봇은 후보에서 뺀다 — 서버가 사람→봇 DM을 거부한다(W-19b). 봇 DM은 서버가 만들어 목록에 이미 있다.
+    const others = res.value.filter((m) => m.id !== selfId && m.kind !== 'bot');
     setPicked(others[0]?.id ?? '');
     setView({ kind: 'ready', members: others });
   }, [load, selfId]);

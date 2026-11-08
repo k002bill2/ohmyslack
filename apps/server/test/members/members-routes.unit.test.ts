@@ -60,7 +60,7 @@ function memoryMembers(auth: MemoryAuthStore): Fixture {
       async listActiveMembers() {
         return [...auth.users.values()]
           .filter((u) => u.status === 'active')
-          .map((u) => ({ id: u.id, displayName: u.displayName, role: u.role }));
+          .map((u) => ({ id: u.id, displayName: u.displayName, role: u.role, kind: u.kind }));
       },
       async deactivate() {
         return fx.deactivateResult ?? { ok: true, revokedSessionIds: [] };

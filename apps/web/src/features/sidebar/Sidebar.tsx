@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import type { Account, ListState, Space } from '../../data';
+import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { SIDEBAR_SHELL_COPY } from './copy.js';
@@ -36,7 +37,7 @@ export interface SidebarProps {
 
 /** 접힘 상태 항목 이름: 이름 + 상태(디자인 §7-2 "접힘 상태는 각 항목 aria-label에 이름+상태 포함"). */
 function collapsedLabel(space: Space): string {
-  const parts = [space.name];
+  const parts = [withBotLabel(space.name, space.bot === true)];
   if (space.mentionCount > 0) parts.push(mentionLabel(space.mentionCount));
   if (space.unreadThreadCount > 0) parts.push(threadDotLabel(space.unreadThreadCount));
   return parts.join(COLLAPSED_LABEL_SEPARATOR);
@@ -69,6 +70,7 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
       >
         <span className="space-status" aria-hidden="true" />
         <span className={collapsed ? 'visually-hidden' : 'space-name'}>{space.name}</span>
+        {space.bot === true && !collapsed && <BotBadge />}
         {space.unreadThreadCount > 0 && (
           <span className="thread-dot" role="img" aria-label={threadDotLabel(space.unreadThreadCount)}>
             ↳
@@ -85,6 +87,11 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
   );
 }
 
+/** 봇 DM 최상단 고정(UI_STATES §2-3 「Jarvis DM」, W-19b). 봇 DM끼리·나머지끼리는 목록 순서 그대로(안정 분할). */
+export function pinBotDms(dms: readonly Space[]): readonly Space[] {
+  return [...dms.filter((s) => s.bot === true), ...dms.filter((s) => s.bot !== true)];
+}
+
 /** 목록 본문: 로딩·오류·빈(관리자/비관리자)·기본(UI_STATES §2-3). */
 function SpaceListBody(props: SidebarProps) {
   const { spaces, listState = 'ready', account } = props;
@@ -98,7 +105,7 @@ function SpaceListBody(props: SidebarProps) {
   return (
     <div className="space-sections">
       <SpaceSection {...props} title={SIDEBAR_SHELL_COPY.sectionChannels} spaces={spaces.filter((s) => s.kind === 'channel')} />
-      <SpaceSection {...props} title={SIDEBAR_SHELL_COPY.sectionDms} spaces={spaces.filter((s) => s.kind !== 'channel')} />
+      <SpaceSection {...props} title={SIDEBAR_SHELL_COPY.sectionDms} spaces={pinBotDms(spaces.filter((s) => s.kind !== 'channel'))} />
     </div>
   );
 }

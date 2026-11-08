@@ -1,3 +1,4 @@
+import { BotBadge } from '../../ui/BotBadge.js';
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import {
   JUST_COMPOSED_WINDOW_MS,
@@ -225,6 +226,12 @@ export function Composer({ label, placeholder, onSend, mentionOpen = false, onMe
                   }}
                 >
                   {c.displayName}
+                  {c.bot === true && (
+                    <>
+                      {' '}
+                      <BotBadge />
+                    </>
+                  )}
                 </li>
               ))
             )}
