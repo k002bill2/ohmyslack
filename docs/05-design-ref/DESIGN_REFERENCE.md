@@ -326,6 +326,11 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | CMP-23 | `ChannelBrowser` | 아직 참여하지 않은 공개 채널 목록 + "참여" 버튼(`/discover` 또는 Dialog) | 로딩 / 빈("참여할 수 있는 채널이 없습니다") / 참여 중(버튼 비활성) / 오류 | CONV-02 |
 | CMP-24 | `DmStarter` | 멤버 콤보박스(`GET /api/members`) → "DM 시작" → 기존 DM이면 그 DM으로 이동 | 빈("다른 멤버가 없습니다") / 오류 | CONV-03 |
 | CMP-25 | `MemberAdmin`(관리자) | 멤버 목록·역할·상태, **초대 링크 만들기**(발급 결과: 링크 1회 표시 + 복사 버튼 + 만료 시각, 다시 볼 수 없음 안내), **비활성화**(확인 Dialog) | 비관리자 접근: "권한이 없습니다" / 비활성화 완료: 행 muted + "비활성" 라벨 / 오류 | AUTH-01·03·05 |
+| CMP-26 | `BotBadge` | 작성자 이름 옆 봇 표시(ADR-001 §3-a·§3-c). 판정은 서버 projection `author_kind = 'bot'`만 따름. 색만으로 구분하지 않고 텍스트를 포함 | 표시 / 숨김(사람 작성자). 문구·모양은 결정 필요(Q-H1, UI_STATES §8-2) | BOT-03 |
+| CMP-27 | `AttachmentList` | 메시지 본문 아래 첨부 묶음(`role="list"`). 첨부별로 CMP-28·29를 렌더 | 첨부 있음 / 만료 자리표시자(문구 결정 필요, Q-H3) | OPS-05 |
+| CMP-28 | `AudioAttachment` | 오디오(mp3) 플레이어: 재생·일시정지·탐색·길이 표시 | 준비 / 재생 중 / 재생 실패("다시 시도") / 만료. 버튼 이름·실패 문구 결정 필요(Q-H3) | OPS-05 |
+| CMP-29 | `ImageAttachment` | 이미지(png·jpeg·webp) 썸네일(가로 넘침 0) + 탭 시 CMP-18 Dialog 확대 | 썸네일 / 확대 / 만료. 대체 텍스트 결정 필요(Q-H3) | OPS-05 |
+| CMP-30 | `PushSettings` | 설정(`/settings`)의 이 기기 알림 구독 카드. iOS 미설치 시 CMP-20 연결 | 미지원 / 홈 화면 미설치(iOS) / 권한 미결정 / 거부됨 / 구독됨 / 등록 실패. 문구·위치 결정 필요(Q-H4·Q-H5) | CLIENT-05 |
 
 ### 6-3. 메시지 전송 상태 매트릭스 (FR-MSG-02·03 정본, HTTP 결과 기준)
 
@@ -639,6 +644,9 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 ### R3.1 Jarvis 정합 (2026-11-07)
 - ⚖️-D1 해소: TRD R3.1이 전송 응답과 `message.created` projection에 `client_message_id`를 추가했습니다. §6-3 전이 4의 "자동 접기"는 기본 경로입니다(상세: `docs/07-ui-spec/UI_STATES.md` §2-5). 본문의 "TRD R3에 없음" 서술은 이 항목으로 대체합니다.
 - §14 기본값(slate+teal, 다크 모드 MVP·OS 추종, Pretendard 무수정, Lucide) 영환님 채택(2026-11-07 "★로 P1 착수"). 앱 심볼(§14-5)은 미결정.
+
+### R3.2 Hermes 연동 컴포넌트 (2026-11-08, ADR-001 채택)
+- §6-2에 CMP-26 `BotBadge`·CMP-27 `AttachmentList`·CMP-28 `AudioAttachment`·CMP-29 `ImageAttachment`·CMP-30 `PushSettings`를 추가했습니다(ADR-001 D-1–D-7 ★ 영환님 채택). 상태별 진입·탈출은 `docs/07-ui-spec/UI_STATES.md`가 펼치며, 문구·모양은 UI_STATES §8-2 Q-H1–Q-H6 결정 전까지 정하지 않습니다.
 
 ## 리뷰 반영 기록
 처리 합계: **Must-fix 9건 — 반영 9 · 거절 0 · 부분 0.** Should-fix 12건 반영. 자기 예고(`docs/06-reviews/Claude-Fable.md` §5) 4건 반영. R2 리뷰 원문은 수정하지 않았습니다. 아래 `file:line`은 이 문서(`docs/05-design-ref/DESIGN_REFERENCE.md`) R3 저장본 기준이며 저장 후 `grep -n`으로 대조했습니다.
