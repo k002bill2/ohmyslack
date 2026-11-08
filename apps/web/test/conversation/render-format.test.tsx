@@ -127,6 +127,45 @@ describe('FR-MSG-10 제한된 서식', () => {
     });
   });
 
+  it('FR-MSG-10 링크 글자 안 백틱은 코드 구분자가 아니라 굵게를 가리지 않는다(Codex r2 P2)', () => {
+    expect(parseBody('[`**bold**`](https://a.co)')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [
+        [
+          {
+            kind: 'link',
+            text: '`bold`',
+            href: 'https://a.co/',
+            children: [{ kind: 'text', text: '`' }, { kind: 'strong', children: [{ kind: 'text', text: 'bold' }] }, { kind: 'text', text: '`' }],
+          },
+        ],
+      ],
+    });
+    expect(parseBody('[`](https://a.co) **bold** `tail')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [
+        [
+          { kind: 'link', text: '`', href: 'https://a.co/', children: [{ kind: 'text', text: '`' }] },
+          { kind: 'text', text: ' ' },
+          { kind: 'strong', children: [{ kind: 'text', text: 'bold' }] },
+          { kind: 'text', text: ' `tail' },
+        ],
+      ],
+    });
+    expect(parseBody('`a` [**b**](https://a.co) `c`')[0]).toEqual({
+      kind: 'paragraph',
+      lines: [
+        [
+          { kind: 'code', text: 'a' },
+          { kind: 'text', text: ' ' },
+          { kind: 'link', text: 'b', href: 'https://a.co/', children: [{ kind: 'strong', children: [{ kind: 'text', text: 'b' }] }] },
+          { kind: 'text', text: ' ' },
+          { kind: 'code', text: 'c' },
+        ],
+      ],
+    });
+  });
+
   it('FR-MSG-10 펜스 안은 서식 해석 0', () => {
     expect(parseBody('```\n# 제목\n**x** `y` [a](https://a.co)\n- b\n```')).toEqual([
       { kind: 'code', text: '# 제목\n**x** `y` [a](https://a.co)\n- b' },
