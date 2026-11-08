@@ -58,11 +58,14 @@ def make_message(*, author: str = OWNER_ID, body: str = "hello", conv: str = DM_
 class FakeBotServer:
     def __init__(self) -> None:
         self.changes: list[tuple[int, str, dict]] = []
+        self.ops: dict[int, str] = {}  # change_id → sync `op`(create|edit|delete). 없으면 op 미포함(구 서버)
         self.next_change = 10
         self.snapshot_messages: list[dict] = []
         self.snapshot_pages: list[list[dict]] = []
         self.me_status = 200
         self.sync_expired_below: Optional[int] = None
+        self.sync_403 = 0  # 다음 N회 /sync를 403으로(권한 거부 — 인증 실패 아님)
+        self.post_status: list[int] = []  # 다음 게시 응답 상태를 순서대로 강제(예: [403])
         self.ws_fail = 0
         self.ws_status = 503
         self.post_429 = 0
@@ -78,9 +81,11 @@ class FakeBotServer:
         self._runner: Optional[web.AppRunner] = None
 
     # ---- state helpers ----
-    def add(self, message: dict, conv: str = DM_ID) -> int:
+    def add(self, message: dict, conv: str = DM_ID, op: Optional[str] = None) -> int:
         self.next_change += 1
         self.changes.append((self.next_change, conv, message))
+        if op is not None:
+            self.ops[self.next_change] = op
         return self.next_change
 
     async def push_live(self, message: dict, conv: str = DM_ID) -> None:
@@ -89,6 +94,11 @@ class FakeBotServer:
             if not ws.closed:
                 await ws.send_json({"type": "message.created", "conversation_id": conv, "change_id": cid,
                                     "message": message})
+
+    async def close_all(self, code: int, reason: bytes = b"") -> None:
+        for ws in list(self.sockets):
+            await ws.close(code=code, message=reason)
+        self.sockets.clear()
 
     async def drop_all(self) -> None:
         for ws in list(self.sockets):
@@ -110,13 +120,17 @@ class FakeBotServer:
         after = int(request.query["after"])
         if self.sync_expired_below is not None and after < self.sync_expired_below:
             return web.json_response({"error": "cursor_expired"}, status=410)
+        if self.sync_403 > 0:
+            self.sync_403 -= 1
+            return web.json_response({"error": "forbidden"}, status=403)
         latest = self.changes[-1][0] if self.changes else self.next_change
         through = int(request.query.get("through", latest))
         window = [c for c in self.changes if after < c[0] <= through]
         page, more = window[: self.page_size], len(window) > self.page_size
         nxt = page[-1][0] if (page and more) else through
         return web.json_response({
-            "changes": [{"change_id": c, "conversation_id": conv, "message": m} for c, conv, m in page],
+            "changes": [{"change_id": c, "conversation_id": conv, "message": m,
+                         **({"op": self.ops[c]} if c in self.ops else {})} for c, conv, m in page],
             "through_cursor": through, "scanned_through": nxt, "has_more": more, "next_cursor": nxt})
 
     async def snapshot(self, request):
@@ -131,6 +145,10 @@ class FakeBotServer:
     async def post(self, request):
         self._log(request)
         payload = await request.json()
+        if self.post_status:
+            status = self.post_status.pop(0)
+            self.posts.append({**payload, "_status": status})
+            return web.json_response({"error": "forbidden" if status == 403 else "error"}, status=status)
         ok_so_far = sum(1 for p in self.posts if p["_status"] == 200)
         if self.post_429 > 0 or (self.ok_posts_before_429 is not None and ok_so_far >= self.ok_posts_before_429):
             self.post_429 = max(0, self.post_429 - 1)

@@ -115,3 +115,16 @@
 3. **[조회·승인 필요]** `lsof -nP -iTCP -sTCP:LISTEN | grep ':<BOT_PORT>'` 0줄, `curl -s http://127.0.0.1:<BOT_PORT>/api/bot/v1/me`가 연결 거부인지 확인 → 봇 리스너 없음.
 4. **[변경·승인 필요]** 유출 의심 등 필요 시 `bot-admin.ts token revoke --id <token-id>`로 해당 토큰을 폐기합니다. 봇을 영구 퇴역할 때만 `disable`(되돌릴 수 없음).
 5. 메인 리스너·Serve 설정은 이 절차로 바뀌지 않습니다. `tailscale serve status`로 4절 기대와 같은지 다시 확인합니다.
+
+## 8. 봇 WS(`/api/bot/v1/ws`)와 연결 닫기 (W-18b2)
+
+- 연결: `ws://127.0.0.1:<BOT_PORT>/api/bot/v1/ws`, 헤더 `Authorization: Bearer <토큰>`만. `Origin`·`Cookie`가 있으면 업그레이드 400, 토큰 없음·무효는 401(서버가 소켓을 닫는다). URL에 토큰을 넣지 않는다.
+- 프레임: 사람 `/api/ws`와 같은 shared 스키마(`conversation.subscribe` → `conversation.subscribed`/`message.*`/`read.updated`/`error`/`sync.required`). 봇이 참여한 대화만 전달되고, 대화에서 빠지면 다음 전달 직전 재확인에서 `error(not_found)`로 구독이 끝난다.
+- 닫기: 토큰 폐기·회전 후 옛 토큰 폐기·봇 비활성화 → **close 1008, 사유 `token_revoked`**. CLI는 별도 프로세스라 봇 리스너가 2초 주기 sweep(열린 연결의 토큰 ID 전체를 쿼리 1회로 재검증)으로 잡는다 — 최악 지연 ≈ 2초 + 쿼리 1회(5초 보장). 같은 프로세스에서 일어난 폐기는 이벤트로 즉시 닫힌다.
+- 어댑터는 1008을 받으면 재연결을 멈추고 로그만 남긴다(토큰 교체 필요). 1001(서버 종료)·네트워크 끊김은 재연결한다.
+- 확인: `bot-admin disable` 후 어댑터 로그에 1008 `token_revoked`가 5초 안에 찍히는지 본다.
+
+## 9. 실서버 E2E(어댑터 ↔ 봇 리스너, 테스트 DB 전용)
+
+- 스크립트: `integrations/hermes-plugin/scripts/live-e2e.sh`. 테스트 DB(`.env.test`)에 실행별 스키마를 만들고 서버를 `BOT_PORT`로 띄운 뒤 CLI로 봇·토큰을 만들고 `pytest -m live`를 1회 돌린 다음 서버·스키마를 정리한다. 값(토큰·DB URL)은 출력하지 않는다.
+- 운영 DB·운영 `.env`로는 실행하지 않는다. Hermes 본체(`~/.hermes/hermes-agent`)는 import만 한다.

@@ -1,4 +1,4 @@
-import websocket from '@fastify/websocket';
+import websocket, { type WebSocket } from '@fastify/websocket';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { HttpError } from '../../http/errors.js';
 import { isAllowedOrigin } from '../../http/security.js';
@@ -10,7 +10,7 @@ import {
   wsClientFrameSchema,
 } from '../../shared.js';
 import { sessionToken } from '../auth/guards.js';
-import type { Authenticated } from '../auth/service.js';
+import type { Authenticated, AuthService } from '../auth/service.js';
 import { createHub, type Hub, type HubDeps } from './hub.js';
 
 export interface RealtimeOptions {
@@ -19,6 +19,7 @@ export interface RealtimeOptions {
 }
 
 export interface RealtimeDeps extends HubDeps {
+  readonly auth: AuthService;
   readonly allowedOrigin: string;
   readonly options?: RealtimeOptions;
 }
@@ -56,6 +57,39 @@ function parseFrame(text: string): ReturnType<typeof wsClientFrameSchema.safePar
   }
 }
 
+/** 허브에 붙이고 heartbeat·클라이언트 프레임을 처리한다. 사람 `/api/ws`와 봇 `/api/bot/v1/ws`가 같은 규칙을 쓴다. */
+export function serveSocket(
+  hub: Hub,
+  socket: WebSocket,
+  info: { userId: string; sessionId: string; token: string; expiresAt: Date },
+  heartbeatMs: number,
+): void {
+  const conn = hub.attach(socket, info);
+  let missed = 0;
+  socket.on('pong', () => {
+    missed = 0;
+  });
+  const beat = setInterval(() => {
+    missed += 1;
+    if (missed > WS_HEARTBEAT_MISSES) return socket.terminate();
+    socket.ping();
+    return undefined;
+  }, heartbeatMs);
+  beat.unref();
+  socket.on('close', () => {
+    clearInterval(beat);
+    hub.detach(conn);
+  });
+  socket.on('message', (data: unknown, isBinary: boolean) => {
+    if (byteLength(data) > WS_FRAME_MAX_BYTES) return hub.sendError(conn, 'frame_too_large', false);
+    const parsed = isBinary ? undefined : parseFrame(toText(data));
+    if (parsed === undefined || !parsed.success) return hub.sendError(conn, 'invalid_frame', false);
+    const frame = parsed.data;
+    if (frame.type === 'conversation.subscribe') return hub.subscribe(conn, frame.conversation_id, frame.after_cursor);
+    return hub.unsubscribe(conn, frame.conversation_id);
+  });
+}
+
 /**
  * `/api/ws` 업그레이드(정본: TRD §4·§5·§5-1 S7, NC-09·NC-10·NC-26). handshake에서 쿠키 세션(비연장)·정확한 Origin·
  * 활성 사용자를 확인한다(Host 허용 목록은 전역 onRequest 가드). token은 URL로 받지 않는다.
@@ -76,35 +110,8 @@ export async function registerRealtime(scope: FastifyInstance, deps: RealtimeDep
   scope.get(WS_PATH, { websocket: true, config: { access: 'account' }, preValidation: handshake }, (socket, request) => {
     const found = request.wsAuth;
     if (found === undefined) return socket.close(1008, 'unauthenticated');
-    const conn = hub.attach(socket, {
-      userId: found.user.id,
-      sessionId: found.session.id,
-      token: found.token,
-      expiresAt: found.session.expiresAt,
-    });
-    let missed = 0;
-    socket.on('pong', () => {
-      missed = 0;
-    });
-    const beat = setInterval(() => {
-      missed += 1;
-      if (missed > WS_HEARTBEAT_MISSES) return socket.terminate();
-      socket.ping();
-      return undefined;
-    }, heartbeatMs);
-    beat.unref();
-    socket.on('close', () => {
-      clearInterval(beat);
-      hub.detach(conn);
-    });
-    socket.on('message', (data: unknown, isBinary: boolean) => {
-      if (byteLength(data) > WS_FRAME_MAX_BYTES) return hub.sendError(conn, 'frame_too_large', false);
-      const parsed = isBinary ? undefined : parseFrame(toText(data));
-      if (parsed === undefined || !parsed.success) return hub.sendError(conn, 'invalid_frame', false);
-      const frame = parsed.data;
-      if (frame.type === 'conversation.subscribe') return hub.subscribe(conn, frame.conversation_id, frame.after_cursor);
-      return hub.unsubscribe(conn, frame.conversation_id);
-    });
+    const info = { userId: found.user.id, sessionId: found.session.id, token: found.token, expiresAt: found.session.expiresAt };
+    serveSocket(hub, socket, info, heartbeatMs);
     return undefined;
   });
   return hub;

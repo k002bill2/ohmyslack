@@ -25,22 +25,35 @@ const botPort = resolveBotPort(process.env, port);
 const webDistDir = resolveWebDistDir(process.env);
 const pool = new pg.Pool({ connectionString: required('DATABASE_URL') });
 const logger = createOpsLogger();
+const syncStore = createPgSyncStore(pool);
 const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: createPgAuthStore(pool),
   membersStore: createPgMembersStore(pool),
   conversationsStore: createPgConversationsStore(pool),
   messagesStore: createPgMessagesStore(pool),
-  syncStore: createPgSyncStore(pool),
+  syncStore,
   logger,
   ...(webDistDir === undefined ? {} : { webDistDir }),
 });
 await listenLoopback(app, process.env, port);
 
 const services = app.domainServices;
-// 봇 연결 닫기 훅(폐기·비활성화)은 CLI 프로세스에서 발행된다. 봇 WS sweep 연결은 다음 레인(p1-w18b2).
+// 봇 WS는 메인과 같은 이벤트 인스턴스를 구독한다. CLI(별도 프로세스)의 폐기·비활성화는 봇 WS sweep(2초)이 잡는다.
+const botEvents = createBotEvents();
 const botApp =
   botPort === undefined || services === undefined
     ? undefined
-    : buildBotApp({ bots: createBotService({ pool, events: createBotEvents() }), ...services, logger });
+    : buildBotApp({
+        bots: createBotService({ pool, events: botEvents }),
+        ...services,
+        logger,
+        realtime: {
+          syncStore,
+          conversationEvents: app.conversationEvents,
+          messageEvents: app.messageEvents,
+          readEvents: app.readEvents,
+          botEvents,
+        },
+      });
 if (botApp !== undefined && botPort !== undefined) await listenBot(botApp, process.env, botPort);
 
 let closing = false;

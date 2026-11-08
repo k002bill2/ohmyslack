@@ -171,6 +171,19 @@ export async function touchLiveToken(
 }
 
 /**
+ * 주어진 토큰 ID 중 지금 유효한 것(미폐기 + 활성 봇)만 한 쿼리로(봇 WS sweep, TRD §5-2 2항). last_used_at은 바꾸지 않는다.
+ */
+export async function liveTokenIdsAmong(db: Db, tokenIds: readonly string[]): Promise<ReadonlySet<string>> {
+  if (tokenIds.length === 0) return new Set();
+  const res = await db.query<{ id: string }>(
+    `SELECT t.id FROM bot_tokens t JOIN users u ON u.id = t.bot_user_id
+      WHERE t.id = ANY($1::uuid[]) AND t.revoked_at IS NULL AND u.kind = 'bot' AND u.status = 'active'`,
+    [[...tokenIds]],
+  );
+  return new Set(res.rows.map((r) => r.id));
+}
+
+/**
  * `GET /api/bot/v1/me`(TRD §5-2 6·8항): owner = 봇이 속한 워크스페이스의 활성 owner, 대화 = **활성(left_at IS NULL)** 참여만.
  * 비활성 봇은 토큰 검증에서 이미 걸러지므로 여기서는 보지 않는다.
  */

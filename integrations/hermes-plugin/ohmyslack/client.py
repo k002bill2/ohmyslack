@@ -36,7 +36,11 @@ class BotApiError(Exception):
 
 
 class BotAuthError(BotApiError):
-    """401/403 — 토큰 폐기·봇 비활성화 신호. 재시도하지 않는다(ADR-001 §3-f)."""
+    """401 — 토큰 폐기·봇 비활성화 신호. 재시도하지 않는다(ADR-001 §3-f)."""
+
+
+class BotForbidden(BotApiError):
+    """403 — 그 동작만 권한 거부. 인증 실패가 아니므로 연결·어댑터를 멈추지 않는다(TRD R3.3 §5-2)."""
 
 
 class CursorExpired(BotApiError):
@@ -89,8 +93,10 @@ class BotClient:
 
     @staticmethod
     def _raise_for(status: int, path: str, retry_after: Optional[str]) -> None:
-        if status in (401, 403):
+        if status == 401:
             raise BotAuthError(status, path)
+        if status == 403:
+            raise BotForbidden(status, path)
         if status == 410:
             raise CursorExpired(status, path)
         raise BotApiError(status, path, _parse_retry_after(retry_after))
@@ -155,6 +161,6 @@ class BotClient:
             # origin=None(기본)이라 Origin 헤더를 보내지 않는다.
             return await self._session.ws_connect(url, headers=self._headers(), heartbeat=25.0)
         except aiohttp.WSServerHandshakeError as exc:
-            if exc.status in (401, 403):
+            if exc.status == 401:
                 raise BotAuthError(exc.status, "/ws") from None
             raise BotApiError(exc.status, "/ws") from None

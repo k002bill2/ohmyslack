@@ -12,6 +12,7 @@ import type { SyncService } from '../sync/service.js';
 import { createBotRateLimiter, type BotRateLimiter } from './rate-limit.js';
 import { registerBotRoutes } from './routes.js';
 import type { BotService } from './service.js';
+import { registerBotRealtime, type BotRealtimeDeps } from './ws.js';
 
 /**
  * 봇 리스너(정본: TRD §5-2 3·4항, DEV_DESIGN B9). 메인과 **별도** Fastify 인스턴스로, `127.0.0.1:<BOT_PORT>`에만 바인드한다.
@@ -27,6 +28,8 @@ export interface BotAppOptions {
   readonly limiter?: BotRateLimiter;
   /** Host 허용목록의 포트. 생략하면 실제 바인드 포트(listen 전에는 모든 Host 거부). */
   readonly port?: number;
+  /** 있으면 봇 WS(`/api/bot/v1/ws`)를 등록한다. 메인 앱과 같은 이벤트 인스턴스여야 한다. */
+  readonly realtime?: BotRealtimeDeps;
 }
 
 declare module 'fastify' {
@@ -57,6 +60,11 @@ function registerBotRequestGuards(app: FastifyInstance, fixedPort: number | unde
     }
     if (headerPresent(request, 'origin') || headerPresent(request, 'cookie')) return sendError(request, reply, 400, 'browser_request_rejected');
     return undefined;
+  });
+  // 업그레이드 요청을 위 가드·봇 가드(401)·404가 일반 응답으로 끝내면 raw 소켓이 남는다 — 메인 security.ts(W-09b P3)와 같은 처리.
+  // 업그레이드에 성공한 요청은 hijack되어 onResponse가 돌지 않는다.
+  app.addHook('onResponse', async (request: FastifyRequest) => {
+    if ((request.raw as { readonly upgrade?: boolean }).upgrade === true) request.raw.socket.destroy();
   });
 }
 
@@ -95,6 +103,9 @@ export function buildBotApp(options: BotAppOptions): FastifyInstance {
     sync: options.sync,
     limiter: options.limiter ?? createBotRateLimiter(clock),
   });
+  if (options.realtime !== undefined) {
+    registerBotRealtime(app, { bots: options.bots, conversations: options.conversations, clock, realtime: options.realtime });
+  }
   return app;
 }
 

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createBotEvents, createBotService, type CreatedBot } from '../../src/modules/bots/index.js';
 import { as, createChannel, openDm, req, setupConvInt, teardownConvInt, type ConvIntContext } from '../conversations/conv-int-harness.js';
 import { bot as botCall, count, setupBotListener, teardownBotListener, type BotListenerContext } from './bot-listener-harness.js';
+import { connectedBot, subscribeBot } from './bot-ws-harness.js';
 
 /**
  * 봇 참여 범위 경계(TRD §5-2 5항: owner DM + owner가 추가한 채널, Codex r1 P1·P2).
@@ -83,6 +84,59 @@ describe('봇 리스너 멤버십 상한(§5-2 5항)', () => {
   });
 
   const msg = (body: string, root?: string) => ({ client_message_id: randomUUID(), body, ...(root === undefined ? {} : { thread_root_id: root }) });
+
+  it('FR-BOT-03 봇은 owner DM 밖 대화의 이력·이벤트·쓰기·DM 생성이 거부되고 모든 메시지 projection의 author_kind는 서버가 정한다', async () => {
+    const owner = await as(lc.conv.app, 'a');
+    const dm = lc.bot.dmConversationId;
+    const secret = await createChannel(lc.conv.app, owner, 'secret-ws');
+    const shared = await createChannel(lc.conv.app, owner, 'shared-ws');
+    await lc.conv.schema.pool.query(
+      'INSERT INTO conversation_members (conversation_id, user_id, joined_at, joined_seq) VALUES ($1, $2, now(), 0)',
+      [shared, lc.bot.botUserId],
+    );
+    // 이력·쓰기·DM 생성 거부(HTTP).
+    expect((await botCall(lc, 'GET', `conversations/${secret}/messages`)).status).toBe(404);
+    expect((await botCall(lc, 'POST', `conversations/${secret}/messages`, msg('침입'))).status).toBe(404);
+    expect((await botCall(lc, 'POST', 'dms', { user_id: lc.conv.ids.b })).status).toBe(404);
+    // 이벤트: 비참여 대화는 구독부터 not_found, 참여 대화(DM·추가된 채널)만 수신.
+    const ws = await connectedBot(lc.botPort, lc.token);
+    expect((await subscribeBot(ws, secret)).type).toBe('error');
+    expect((await subscribeBot(ws, dm)).type).toBe('conversation.subscribed');
+    expect((await subscribeBot(ws, shared)).type).toBe('conversation.subscribed');
+    await req(lc.conv.app, 'POST', `/api/conversations/${secret}/messages`, owner, msg('비밀 이벤트'));
+    expect((await req(lc.conv.app, 'POST', `/api/conversations/${dm}/messages`, owner, { ...msg('위장'), author_kind: 'bot' })).statusCode).toBe(400);
+    await req(lc.conv.app, 'POST', `/api/conversations/${dm}/messages`, owner, msg('지시'));
+    const posted = await botCall(lc, 'POST', `conversations/${dm}/messages`, { ...msg('보고'), author_kind: 'human' });
+    expect(posted.status).toBe(400);
+    expect((await botCall(lc, 'POST', `conversations/${dm}/messages`, msg('보고'))).status).toBe(201);
+    await req(lc.conv.app, 'POST', `/api/conversations/${shared}/messages`, owner, msg('채널 공지'));
+    await ws.waitFor((f) => f.type === 'message.created' && f.conversation_id === shared);
+    const created = ws.frames.filter((f) => f.type === 'message.created');
+    expect(created.filter((f) => 'conversation_id' in f && f.conversation_id === secret)).toEqual([]);
+    expect(JSON.stringify(ws.frames).includes('비밀 이벤트')).toBe(false);
+    const kinds = created.map((f) => (f.type === 'message.created' ? [f.message.body, f.message.author_kind] : []));
+    expect(kinds).toEqual([
+      ['지시', 'human'],
+      ['보고', 'bot'],
+      ['채널 공지', 'human'],
+    ]);
+    // 멤버십 종료(채널에서 빠짐) 뒤 그 대화 이벤트는 오지 않는다(사람 WS와 같은 전달 직전 재확인).
+    await lc.conv.schema.pool.query('UPDATE conversation_members SET left_at = now() WHERE conversation_id = $1 AND user_id = $2', [
+      shared,
+      lc.bot.botUserId,
+    ]);
+    await req(lc.conv.app, 'POST', `/api/conversations/${shared}/messages`, owner, msg('나간 뒤 공지'));
+    await ws.waitFor((f) => f.type === 'error' && 'conversation_id' in f && f.conversation_id === shared);
+    await req(lc.conv.app, 'POST', `/api/conversations/${dm}/messages`, owner, msg('마지막 지시'));
+    await ws.waitFor((f) => f.type === 'message.created' && f.message.body === '마지막 지시');
+    expect(JSON.stringify(ws.frames).includes('나간 뒤 공지')).toBe(false);
+    // 모든 projection(이력·sync)의 author_kind도 서버 결정.
+    const history = await botCall(lc, 'GET', `conversations/${dm}/messages`);
+    expect(history.json.messages.map((m: { author_kind: string }) => m.author_kind)).toEqual(['human', 'bot', 'human']);
+    const sync = await botCall(lc, 'GET', 'sync?after=0');
+    expect(sync.json.changes.every((c: { conversation_id: string }) => c.conversation_id !== secret)).toBe(true);
+    ws.close();
+  });
 
   it('봇은 참여하지 않은 대화의 이력·답글·쓰기·수정·snapshot·read-state가 404이고 sync에 0건이며 저장도 0이다', async () => {
     const owner = await as(lc.conv.app, 'a');

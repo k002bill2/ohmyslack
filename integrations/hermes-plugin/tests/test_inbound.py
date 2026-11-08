@@ -64,11 +64,12 @@ async def test_401_on_connect_is_fatal_without_retry(server, make_adapter, fake_
     assert fake_sleep.calls == []
 
 
-async def test_403_during_reconnect_stops_loop(server, make_adapter, fake_sleep):
+async def test_401_during_reconnect_stops_loop(server, make_adapter, fake_sleep):
+    # R3.3: 403은 동작별 권한 거부라 재연결을 멈추지 않는다(test_contract_r33) — 인증 실패 신호는 401뿐.
     adapter = make_adapter()
     assert await adapter.connect()
     await wait_for(lambda: server.sockets)
-    server.me_status = 403
+    server.me_status = 401
     await server.drop_all()
     await wait_for(lambda: adapter.fatal_error_code == "unauthorized")
     await wait_for(lambda: adapter._reader_task.done())
