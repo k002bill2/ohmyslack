@@ -46,6 +46,11 @@
 | CMP-23 | `ChannelBrowser` | 미참여 공개 채널 목록 + 「참여」 | §2-11 | D §6-2, §10-2 |
 | CMP-24 | `DmStarter` | 멤버 콤보박스 → 「DM 시작」 | §2-11 | D §6-2, §10-2 |
 | CMP-25 | `MemberAdmin`(관리자) | 멤버 목록·「초대 링크 만들기」·비활성화 | §2-12 | D §6-2, §10-2 |
+| CMP-26 | `BotBadge` | 작성자 이름 옆 봇 표시(`author_kind = 'bot'`) | §2-3, §2-5 | D §6-2, P FR-BOT-03 |
+| CMP-27 | `AttachmentList` | 메시지 안 첨부 묶음 | §2-5(첨부 표시) | D §6-2, P FR-OPS-05 |
+| CMP-28 | `AudioAttachment` | 오디오(mp3) 플레이어 | §2-5(첨부 표시) | D §6-2, P FR-OPS-05 |
+| CMP-29 | `ImageAttachment` | 이미지 썸네일·확대 | §2-5(첨부 표시) | D §6-2, P FR-OPS-05 |
+| CMP-30 | `PushSettings` | 설정의 이 기기 알림 구독 카드 | §2-10 | D §6-2, P FR-CLIENT-05 |
 
 화면 단위(SCR-01–12)와 포함 컴포넌트는 D §10-1을 그대로 따른다. 이 문서는 SCR ID를 §6 시나리오 표에서만 쓴다.
 
@@ -117,6 +122,7 @@
 | 멘션 n | `mention_count > 0` | CMP-04 숫자 배지 | — | `mention_count = 0` |
 | 새 답글 | `unread_thread_count > 0` | 이름 뒤 작은 점, 숫자 없음, `aria-label="새 답글 있는 스레드 n개"` | — | `unread_thread_count = 0` |
 | 나간 채널 | 본인이 `DELETE …/membership` 성공(목록에 유지 — P FR-CONV-02) | muted + 「나간 채널 · 다시 참여」 버튼 | 「다시 참여」 → `POST /api/conversations/{id}/join` | join 2xx → 기본 |
+| Jarvis DM | 봇 계정과의 owner DM(P FR-BOT-03, ADR-001 §3-d) | DM 목록 **최상단 고정** + CMP-26 표시(문구 → §8 Q-H1) | 선택 → `/c/:conversationId`. **숨기기·나가기 없음**(DM에는 나가기 동작이 없다 — 「채널 나가기」는 채널만, §2-4. 봇 DM을 서버가 나가기 거부하는지는 P·T·ADR-001에 명시 없음 — 해석) | — |
 
 **UnreadBadge**
 
@@ -152,7 +158,7 @@
 
 **DateSeparator**: 「오늘」 / 「어제」 / `YYYY-MM-DD`. 고유 상태 없음. 날짜 계산은 `Intl.DateTimeFormat('ko-KR')`(D §7-5).
 
-### 2-5. CMP-07 `MessageItem` · CMP-08 `MessageBody` — 메시지 상태 (정본: D §6-3, P FR-MSG-02·03, T §2·§3·§4)
+### 2-5. CMP-07 `MessageItem` · CMP-08 `MessageBody` · CMP-26–29 — 메시지 상태 (정본: D §6-3, P FR-MSG-02·03, T §2·§3·§4)
 
 **판정 원칙(D §2-1 D4, §6-3).** 저장 판정은 HTTP 결과로 한다. WS는 알림 경로다. Jarvis 결정(★)에 따라 T R3.1이 `client_message_id`를 전송 응답과 `message.created`에 넣었으므로, 「저장 여부 확인 중」의 **자동 해소를 기본 경로**로 하고 수동 「다시 시도」는 fallback으로 둔다(D §6-3 전이 4와 다른 점은 §8 I-3).
 
@@ -166,8 +172,10 @@
 | **실패** | HTTP 오류 응답 확정(4xx·5xx), 또는 전송 시점 `navigator.onLine === false`(HTTP 미호출) | 왼쪽 2px `danger-solid` 선 + 시간 자리 경고 아이콘(⚠️ 이름 빌드 시 확정) | 「전송 실패 · 다시 시도」 + 「삭제」 버튼, `role="alert"` **1회** | 「다시 시도」(같은 ID) / 「삭제」(로컬). **400(상한·빈 본문)·409** 는 다시 시도 대신 「다시 작성」 안내, 새 `client_message_id` | 「다시 시도」 → 전송 중 / 「삭제」 → 제거 |
 | **수정됨** | 응답·이벤트(`message.updated`)·이력에 `edited_at` 존재 | 본문 뒤 「(수정됨)」 muted | 시간 툴팁에 수정 시각 | 모두 | `deleted_at` → 삭제 자리표시자 |
 | **삭제 자리표시자** | `deleted_at` 존재(body 없음), `message.deleted` 수신 포함 | 이탤릭 muted 「삭제된 메시지입니다」, **자리 유지** | 답글 수가 있으면 CMP-14 유지 | 스레드 열기만 | 없음(최종 상태) |
-| 자기 멘션 | 응답·이벤트의 `mention_user_ids`에 내 ID(T §4:122) | 배경 `accent-bg` + 왼쪽 선 `accent-solid`, `@이름`은 `accent-text` | — | 모두 | 수정으로 내 ID 제거 → 해제 |
-| 스레드 답글 수 | 원문의 `root_reply_count > 0`(T §4, 삭제 답글 제외) | CMP-14 「답글 3 · 마지막 답글 5분 전」 형식(§2-7) | 버튼 | 스레드 열기 | 답글 수 0 → 숨김 |
+| 자기 멘션 | 응답·이벤트의 `mention_user_ids`에 내 ID(T §4:122) | 배경 `accent-bg` + 왼쪽 선 `accent-solid` + 라벨 「나를 멘션」(§9 결정 3), `@이름`은 `accent-text` | — | 모두 | 수정으로 내 ID 제거 → 해제 |
+| 스레드 답글 수 | 원문의 `root_reply_count > 0`(T §4, 삭제 답글 제외) | CMP-14 「↳ 답글 3」 형식(§2-7) | 버튼 | 스레드 열기 | 답글 수 0 → 숨김 |
+| 봇 작성자 | projection `author_kind = 'bot'`(서버 결정값, P FR-BOT-03) | 작성자 이름 옆 CMP-26 배지. 텍스트 포함, **색만으로 구분 금지**. 배지 문구·모양 — (정본 없음 → §8 Q-H1) | 배지 텍스트가 메시지의 접근 가능한 이름에 포함 | 답글(스레드 열기). 봇 메시지의 수정·삭제 버튼 없음(작성자 아님) | 없음 |
+| 첨부 포함 | `attachments.length > 0` | 본문 아래 CMP-27, 첨부별 CMP-28·CMP-29(아래 「첨부 표시」) | CMP-27 `role="list"` | 재생·확대·다운로드 | 첨부 만료 → 만료 자리표시자 |
 
 **전이 규칙(D §6-3 1–4 + Jarvis 결정)**
 
@@ -185,13 +193,27 @@
 
 **MessageBody**(D §6-2 CMP-08, T §5): 텍스트 노드로만 렌더, HTML 미실행. 자동 링크는 `https`·`http`만, 그 외 스킴은 일반 텍스트. 링크 `rel="noopener noreferrer"`. 코드 블록은 `--font-mono`, `overflow-x: auto`. 한글 줄바꿈 `word-break: keep-all; overflow-wrap: anywhere;`(D §3-2). 고유 상태 없음.
 
+- **제한된 서식(P FR-MSG-10, ADR-001 §3-f):** 굵게·인라인 코드(`--font-mono`)·글머리/번호 목록·제목 1–3단계·`[텍스트](http/https URL)` 링크만 서식으로 렌더한다. 제목은 본문 대비 **시각 크기 단계만** 두고 제목 태그를 남용하지 않는다(크기 단계 → §8 Q-H6). 그 외(기울임·취소선·인용·표)와 닫히지 않은 기호, 허용 밖 스킴 링크는 원문 기호 그대로 일반 텍스트. 렌더는 계속 텍스트 노드만(HTML 미생성, 위 원칙 유지). 지정 테스트 `apps/web/test/conversation/render-format.test.tsx`(DD 6-2 FR-MSG-10).
+- **`/`로 시작하는 본문(P FR-BOT-06):** 표시도 원문 그대로다. 봇 승인 요청 안의 명령 문구는 인라인 코드로 보인다(작성기 쪽 규칙은 §2-6).
+
+**첨부 표시** — CMP-27 `AttachmentList` · CMP-28 `AudioAttachment` · CMP-29 `ImageAttachment` (P FR-OPS-05, ADR-001 §3-g, 형식·상한·보존 T §6-1)
+
+| 상태 | 진입 조건 | 표시 | 접근성 | 가능한 동작 | 탈출 조건 |
+|---|---|---|---|---|---|
+| 오디오 준비 | mime `audio/mpeg`, 만료 전 | 재생 버튼·길이(`duration_ms`)·진행 막대 | 버튼 이름(재생·일시정지) — (정본 없음 → §8 Q-H3), 길이는 텍스트 | 재생·일시정지·탐색 | 재생 실패 |
+| 오디오 재생 실패 | `<audio>` error 또는 401·404 | 경고 아이콘 + 실패 문구 — (정본 없음 → §8 Q-H3) | `role="status"` | 「다시 시도」 | 재시도 성공 → 오디오 준비 |
+| 이미지 | mime `image/png`·`image/jpeg`·`image/webp` | 썸네일(가로 넘침 0, 최대 폭은 D §5 정본) | `alt` — (정본 없음 → §8 Q-H3) | 탭 → CMP-18 Dialog 확대 | — |
+| 만료 자리표시자 | 첨부 projection `expired = true`(바이트 삭제 또는 `expires_at` 경과, T §4) | muted 자리표시자 문구 — (정본 없음 → §8 Q-H3) | 텍스트 | 없음 | 없음(최종 상태) |
+
+지정 테스트(보조): `apps/web/test/conversation/attachments/audio-attachment.test.tsx`(DD 6-2 FR-OPS-05). 실기: `QA-FR-OPS-05`(iPhone PWA, 잠금 화면 재생 여부 기록).
+
 ### 2-6. CMP-11 `Composer` · CMP-12 `MentionPicker` (D §6-2, §7-3, §7-4; 상한 T §2·§5)
 
 **Composer**
 
 | 상태 | 진입 조건 | 표시 | 가능한 동작 | 탈출 조건 |
 |---|---|---|---|---|
-| 비어 있음 | 입력 0자(공백만 포함 여부 판정은 서버 빈 메시지 거부 규칙 T §2를 따름) | 전송 버튼(`send`) **비활성**. placeholder 문구 → §8 Q-4 | 입력 | 입력 생김 |
+| 비어 있음 | 입력 0자(공백만 포함 여부 판정은 서버 빈 메시지 거부 규칙 T §2를 따름) | 전송 버튼(`send`) **비활성**. placeholder: 본문 작성기 채널 「#<채널명>에 남기기」 / DM 「<상대 이름>에게 남기기」(Jarvis 결정), 스레드 작성기 「답글 남기기」(§9 결정 3, COPY_GAPS G-28). 접근 가능한 이름은 G-29 그대로(§4-4) | 입력 | 입력 생김 |
 | 입력 중 | 1 ≤ code point ≤ 4,000 | 전송 버튼 활성. 3,800 code point부터 글자 수 카운터 표시(형식 → §8 Q-5) | Enter 전송, Shift+Enter 줄바꿈(§4-3) | 비우기 / 상한 초과 / 조합 시작 |
 | 조합 중 | `compositionstart` ~ `compositionend`, 또는 keydown의 `isComposing`·`keyCode 229`·`key 'Process'` | 표시 변화 없음 | 앱은 **아무 키도 처리하지 않음**(D §7-4 순위 1) | `compositionend` → 확정 Enter 창(§4-3) |
 | 상한 초과 | code point > 4,000(T §5) | 전송 버튼 비활성 + 「4,000자까지 입력할 수 있습니다」 | 편집 | ≤ 4,000 |
@@ -199,12 +221,25 @@
 | 나간 채널 | 본인이 나간 채널 | **작성기 숨김**(CMP-06) | — | join 2xx |
 | 오프라인·재연결 | 연결 상태 무관 | **비활성화하지 않음**. `onLine === false`일 때만 전송 시도가 즉시 「실패」 | 입력·전송 | — |
 
+- **작성기 도움말(§9 결정 3, COPY_GAPS G-39):** 「Enter 전송 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter는 무시」. wide·medium에서 표시하고 compact(터치)에서는 숨긴다(Jarvis 결정). 작성기 입력에 `aria-describedby`로 연결한다.
+- **`/` 입력(P FR-BOT-06):** `/`로 시작하는 입력을 명령으로 해석하지 않는다. 작성기는 가로채지 않고 일반 텍스트로 원문 그대로 전송한다. 지정 테스트 `apps/web/test/conversation/slash-text.test.tsx`(DD 6-2 FR-BOT-06).
+
+**Composer 첨부** (CMP-11 확장, P FR-OPS-05; 형식·상한 T §6-1)
+
+| 상태 | 진입 조건 | 표시 | 접근성 | 가능한 동작 | 탈출 조건 |
+|---|---|---|---|---|---|
+| 업로드 중 | 파일 선택 → `POST /api/attachments` 응답 전 | 작성기 위 칩 + 진행 표시, 전송 버튼 비활성 | `aria-busy="true"` | 취소 | 2xx → 첨부 대기 / 오류 → 업로드 실패 |
+| 첨부 대기 | 업로드 2xx(아직 메시지에 묶이지 않은 첨부 id) | 칩(파일명·크기·제거) | 칩 이름 = 파일명 | 제거, 전송. 본문이 비면 자리 문구를 본문으로 채워 보냄(첨부 메시지도 본문 필수 — ADR-001 §3-g 본문 규칙, 문구 → §8 Q-H2) | 전송 → §2-5 메시지 상태 흐름 |
+| 업로드 실패 — 크기 | 413 | 칩 danger + 실패 문구 — (정본 없음 → §8 Q-H2). 상한 값은 T §6-1 인용 | `role="alert"` 1회 | 제거 | 제거 |
+| 업로드 실패 — 형식 | 415 | 같은 형식 + 허용 형식 안내 — (정본 없음 → §8 Q-H2) | `role="alert"` 1회 | 제거 | 제거 |
+| 업로드 실패 — 기타 | 네트워크 오류·5xx | 칩 danger + 「다시 시도」 | `role="alert"` 1회 | 「다시 시도」·제거 | 2xx → 첨부 대기 |
+
 **MentionPicker** (APG combobox, 후보원 `GET /api/conversations/{id}/members`)
 
 | 상태 | 진입 조건 | 표시 | 가능한 동작 | 탈출 조건 |
 |---|---|---|---|---|
 | 닫힘 | 기본 | — | — | 조합 중이 아닐 때 `@` 입력 |
-| 열림 | `@` 입력(조합 중 아님) | `role="combobox"` + `aria-expanded="true"` + `listbox`. 한글 검색은 `compositionupdate` 텍스트 포함 | `↑/↓` 이동, `Enter`/`Tab` 선택, `Esc` 닫기(작성기 유지) | 선택 / Esc / 트리거 삭제 |
+| 열림 | `@` 입력(조합 중 아님) | `role="combobox"` + `aria-expanded="true"` + `listbox`. 한글 검색은 `compositionupdate` 텍스트 포함. 머리말 채널 「이 채널의 멤버」 / DM 「이 대화의 멤버」(Jarvis 결정), 도움말 「↑↓ 이동 · Enter 선택 · Esc 닫기」(§9 결정 3, COPY_GAPS G-40) | `↑/↓` 이동, `Enter`/`Tab` 선택, `Esc` 닫기(작성기 유지) | 선택 / Esc / 트리거 삭제 |
 | 결과 없음 | 일치 후보 0 | 결과 없음 문구 → §8 Q-1(정본은 상태명만) | Esc | 입력 변경 |
 | 선택됨 | 후보 선택 | `@이름` 칩 + 전송 시 `mention_user_ids`에 ID 추가 | — | 칩 삭제 |
 | 로딩·오류 | 후보 요청 진행·실패 | 정본에 이 컴포넌트 고유 로딩·오류 문구 없음 → §8 Q-1 | — | 응답 |
@@ -228,11 +263,13 @@
 | 상태 | 진입 조건 | 표시 | 가능한 동작 | 탈출 조건 |
 |---|---|---|---|---|
 | 숨김 | `root_reply_count = 0` | 렌더 안 함 | — | 답글 생김 |
-| 답글 수 | `root_reply_count ≥ 1`, 대상 아님 또는 `unread_reply_count = 0` | 「답글 3 · 마지막 답글 5분 전」 형식(숫자·시각 치환) | 클릭/Enter → `?thread=:rootMessageId` | — |
+| 답글 수 | `root_reply_count ≥ 1`, 대상 아님 또는 `unread_reply_count = 0` | 「↳ 답글 3」 형식(숫자 치환, §9 결정 3, COPY_GAPS G-41). 「↳」는 장식이라 접근 가능한 이름에서 뺀다(`aria-hidden="true"`) | 클릭/Enter → `?thread=:rootMessageId` | — |
 | 새 답글 | 이 스레드가 `unread_threads[]`에 있고 `unread_reply_count > 0` | 위 + 점 + 「새 답글」 텍스트 | 스레드 열기 | 스레드 읽음 저장 → `unread_reply_count = 0` |
 | catch-up 보류 | 「최신 상태 확인 중…」 | 새 답글 표시 갱신 보류 | 스레드 열기 | 완료 |
 
 본문을 여는 것만으로 답글을 읽음 처리하지 않는다(P FR-SYNC-03). 대상이 아닌 스레드는 답글 수만 표시한다.
+
+마지막 답글 시각(「n분 전」)은 렌더하지 않는다. 계약(T §3·§4)에 마지막 답글 시각 필드가 없기 때문이다(W-10i). 「새 답글」 표시 규칙은 위 표 그대로다.
 
 ### 2-8. CMP-18 `Dialog` (D §6-2, §7-2, §4-3)
 
@@ -261,13 +298,28 @@
 | 초대 사용 불가 | 만료·사용됨·폐기(구분 없음) | 「이 초대 링크는 더 이상 사용할 수 없습니다」 | 없음 | — |
 | 네트워크 오류 | 수락 요청 응답 없음·5xx | `ErrorState` + 「다시 시도」(D §10-1 SCR-02) | 「다시 시도」 — 해시를 이미 지웠으므로 메모리의 토큰으로 재시도(구현 메모, §8 I-5) | 2xx |
 
-### 2-10. CMP-15·16·20·21·22
+### 2-10. CMP-15·16·20·21·22·30
 
 - CMP-15 `ConnectionBanner`: §5 상태 머신 전체.
 - CMP-16 `StatusRegion`: 시각적으로 숨긴 `aria-live="polite"`. 고유 상태 없음. 내보내는 문구는 §4-4.
-- CMP-20 `InstallHint`: 기본 = iOS 안내(공유 → 홈 화면에 추가) / macOS 분기(D §10-1 SCR-07). `display-mode: standalone`이면 **숨김**. 안내 문장 원문은 D에 없음 → §8 Q-1.
+- CMP-20 `InstallHint`: 기본 = iOS 안내(공유 → 홈 화면에 추가) / macOS 분기(D §10-1 SCR-07). `display-mode: standalone`이면 **숨김**. 안내 문장 원문은 D에 없음 → §8 Q-1. iOS에서 알림을 받으려면 홈 화면 설치가 필요하다는 안내로 CMP-30 「홈 화면 미설치(iOS)」 상태에서 연결된다(연결 문구 → §8 Q-H4).
 - CMP-21 `Avatar`: 이니셜 원형, neutral 5 고정, `alt` 대신 `aria-label` 이름(D §7-5). 상태 없음.
 - CMP-22 `SessionList`: P1(FR-AUTH-04). 이번 명세 범위 밖.
+
+**CMP-30 `PushSettings`** (P FR-CLIENT-05, ADR-001 §3-i, 전송 경로·키 관리 T §6-2). 카드 문구는 전부 — (정본 없음 → §8 Q-H4), 위치도 Q-H4.
+
+| 상태 | 진입 조건 | 표시 | 가능한 동작 |
+|---|---|---|---|
+| 미지원 | `PushManager` 없음 또는 서버 VAPID 공개 키 404 | 안내 문구 | 없음 |
+| 홈 화면 미설치(iOS) | iOS Safari이고 `display-mode: standalone` 아님 | 홈 화면에 추가하면 알림을 받을 수 있다는 안내 + CMP-20 링크 | 설치 안내 열기 |
+| 권한 미결정 | `Notification.permission = 'default'` | 알림 켜기 버튼 | 탭(사용자 제스처) → 권한 요청 → 구독 등록 |
+| 거부됨 | `Notification.permission = 'denied'` | 시스템 설정에서 바꾸라는 안내 | 없음 |
+| 구독됨 | 서버 구독 등록 2xx | 이 기기에서 알림을 받는 중이라는 표시 + 끄기 버튼 | 끄기 → 서버 `DELETE` + `unsubscribe()` |
+| 등록 실패 | 서버 4xx·5xx | 오류 + 「다시 시도」 | 「다시 시도」 |
+
+- 알림 탭 → payload의 `conversation_id`·`thread_root_id`·`message_id`로 라우팅하고 해당 메시지 위치를 연다(URL이 상태, §3-3, T §6-2).
+- 알림 문구는 서비스 워커 고정이며 메시지 본문을 표시하지 않는다(T §6-2, 고정 문구·잠금 화면 정책 → §8 Q-H5).
+- 지정 테스트(보조) `apps/web/test/pwa/push-handler.test.ts`(DD 6-2 FR-CLIENT-05), 실기 `QA-FR-CLIENT-05`.
 
 ### 2-11. CMP-23 `ChannelBrowser` · CMP-24 `DmStarter` (D §6-2, §10-2)
 
@@ -318,7 +370,7 @@
 | 본문 | 별도 화면(`/c/:conversationId`) | 최소 380px | `flex: 1`, 최소 480px |
 | ThreadPanel | 별도 화면(`?thread=`) | 오버레이 시트 `min(420px, 100%)`, 오른쪽에서 슬라이드 | 우측 패널 `clamp(320px, 32vw, 380px)` |
 | Composer | 하단 고정 + `env(safe-area-inset-bottom)` + `VisualViewport` 보정 | 본문 하단 | 본문 하단 |
-| 메시지 액션 | 길게 누르기 → 액션 시트(`Dialog`) | hover·포커스 시 인라인 툴바 | 동일 |
+| 메시지 액션 | 길게 누르기 또는 「메시지 작업」 버튼(포커스 시 보이는 접근성 대체, §9 결정 3) → 액션 시트(`Dialog`) | hover·포커스 시 인라인 툴바 | 동일 |
 | 헤더 | 뒤로 + 제목 + 더보기 | 제목 + 멤버 수 + 더보기 | 동일 |
 | 채널 찾기 / DM 시작 / 멤버 관리 | 라우트 화면(`/discover`, `/dm/new`, `/settings/members`) | Dialog / Dialog / 라우트 | 동일 |
 | 타임스탬프 | 메시지 아래 `text-xs` | 작성자 옆 | 작성자 옆 |
@@ -404,6 +456,8 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | 새 메시지 도착 | StatusRegion(`aria-live="polite"`) | 「새 메시지 1개」 형식으로 묶어 전달(과다 알림 방지) |
 | ThreadPanel | wide `aside` / medium `role="dialog" aria-modal="true"` / compact 라우트 페이지 | `aria-label="스레드"` |
 | MentionPicker | `role="combobox"` + `aria-expanded` + `listbox` | — |
+| Composer | 입력란 + 도움말 `aria-describedby`(wide·medium) | 본문 「{공간 이름}에 메시지 작성」(예: 「#공지에 메시지 작성」) / 스레드 「답글 작성」(COPY_GAPS G-29, 결정 3에서 바꾸지 않음). placeholder는 이름을 대신하지 않는다 |
+| ThreadSummary | 버튼 | 보이는 텍스트(「답글 n」, 해당 시 「새 답글」). 앞의 「↳」만 `aria-hidden="true"`로 이름에서 뺀다 |
 | Dialog | APG modal dialog | 용도별 제목(정본 없음 → §8 Q-1) |
 | UnreadBadge | 숫자 표시 | `aria-label="멘션 2개"` |
 | 새 답글 점 | — | `aria-label="새 답글 있는 스레드 n개"` |
@@ -498,7 +552,13 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | FR-CLIENT-02 | §2-2, §3-1–3-3 | `FR-CLIENT-02 디자인 정본의 모든 구간과 경계 전후 폭에서 정본 단수로 렌더되고 compact에서 공간 본문 스레드 뒤로 이동이 된다` | 컴포넌트 `apps/web/test/layout/responsive.test.tsx` | 수동 `QA-FR-CLIENT-02`: 정본 §11 QA 폭 목록 전부 가로 넘침 0, iPhone 390px S2·S4·S6, 가상 키보드 가림 0 |
 | FR-CLIENT-07 | §2-5(텍스트 상태), §4-2 F1, §4-4, §5-1 | `FR-CLIENT-07 주요 조작에 접근 가능한 이름과 가시 포커스가 있고 전송 실패·연결 상태를 색 외 텍스트로 표시하며 스레드를 닫으면 원래 답글 버튼으로 포커스가 돌아온다` | 컴포넌트 `apps/web/test/a11y/labels.test.tsx` | 수동 `QA-FR-CLIENT-07`: 200% 확대에서 주요 조작 가능, 그레이스케일에서 상태 구분 |
 | FR-MSG-02 | §2-5(상태표·전이 1–6), §5-1 | `FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 않고 HTTP 오류는 실패와 재시도로 표시하며 연결 단절만으로 미저장을 단정하지 않고 자동 전송 큐를 만들지 않는다` | 컴포넌트 `apps/web/test/conversation/send-status.test.tsx` | 보조 통합 `apps/server/test/messages/durability.int.test.ts`: 커밋 후에만 성공 응답, 주입한 롤백은 오류 응답·행 0·WS 0, 서버 앱 종료·재기동 후 확인된 본문 조회 |
+| FR-MSG-10 | §2-5(MessageBody 제한된 서식) | `FR-MSG-10 굵게·인라인 코드·목록·제목·http/https 마크다운 링크는 텍스트 노드로 표시되고 그 외 스킴과 닫히지 않은 기호는 원문 그대로이며 HTML을 만들지 않는다` | 컴포넌트 `apps/web/test/conversation/render-format.test.tsx` | 보조 단위 `apps/web/test/conversation/render-linear.test.ts`: 4,000자 최악 입력 선형 시간(F-1 회귀) |
+| FR-BOT-04 | §2-5(봇 작성자·스레드 답글 수), §2-7 | `FR-BOT-04 봇 토큰으로 만든 답글도 1단 스레드 규칙과 같은 대화 root만 허용하며 봇 답글은 root_reply_count와 스레드 unread 규칙을 따른다` | 통합 `apps/server/test/bots/bot-thread.int.test.ts` | 수동 `QA-FR-BOT-04`(어댑터 pytest: 최상위=새 세션·답글=같은 세션 매핑 결과 첨부) |
+| FR-BOT-06 | §2-5(`/` 본문), §2-6(`/` 입력) | `FR-BOT-06 슬래시로 시작하는 owner 메시지는 작성기가 가로채지 않고 원문 그대로 전송·표시되며 승인 요청 안의 명령 문구는 인라인 코드로 보인다` | 컴포넌트 `apps/web/test/conversation/slash-text.test.tsx` | 수동 `QA-FR-BOT-06`(어댑터 pytest: owner 외 작성자 `/approve` 무시 + 실기 승인 왕복 1회) |
+| FR-OPS-05 | §2-5(첨부 표시), §2-6(Composer 첨부) | `FR-OPS-05 허용목록 밖 형식과 상한+1바이트 첨부는 저장되지 않고 내용으로 형식을 판정하며 비참여자는 404이고 Range 요청은 206이며 보존 만료·메시지 삭제 시 바이트가 지워진다` | 통합 `apps/server/test/attachments/attachments.int.test.ts` | 보조 통합 `apps/server/test/attachments/attachment-headers.int.test.ts`(nosniff·sandbox CSP·no-store), 컴포넌트 `apps/web/test/conversation/attachments/audio-attachment.test.tsx` / 수동 `QA-FR-OPS-05`(iPhone PWA mp3 재생) |
+| FR-CLIENT-05 | §2-10(CMP-30) | `FR-CLIENT-05 구독 기기에 본문 없는 payload로 알림이 1건 전송되고 404·410 구독은 삭제되며 허용목록 밖 endpoint는 등록되지 않는다` | 통합 `apps/server/test/push/push.int.test.ts`(가짜 push service) | 보조 컴포넌트 `apps/web/test/pwa/push-handler.test.ts`: SW push 이벤트가 항상 알림을 표시하고 본문을 저장하지 않음 / 수동 `QA-FR-CLIENT-05`(iOS 16.4+ 홈 화면 PWA·tailnet origin 실기 수신) |
 
+- FR-MSG-10·FR-BOT-04·FR-BOT-06·FR-OPS-05·FR-CLIENT-05 5행은 ADR-001 채택(2026-11-08, P0 42개)으로 추가한 UI 관련 P0이며 DD 6-2 R3.3 행을 그대로 옮겼다. 웹 구현은 W-19(봇 표시·서식)·W-22(웹 첨부)·W-23(Web Push).
 - 같은 W-10 범위의 인접 테스트(참고, 이번 매핑 대상 아님): FR-MSG-08 `apps/web/test/conversation/composer-ime.test.tsx`(§4-3), FR-SYNC-07 보조 `apps/web/test/sync/resume-banner.test.tsx`(§5), FR-SYNC-04 보조 `apps/web/test/sidebar/badge-sync.test.tsx`(§2-3).
 - `send-status.test.tsx`에 넣을 사례 제안(테스트 이름은 바꾸지 않음): ① 2xx 전 저장 확인 미표시 ② 4xx·5xx → 「전송 실패 · 다시 시도」 ③ 응답 없는 네트워크 오류 → 「저장 여부 확인 중 · 다시 시도」(실패 아님) ④ 대응 키가 같은 `message.created` → 저장 확인으로 자동 해소 ⑤ 다른 `author_id`·다른 대화의 같은 `client_message_id`는 해소하지 않음 ⑥ WS close로 저장 확인 항목이 바뀌지 않음 ⑦ 재시도 요청이 같은 `client_message_id`·본문 ⑧ 자동 재전송 0회.
 
@@ -538,6 +598,12 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | Q-13 | 클라이언트 측 heartbeat 감지(ping 송신·타임아웃)를 둘지 | CMP-15 | TRD 저자 + QA-FR-SYNC-07 |
 | Q-14 | 경고·물음표 아이콘 Lucide 실제 이름(D §3-4 ⚠️) | CMP-07·17 | Developer(빌드 시) |
 | Q-15 | 「저장 여부 확인 중」 항목 로컬 삭제 버튼의 문구(정본 「삭제」를 같이 쓸지) | CMP-07 | Designer |
+| Q-H1 | 봇 배지 문구·모양(텍스트 "봇" vs "Jarvis" 고정 아이콘 — 후보 표기이며 정본 아님) | CMP-26, CMP-03(Jarvis DM 항목) | Designer → D §6 정본 |
+| Q-H2 | 첨부만 보낼 때 본문으로 채울 자리 문구(후보 예: "[음성]"·"[이미지]"), 작성기 업로드 실패 문구(크기·형식·허용 형식 안내) | CMP-11 | Designer |
+| Q-H3 | 오디오 플레이어 버튼 이름·재생 실패 문구·만료 자리표시자 문구, 이미지 `alt` 기본값 | CMP-27·28·29 | Designer |
+| Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — ★ 설정 화면 + Jarvis DM 첫 진입 시 1회 안내 제안. 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
+| Q-H5 | 알림 고정 문구(후보: "Jarvis" / "새 메시지가 있습니다")와 잠금 화면 노출 정책 | CMP-30, 서비스 워커 | 영환님 + TRD 저자(T §6-2) |
+| Q-H6 | 제목(`#`) 서식의 시각 크기 단계와 메시지 목록 밀도 영향 | CMP-08 | Designer |
 
 ## 9. 문구 공백 채택 기록 (Jarvis ★, 2026-11-07)
 
@@ -550,3 +616,13 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
   - G-18 최종 배포 이름 — DESIGN_REFERENCE §14-5 + 개명 ADR(CLEANROOM 4-3).
   - G-38 클라이언트 heartbeat 감지(Q-13) — WS 프레임 계약 변경이므로 v1 이후 TRD 개정 때 결정.
 - G-37(재접속 백오프 1초 시작·2배·상한 30초·횟수 상한 없음·연결 시 초기화)은 현재 구현값을 정본으로 올린 것이며 미측정 제안값입니다. QA-FR-SYNC-07에서 체감 확인합니다.
+
+### 9-1. 결정 3 — 시안 문구 채택 (영환님, 2026-11-08)
+
+영환님이 시안 문구를 채택했고(결정 3), 시안에 없던 칸은 Jarvis가 ★로 보완했습니다(아래 「Jarvis 결정」 표기). 상세 기록은 `docs/07-ui-spec/COPY_GAPS.md` G-28(갱신)·G-39–G-42(추가)입니다. 이 시점부터 아래 문구가 화면 구현의 정본입니다.
+
+- **작성기 placeholder(G-28 갱신, Q-4):** 본문 작성기 채널 「#<채널명>에 남기기」, DM 「<상대 이름>에게 남기기」(Jarvis 결정). 스레드 작성기 「답글 남기기」. 2026-11-07에 채택한 「메시지 입력」·「답글 입력」은 placeholder에서 물러납니다. 접근 가능한 이름(G-29 「#공지에 메시지 작성」·「답글 작성」)은 바꾸지 않습니다. → §2-6
+- **작성기 도움말(G-39):** 「Enter 전송 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter는 무시」. wide·medium 표시, compact(터치) 숨김(Jarvis 결정), `aria-describedby` 연결. → §2-6
+- **멘션 팝오버(G-40):** 머리말 「이 채널의 멤버」, DM에서는 「이 대화의 멤버」(Jarvis 결정). 도움말 「↑↓ 이동 · Enter 선택 · Esc 닫기」. → §2-6
+- **스레드 요약(G-41):** 「↳ 답글 n」. 「↳」는 장식이며 접근 가능한 이름에서 뺍니다. 마지막 답글 시각은 계약에 없어 렌더하지 않습니다(W-10i). 「새 답글」 규칙은 그대로입니다. → §2-5, §2-7
+- **신규 정본 등재(G-42):** 「나를 멘션」(§2-5 자기 멘션), 「여기부터 새 메시지」(§2-4), 「오늘」·「어제」(§2-4), 「메시지 작업」(§3-2).

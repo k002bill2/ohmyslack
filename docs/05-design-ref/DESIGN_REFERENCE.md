@@ -213,7 +213,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 개념 | UI 문구 | 피하는 표현 |
 |---|---|---|
 | space | **공간**(목록 제목), 개별은 **채널** / **DM** | "워크스페이스" 노출 |
-| thread | **스레드**, 답글 수 "답글 3" | "댓글" |
+| thread | **스레드**, 답글 수 "↳ 답글 3"("↳"는 장식, 접근 이름 제외) | "댓글" |
 | mention | **멘션**, 배지 "멘션 2" | "호출" |
 | unread | **읽지 않음**(굵게), 구분선 "여기부터 새 메시지", 스레드 점 "새 답글" | "미확인" |
 | 전송 상태 | **전송 중** / (저장 확인 시 표시 없음) / **저장 여부 확인 중 · 다시 시도** / **전송 실패 · 다시 시도** | "보냄", "성공", "저장되지 않았습니다"(단정) |
@@ -314,7 +314,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | CMP-11 | `Composer` | 멀티라인 입력, IME 안전 Enter(§7-4), 멘션 트리거 `@`, 전송 버튼, 글자 수(TRD 4,000 code point 기준, 3,800부터 카운터 표시) | 비어 있음(전송 비활성) / 입력 중 / 조합 중 / 상한 초과(전송 비활성 + "4,000자까지 입력할 수 있습니다") / **초안 보존**(대상별, §7-3) | MSG-01·03·08 |
 | CMP-12 | `MentionPicker` | `@` 입력 시 참여자 콤보박스(APG combobox). 후보원: `GET /api/conversations/{id}/members`(TRD §3) | 결과 없음 / 선택됨 → `@이름` 칩 + `mention_user_ids`에 ID 추가 | MSG-07 |
 | CMP-13 | `ThreadPanel` | 원문 + 답글 목록(`GET /api/messages/{root_id}/replies`) + 답글 작성기 | 원문 삭제됨(자리표시자 유지, 답글 열람 가능) / 로딩 / 빈("첫 답글") / medium `dialog` | MSG-06 |
-| CMP-14 | `ThreadSummary` | 원문 아래 "답글 3 · 마지막 답글 5분 전" 버튼(`root_reply_count`, TRD §4) | **새 답글 점 + "새 답글" 텍스트는 이 스레드가 unread 대상이고 `unread_reply_count > 0`일 때만**(PRD §7-7; 데이터원 `unread_threads[]`, TRD §3:99). 대상이 아닌 스레드는 답글 수만 표시 | SYNC-03·04 |
+| CMP-14 | `ThreadSummary` | 원문 아래 "↳ 답글 3" 버튼(`root_reply_count`, TRD §4). "↳"는 장식이라 접근 가능한 이름에서 제외. 마지막 답글 시각은 계약에 없어 렌더하지 않음(W-10i). 문구 정본 COPY_GAPS G-41(결정 3) | **새 답글 점 + "새 답글" 텍스트는 이 스레드가 unread 대상이고 `unread_reply_count > 0`일 때만**(PRD §7-7; 데이터원 `unread_threads[]`, TRD §3:99). 대상이 아닌 스레드는 답글 수만 표시 | SYNC-03·04 |
 | CMP-15 | `ConnectionBanner` | 상단 고정 상태 띠. `role="status"` `aria-live="polite"` | **연결됨(숨김) / 다시 연결 중… / 연결이 끊겼습니다 / 최신 상태 확인 중…**(§6-4) | SYNC-07, CLIENT-04 |
 | CMP-16 | `StatusRegion` | 시각적으로 숨긴 `aria-live` 영역 | — | CLIENT-07 (WCAG 4.1.3) |
 | CMP-17 | `EmptyState` / `ErrorState` / `Skeleton` | 공통 5상태 프리미티브 | — | — |
@@ -326,6 +326,11 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | CMP-23 | `ChannelBrowser` | 아직 참여하지 않은 공개 채널 목록 + "참여" 버튼(`/discover` 또는 Dialog) | 로딩 / 빈("참여할 수 있는 채널이 없습니다") / 참여 중(버튼 비활성) / 오류 | CONV-02 |
 | CMP-24 | `DmStarter` | 멤버 콤보박스(`GET /api/members`) → "DM 시작" → 기존 DM이면 그 DM으로 이동 | 빈("다른 멤버가 없습니다") / 오류 | CONV-03 |
 | CMP-25 | `MemberAdmin`(관리자) | 멤버 목록·역할·상태, **초대 링크 만들기**(발급 결과: 링크 1회 표시 + 복사 버튼 + 만료 시각, 다시 볼 수 없음 안내), **비활성화**(확인 Dialog) | 비관리자 접근: "권한이 없습니다" / 비활성화 완료: 행 muted + "비활성" 라벨 / 오류 | AUTH-01·03·05 |
+| CMP-26 | `BotBadge` | 작성자 이름 옆 봇 표시(ADR-001 §3-a·§3-c). 판정은 서버 projection `author_kind = 'bot'`만 따름. 색만으로 구분하지 않고 텍스트를 포함 | 표시 / 숨김(사람 작성자). 문구·모양은 결정 필요(Q-H1, UI_STATES §8-2) | BOT-03 |
+| CMP-27 | `AttachmentList` | 메시지 본문 아래 첨부 묶음(`role="list"`). 첨부별로 CMP-28·29를 렌더 | 첨부 있음 / 만료 자리표시자(문구 결정 필요, Q-H3) | OPS-05 |
+| CMP-28 | `AudioAttachment` | 오디오(mp3) 플레이어: 재생·일시정지·탐색·길이 표시 | 준비 / 재생 중 / 재생 실패("다시 시도") / 만료. 버튼 이름·실패 문구 결정 필요(Q-H3) | OPS-05 |
+| CMP-29 | `ImageAttachment` | 이미지(png·jpeg·webp) 썸네일(가로 넘침 0) + 탭 시 CMP-18 Dialog 확대 | 썸네일 / 확대 / 만료. 대체 텍스트 결정 필요(Q-H3) | OPS-05 |
+| CMP-30 | `PushSettings` | 설정(`/settings`)의 이 기기 알림 구독 카드. iOS 미설치 시 CMP-20 연결 | 미지원 / 홈 화면 미설치(iOS) / 권한 미결정 / 거부됨 / 구독됨 / 등록 실패. 문구·위치 결정 필요(Q-H4·Q-H5) | CLIENT-05 |
 
 ### 6-3. 메시지 전송 상태 매트릭스 (FR-MSG-02·03 정본, HTTP 결과 기준)
 
@@ -639,6 +644,12 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 ### R3.1 Jarvis 정합 (2026-11-07)
 - ⚖️-D1 해소: TRD R3.1이 전송 응답과 `message.created` projection에 `client_message_id`를 추가했습니다. §6-3 전이 4의 "자동 접기"는 기본 경로입니다(상세: `docs/07-ui-spec/UI_STATES.md` §2-5). 본문의 "TRD R3에 없음" 서술은 이 항목으로 대체합니다.
 - §14 기본값(slate+teal, 다크 모드 MVP·OS 추종, Pretendard 무수정, Lucide) 영환님 채택(2026-11-07 "★로 P1 착수"). 앱 심볼(§14-5)은 미결정.
+
+### R3.2 Hermes 연동 컴포넌트 (2026-11-08, ADR-001 채택)
+- §6-2에 CMP-26 `BotBadge`·CMP-27 `AttachmentList`·CMP-28 `AudioAttachment`·CMP-29 `ImageAttachment`·CMP-30 `PushSettings`를 추가했습니다(ADR-001 D-1–D-7 ★ 영환님 채택). 상태별 진입·탈출은 `docs/07-ui-spec/UI_STATES.md`가 펼치며, 문구·모양은 UI_STATES §8-2 Q-H1–Q-H6 결정 전까지 정하지 않습니다.
+
+### R3.3 결정 3 시안 문구 (2026-11-08, 영환님 채택)
+- §4-3 thread 용어와 §6-2 CMP-14 예시를 "↳ 답글 3"으로 바꿨습니다("↳"는 장식, 접근 이름 제외). 마지막 답글 시각은 계약에 없어 렌더하지 않습니다(W-10i). 작성기 placeholder·도움말, 멘션 팝오버 머리말·도움말, 신규 등재 문구는 `docs/07-ui-spec/COPY_GAPS.md` G-28·G-39–G-42와 UI_STATES §9-1이 정본입니다.
 
 ## 리뷰 반영 기록
 처리 합계: **Must-fix 9건 — 반영 9 · 거절 0 · 부분 0.** Should-fix 12건 반영. 자기 예고(`docs/06-reviews/Claude-Fable.md` §5) 4건 반영. R2 리뷰 원문은 수정하지 않았습니다. 아래 `file:line`은 이 문서(`docs/05-design-ref/DESIGN_REFERENCE.md`) R3 저장본 기준이며 저장 후 `grep -n`으로 대조했습니다.

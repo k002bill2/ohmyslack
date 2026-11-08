@@ -7,8 +7,8 @@ import { parseFlags, type RunContext } from './lib/cli.ts';
 
 const EXPECTED_HEADER = ['FR', '지정 테스트 이름', '계층·파일', '실행', '필수 보조 증거', '수동'] as const;
 const SEC_HEADER = ['ID', '지정 테스트 이름', '계층·파일', '실행', '수동'] as const;
-/** TRD §5-1 TR-SEC 표(R3.2 추가 11·12 포함)의 ID 집합. 6-3은 이 집합과 정확히 같아야 한다. */
-const SEC_IDS: readonly string[] = Array.from({ length: 12 }, (_, i) => `TR-SEC-${String(i + 1).padStart(2, '0')}`);
+/** TRD §5-1 TR-SEC 표(R3.2 추가 11·12, R3.3 추가 13–15 포함)의 ID 집합. 6-3은 이 집합과 정확히 같아야 한다. */
+const SEC_IDS: readonly string[] = Array.from({ length: 15 }, (_, i) => `TR-SEC-${String(i + 1).padStart(2, '0')}`);
 const SCAN_ROOTS = ['apps/server/test', 'apps/web/test', 'e2e', 'perf', 'tools/test'] as const;
 const QA_FIELDS = ['실행자', '일시', '기기', '접속 경로', '절차', '기대 결과', '실제 결과', '판정', '증거'] as const;
 const FR_ID = /^FR-[A-Z]+-\d+$/;
@@ -140,7 +140,7 @@ function toSecRow(line: string): DesignRow | SecReference {
   return { fr: id, name, file: backticks(fileCell)[0] ?? '', run: runCell, aux: [], manual };
 }
 
-/** 6-3 표를 읽고 TR-SEC ID 집합(01–12)의 완전성과 참조 FR의 6-2 존재를 확인한다. 어긋나면 스캐너 오류. */
+/** 6-3 표를 읽고 TR-SEC ID 집합(01–15)의 완전성과 참조 FR의 6-2 존재를 확인한다. 어긋나면 스캐너 오류. */
 export function parseSecurity(text: string, frIds: ReadonlySet<string>): SecTable {
   const parsed = tableLines(text, '6-3', SEC_HEADER).map(toSecRow);
   const ids = parsed.map((r) => ('frs' in r ? r.id : r.fr));
