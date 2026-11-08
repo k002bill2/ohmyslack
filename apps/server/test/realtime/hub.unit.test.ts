@@ -44,6 +44,7 @@ function record(conversationId: string, over: Partial<MessageRecord> = {}): Mess
     conversationId,
     seq: 1,
     authorId: ALICE,
+    authorKind: 'human',
     clientMessageId: randomUUID(),
     threadRootId: null,
     body: 'hi',

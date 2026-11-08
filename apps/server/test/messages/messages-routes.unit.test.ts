@@ -62,6 +62,7 @@ function memoryMessages(members: Map<string, Set<string>>): MessagesFixture {
         conversationId: n.conversationId,
         seq,
         authorId: n.authorId,
+        authorKind: 'human',
         clientMessageId: n.clientMessageId,
         threadRootId: n.threadRootId,
         body: n.body,

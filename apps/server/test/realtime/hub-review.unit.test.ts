@@ -22,6 +22,7 @@ function message(id: string, seq: number): MessageRecord {
     conversationId: CID,
     seq,
     authorId: USER,
+    authorKind: 'human',
     clientMessageId: `client-${id}`,
     threadRootId: null,
     body: `body ${seq}`,

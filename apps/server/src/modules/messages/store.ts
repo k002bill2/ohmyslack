@@ -4,6 +4,8 @@ export interface MessageRecord {
   readonly conversationId: string;
   readonly seq: number;
   readonly authorId: string;
+  /** 작성자 종류. users.kind에서 읽는다(요청 입력 아님). */
+  readonly authorKind: 'human' | 'bot';
   readonly clientMessageId: string;
   readonly threadRootId: string | null;
   readonly body: string | null;

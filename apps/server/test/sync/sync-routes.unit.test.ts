@@ -29,6 +29,7 @@ function record(conversationId: string, seq: number): MessageRecord {
     conversationId,
     seq,
     authorId: randomUUID(),
+    authorKind: 'human',
     clientMessageId: randomUUID(),
     threadRootId: null,
     body: `m${seq}`,
