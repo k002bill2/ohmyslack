@@ -1,0 +1,31 @@
+name: ohmyslack
+label: ohmyslack
+kind: platform
+version: 0.1.0
+author: 002bill
+description: >
+  ohmyslack(사내 단일 사용자 메신저) 봇 리스너용 Hermes 게이트웨이 플랫폼 어댑터.
+  루프백 봇 API(/api/bot/v1)에 Bearer 토큰으로 연결해 owner의 Jarvis DM 지시를
+  Hermes 세션으로 넘기고, 응답을 같은 스레드에 게시합니다.
+requires_env:
+  - name: OHMYSLACK_BOT_TOKEN
+    description: "ohmyslack 봇 토큰(omsb_ 접두사, bot-admin CLI 발급)"
+    prompt: "ohmyslack bot token"
+    password: true
+optional_env:
+  - name: OHMYSLACK_BOT_URL
+    description: "봇 리스너 URL — 루프백만 허용 (예: http://127.0.0.1:<BOT_PORT>)"
+    prompt: "ohmyslack bot URL"
+    password: false
+  - name: OHMYSLACK_BOT_PORT
+    description: "OHMYSLACK_BOT_URL이 없을 때 http://127.0.0.1:<port>로 사용"
+    prompt: "ohmyslack bot port"
+    password: false
+  - name: OHMYSLACK_HOME_CHANNEL
+    description: "cron deliver=ohmyslack 대상(Jarvis DM conversation id)"
+    prompt: "ohmyslack home channel"
+    password: false
+  - name: OHMYSLACK_ALLOWED_USERS
+    description: "허용 사용자 id(owner user id, 쉼표 구분)"
+    prompt: "ohmyslack allowed user ids"
+    password: false
