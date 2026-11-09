@@ -15,7 +15,7 @@ describe('CMP-10 DateSeparator(UI_STATES §2-4)', () => {
     expect(dateSeparatorText(new Date('2026-11-07T23:00:00'), now)).toBe('어제');
     expect(dateSeparatorText(new Date('2026-10-30T10:00:00'), now)).toBe('2026-10-30');
   });
-  it('구분선 역할 + 요일 보조', () => {
+  it('구분선 역할 + 보조(R4: 오늘·어제는 「11월 8일 일요일」)', () => {
     render(
       <ul>
         <DateSeparator at="2026-11-08T01:00:00" now={now} />
@@ -23,7 +23,17 @@ describe('CMP-10 DateSeparator(UI_STATES §2-4)', () => {
     );
     const sep = screen.getByRole('separator');
     expect(sep.querySelector('.date-separator-day')?.textContent).toBe('오늘');
-    expect(sep.querySelector('.date-separator-weekday')?.textContent).toBe('일요일');
+    expect(sep.querySelector('.date-separator-weekday')?.textContent).toBe('11월 8일 일요일');
+  });
+  it('YYYY-MM-DD 라벨에는 요일만 보조로 붙는다', () => {
+    render(
+      <ul>
+        <DateSeparator at="2026-10-30T10:00:00" now={now} />
+      </ul>,
+    );
+    const sep = screen.getByRole('separator');
+    expect(sep.querySelector('.date-separator-day')?.textContent).toBe('2026-10-30');
+    expect(sep.querySelector('.date-separator-weekday')?.textContent).toBe('금요일');
   });
 });
 

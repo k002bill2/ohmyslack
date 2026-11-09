@@ -23,6 +23,8 @@ import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { SpaceSwitcher } from './SpaceSwitcher.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
+// R4 시안 덮어쓰기 — 다른 기능 CSS(conversation·thread·members)보다 나중에 평가되도록 마지막 import.
+import './refresh.css';
 
 export interface AppShellProps {
   readonly dataSource: DataSource;
@@ -434,6 +436,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(dataSource.listMembers && dataSource.startDm ? { onStartDm: () => setPanel('dm') } : {})}
       {...(dataSource.createChannel ? { onCreateChannel: () => setPanel('create') } : {})}
       {...(dataSource.reload ? { onRetryList: () => dataSource.reload?.() } : {})}
+      {...(bp === 'compact' ? {} : { onOpenSwitcher: () => setOverlay('switcher') })}
       {...(dataSource.listMembers && dataSource.createInvite && dataSource.deactivateMember
         ? { onManageMembers: () => setMembers(true) }
         : {})}

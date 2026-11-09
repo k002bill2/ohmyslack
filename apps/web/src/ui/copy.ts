@@ -77,6 +77,8 @@ export const COMPOSER_COPY = {
   limit: '4,000자까지 입력할 수 있습니다',
   /** 작성기 도움말(결정 3): wide·medium에서 작성기 아래 작게, compact는 렌더하지 않는다. */
   hint: 'Enter 전송 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter는 무시',
+  /** R4 시안 작성기 아래 줄 `@` 아이콘 버튼 접근 이름 — 커서 위치에 `@`를 넣어 멘션 후보를 연다. */
+  mentionButton: '멘션 추가',
 } as const;
 
 /** 본문 작성기 placeholder(결정 3): 채널 「#이름에 남기기」, DM 「상대 이름에게 남기기」. `name`에는 `#`이 없다. */

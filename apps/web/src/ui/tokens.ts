@@ -168,8 +168,15 @@ const SPACE: Readonly<Record<string, string>> = {
   '--space-1': '0.25rem', '--space-2': '0.5rem', '--space-3': '0.75rem', '--space-4': '1rem',
   '--space-5': '1.25rem', '--space-6': '1.5rem', '--space-8': '2rem', '--space-10': '2.5rem',
 };
-const RADIUS: Readonly<Record<string, string>> = { '--radius-sm': '4px', '--radius-md': '8px', '--radius-lg': '12px' };
-const SHADOW: Readonly<Record<string, string>> = { '--shadow-popover': '0 4px 16px rgb(0 0 0 / 0.12)' };
+/** §3-5. xl·2xl·float·overlay는 R4 디자인 시안(떠 있는 패널·작성기·다이얼로그) 반영으로 추가. */
+const RADIUS: Readonly<Record<string, string>> = {
+  '--radius-sm': '4px', '--radius-md': '8px', '--radius-lg': '12px', '--radius-xl': '16px', '--radius-2xl': '20px',
+};
+const SHADOW: Readonly<Record<string, string>> = {
+  '--shadow-popover': '0 4px 16px rgb(0 0 0 / 0.12)',
+  '--shadow-float': '0 8px 24px rgb(0 0 0 / 0.10)',
+  '--shadow-overlay': '0 16px 48px rgb(0 0 0 / 0.14)',
+};
 const MOTION: Readonly<Record<string, string>> = { '--motion-fast': '120ms', '--motion-base': '200ms' };
 /** §3-5 `prefers-reduced-motion: reduce` 값. */
 const MOTION_REDUCED: Readonly<Record<string, string>> = { '--motion-fast': '0ms', '--motion-base': '0ms' };

@@ -19,7 +19,9 @@ describe('FR-CLIENT-01 키보드', () => {
       const user = userEvent.setup();
       render(<App dataSource={memory()} />);
 
-      // 공간 선택: Tab으로 첫 공간 → Enter.
+      // 첫 Tab 정류장은 R4 「이동…」(전환기) 버튼, 다음이 첫 공간 → Enter.
+      await user.tab();
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: '공간 이동 (Ctrl/⌘+K)' }));
       await user.tab();
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'general' }));
       await user.keyboard('{Enter}');

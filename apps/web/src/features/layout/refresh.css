@@ -1,0 +1,201 @@
+/*
+ * R4 디자인 시안 반영(claude.ai 디자인 캔버스 「ohmyslack 메신저 디자인 시안」 — Main·Medium·Floating-Menus 아트보드).
+ * layout.css(800줄 한도 초과)에 더 쌓지 않고 덮어쓰는 규칙만 둔다. 색·간격·반경·그림자는 토큰만(check:design-tokens).
+ * 시안과 다르게 둔 값: primary 버튼은 시안의 teal11 + 흰 글자(4.45:1, AA 미달) 대신 기존 accent-bg 면을 유지한다.
+ */
+
+/* 떠 있는 패널: 16px 반경(시안), 테두리는 기존 --border-subtle. */
+.app-shell:not([data-layout='compact']) > .sidebar,
+.app-shell:not([data-layout='compact']) > .conversation-pane,
+.app-shell:not([data-layout='compact']) > .member-admin-screen,
+.app-shell[data-layout='wide'] > .thread-wide,
+.app-shell[data-layout='medium'] > .thread-medium {
+  border-radius: var(--radius-xl);
+}
+.app-shell[data-layout='medium'] > .thread-medium {
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* 대화 헤더: 왼쪽 여백 크게(시안 32px), 제목 xl. */
+.app-shell:not([data-layout='compact']) .conversation-header {
+  padding: var(--space-4) var(--space-3) var(--space-3) var(--space-8);
+}
+.app-shell:not([data-layout='compact']) .conversation-title {
+  font-size: var(--text-xl);
+  letter-spacing: -0.02em;
+}
+
+/*
+ * 떠 있는 작성기(시안 Main): 목록 위에 겹쳐 뜬 카드 — 회색 띠(래퍼 배경) 없이 패널 면 + 큰 그림자.
+ * 목록 하단 여백은 작성기 높이만큼 비워 마지막 메시지가 가려지지 않게 한다(sticky 래퍼 그대로, 배경만 투명).
+ */
+.app-shell:not([data-layout='compact']) .conversation-pane > [data-composer='main'] {
+  background: transparent;
+}
+.app-shell:not([data-layout='compact']) .conversation-pane > .message-list {
+  padding-inline: var(--space-4);
+}
+.app-shell:not([data-layout='compact']) [data-composer='main'] > .composer {
+  margin: 0 var(--space-8) var(--space-5);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-float);
+}
+.app-shell:not([data-layout='compact']) .composer {
+  background: var(--bg-app);
+}
+.app-shell:not([data-layout='compact']) .thread-panel > .composer {
+  margin: var(--space-2) var(--space-3) var(--space-3);
+  border-radius: var(--radius-xl);
+  box-shadow: none;
+}
+
+/* 다이얼로그·메뉴 카드: 큰 반경 + overlay 그림자. */
+.dialog {
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-overlay);
+}
+
+/*
+ * 정밀 포인터(마우스·트랙패드) 데스크톱 밀도: 공간 행 32px(시안 30px → WCAG 2.5.8 24px 하한 이상).
+ * 터치(coarse)는 기존 44px 그대로 — DESIGN_REFERENCE §7-1 R4 개정.
+ */
+@media (pointer: fine) and (width > 640px) {
+  .sidebar .space-item {
+    min-height: 32px;
+    padding-inline: var(--space-2);
+    border-radius: var(--radius-md);
+  }
+  .sidebar .space-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+}
+
+/* 사이드바 상단(R4 시안): 「이동…」 버튼이 한 줄을 채우고 공간 작업은 그 옆 아이콘 버튼. */
+.sidebar-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0 var(--space-3) var(--space-2);
+  gap: var(--space-1);
+}
+.sidebar-jump {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  margin-bottom: var(--space-1);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.sidebar-jump:hover {
+  background: var(--bg-hover);
+}
+.sidebar-jump-text {
+  flex: 1 1 auto;
+  text-align: start;
+}
+.sidebar-jump-keys {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  font-family: inherit;
+  font-size: var(--text-xs);
+}
+.icon-button.sidebar-icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.icon-button.sidebar-icon-action:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.sidebar[data-collapsed='true'] .sidebar-actions {
+  flex-direction: column;
+  padding-inline: 0;
+}
+/* 하단 계정 카드: 이름 오른쪽에 아이콘 버튼(멤버 관리·로그아웃). 알림 설정 문구는 카드 아래 작은 글자. */
+.sidebar-account {
+  padding: var(--space-2);
+}
+.account-card {
+  padding: var(--space-2) var(--space-1) var(--space-2) var(--space-2);
+  border-radius: var(--radius-lg);
+}
+.account-card > .account-meta {
+  flex: 1 1 auto;
+}
+.sidebar[data-collapsed='true'] .account-card {
+  flex-direction: column;
+}
+.sidebar-account > :not(.account-card) {
+  font-size: var(--text-xs);
+}
+@media (pointer: fine) and (width > 640px) {
+  .icon-button.sidebar-icon-action {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/* 작성기 아래 줄(R4 시안): [@] [첨부] 도움말 … [전송]. 아이콘 버튼은 투명 면, hover만 옅은 면. */
+.composer .composer-tool {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.composer .composer-tool:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.composer .composer-tool:disabled {
+  cursor: not-allowed;
+}
+.composer .composer-attachments {
+  display: contents;
+}
+.composer .composer-attachments > .composer-chips,
+.composer .composer-attachments > .composer-attach-error {
+  flex: 1 0 100%;
+  order: 1;
+}
+@media (pointer: fine) and (width > 640px) {
+  .composer .composer-tool {
+    width: 32px;
+    height: 32px;
+  }
+  .composer .composer-send {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    border-radius: var(--radius-lg);
+  }
+}

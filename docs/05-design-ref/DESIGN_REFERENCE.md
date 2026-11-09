@@ -162,8 +162,10 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 :root {
   --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
   --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem;
-  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px; --radius-xl: 16px; --radius-2xl: 20px;
   --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.12);
+  --shadow-float: 0 8px 24px rgb(0 0 0 / 0.10);    /* 떠 있는 작성기·메시지 툴바(R4) */
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 0.14); /* 다이얼로그·스레드 시트·메뉴(R4) */
   --motion-fast: 120ms; --motion-base: 200ms;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -377,7 +379,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 2.1.1 / 2.1.2 Keyboard, No Trap | 모든 기능 키보드 조작, 트랩 없음 | §7-3 키맵, 오버레이·다이얼로그는 항상 Esc 탈출(초안 보존) |
 | 2.4.3 Focus Order | 논리 순서 | DOM 순서 = 시각 순서. 사이드바 → 헤더 → 목록 → 작성기 → 스레드 |
 | 2.4.7 / 2.4.11 Focus Visible / Not Obscured | 가시 포커스, 가려지지 않음 | 2px 링 + 2px 오프셋. 고정 배너·작성기가 포커스 요소를 가리면 `scroll-margin` |
-| 2.5.8 Target Size (Minimum) | **24×24 CSS px** 이상 | 모든 터치 목표 **44×44px**(Apple HIG 권장값으로 기억, 원문 미확인 → 추정). 최소 24px는 하드 룰 |
+| 2.5.8 Target Size (Minimum) | **24×24 CSS px** 이상 | 터치(`pointer: coarse`)·compact 목표 **44×44px**(Apple HIG 권장값으로 기억, 원문 미확인 → 추정). **R4:** 정밀 포인터(`pointer: fine`) 데스크톱의 밀집 목록·툴바는 시안 밀도(공간 행 32px, 툴바 버튼 32px)를 쓴다. 최소 24px는 하드 룰 |
 | 4.1.3 Status Messages | 상태 변화는 포커스 이동 없이 전달 | StatusRegion(`aria-live="polite"`), 실패는 `role="alert"`, 저장 여부 확인 중은 `role="status"` |
 
 ### 7-2. ARIA 구조

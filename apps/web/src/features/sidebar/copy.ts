@@ -8,4 +8,8 @@ export const SIDEBAR_SHELL_COPY = Object.freeze({
   /** 섹션 제목(시안 01·04·09). */
   sectionChannels: '채널',
   sectionDms: '대화',
+  /** R4 시안 「이동…」 버튼(공간 전환기 열기, D §7-3 Ctrl/⌘+K). 보이는 글자 · 단축키 표기 · 접근 이름. */
+  jump: '이동…',
+  jumpKeys: 'Ctrl/⌘ K',
+  jumpLabel: '공간 이동 (Ctrl/⌘+K)',
 });
