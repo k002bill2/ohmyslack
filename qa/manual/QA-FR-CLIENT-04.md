@@ -39,3 +39,17 @@
 | 실제 결과 | **iOS Safari 로그인 중:** localStorage `oms.cp.<id>` = `6` 1개, sessionStorage 0, IndexedDB 0, Cache Storage `oms-shell-*` 4개 44항목·`/api` 0, SW `/sw.js` active, `document.cookie` 0(세션 쿠키는 HttpOnly). 마커 적중은 `csrf` 4건뿐 — 캐시된 JS 번들 4개의 필드명 문자열 `csrf_token`(데이터 아님, 1차와 같음). 셸 캐시 4개는 이날 빌드한 이전 버전들로, **로그아웃 후 검사 때는 새 SW 활성화로 1개(`oms-shell-ycsw6c` 11항목)만 남음**(정리 동작 정상). **iOS Safari 로그아웃 후:** localStorage 0(checkpoint 삭제), sessionStorage 0, IndexedDB 0, 캐시 1개·`/api` 0, 마커 적중 `csrf` 1건(번들 코드). **macOS Safari 로그인 중:** localStorage `oms.cp.<id>` = `6` 1개, sessionStorage 0, IndexedDB 0, 캐시 1개 11항목·`/api` 0, 마커 적중 `csrf` 1건(번들 코드). **macOS Safari 로그아웃 후:** localStorage 0, 나머지 동일. 본문·이메일·표시 이름 마커는 모든 검사에서 0건 |
 | 판정 | `미검증` — iOS Safari 탭·macOS Safari 저장소 검사는 기대와 일치(로그아웃 후 재노출 0은 2차에서 확인). 남은 것: **홈 화면 웹 앱** 저장소(Safari 탭과 별도 저장 공간이고 주소창이 없어 진단 페이지를 열 수 없음 — Web Inspector 필요)와 웹 앱 가장자리 뒤로 제스처(실제 손가락). macOS Safari는 개인정보 보호 창이라 일반 창의 영구 저장소와 다를 수 있음 |
 | 증거 경로 | `reports/qa/client-04-iphone-storage/` — `01-qa-c4a.png`, `02-qa-c4b.png`, `03-storage-logged-in.png`, `05-after-logout.png`, `06-storage-logged-out.png`, 진단 페이지 원본 `qa-storage.{html,js}`, `qa-server.log` · `reports/qa/client-04-macos-safari/` — `storage-logged-{in,out}.{txt,png}` — `reports/`는 gitignore(로컬 보관) |
+
+## 4차 실행 — 홈 화면 웹 앱 저장소(Web Inspector)·가장자리 뒤로 제스처 (2026-11-09 KST, 실기)
+
+| 필드 | 값 |
+|---|---|
+| 실행자 | 영환님(실기, 실제 손가락) — 기록: Jarvis(회신 원문 인용) |
+| 일시(KST) | 2026-11-09 21:08(저장소 회신)·21:1x(제스처 포함 「CLIENT-04 통과」 회신) |
+| 기기·OS·브라우저(버전) | iPhone 16 Pro / iOS 18.7 / 홈 화면 웹 앱(standalone) + Mac Safari 「개발」 메뉴 Web Inspector |
+| 접속 경로 | tailnet Serve HTTPS(`https://<tailnet-host>`) → 운영 서버(`127.0.0.1:8787`, launchd `com.ohmyslack.server`), 서버 빌드 `b655ddd`(번들 `index-B5U0qDQE.js`) |
+| 절차 | 체크리스트 `dev/handoff/qa/DEVICE-CHECKLIST-G1.md` 8·9번: ① 웹 앱 로그인 후 채널 두 개 본문 로드 ② Web Inspector 저장 공간 탭에서 Local Storage·Session Storage·IndexedDB·Cache Storage 검사(본문·이메일·표시 이름·csrf 값, Cache Storage `/api/`) ③ 웹 앱에서 `로그아웃` ④ 같은 검사 반복 ⑤ 다시 로그인 → 채널 본문 열기 → `로그아웃` → 화면 왼쪽 가장자리에서 오른쪽으로 밀기(뒤로) 2–3회 |
+| 기대 결과 | ②④ 저장소에 본문·인증 응답 없음(숫자 checkpoint만 예외, B7), Cache Storage에 `/api/` 없음 ⑤ 로그인 화면만 보이고 이전 본문 재노출 0 |
+| 실제 결과 | ②④ 회신 `CLIENT-04 웹앱 저장소 본문 0 (로그아웃 전·후)` ⑤ 회신 `CLIENT-04 통과`(체크리스트상 남은 항목이 9번 제스처뿐이었으므로 제스처 본문 0으로 기록). 1–3차 결과(데스크톱 Chromium·macOS Safari·iOS Safari 탭 저장소 검사, 세 환경 로그아웃 후 뒤로·앞으로·복원·재실행 재노출 0)와 합쳐 수동 열 전 환경 충족 |
+| 판정 | `PASS` — 실기 저장소 검사(Chromium·macOS Safari·iOS Safari·홈 화면 웹 앱)와 로그아웃 후 재노출 0(뒤로·앞으로·페이지 복원·새로고침·재실행·웹 앱 가장자리 뒤로)을 모두 확인. 근거 수준: 4차는 L2(영환님 실기 회신, 스크린샷 미첨부), 1–3차는 L1 |
+| 증거 경로 | 회신 원장 `dev/handoff/qa/DEVICE-RESULTS-G1.md`(gitignore, 로컬), 1–3차 `reports/qa/client-04*/`(gitignore, 로컬). 자동 증거: `pnpm check:no-persist-cache` |
