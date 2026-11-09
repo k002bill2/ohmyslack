@@ -42,3 +42,8 @@ export function request(path: string, init: { method?: string; mode?: string; or
 export function fetchEvent(req: RequestLike): FetchEventLike & { respondWith: ReturnType<typeof vi.fn<(r: Promise<Response>) => void>> } {
   return { request: req, respondWith: vi.fn<(r: Promise<Response>) => void>() };
 }
+
+/** SW 수명주기 대역(W-23b skipWaiting·clients.claim). */
+export function fakeLifecycle() {
+  return { skipWaiting: vi.fn(async () => undefined), claimClients: vi.fn(async () => undefined) };
+}

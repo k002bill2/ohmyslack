@@ -75,14 +75,21 @@ export function cacheNameFor(entries: readonly PrecacheEntry[]): string {
   return `${CACHE_PREFIX}${hash.toString(36)}`;
 }
 
+/** SW 수명주기 제어(`self.skipWaiting`·`clients.claim`). 주입해 테스트한다. */
+export interface SwLifecycle {
+  skipWaiting(): Promise<void>;
+  claimClients(): Promise<void>;
+}
+
 export interface SwDeps {
   readonly storage: CacheStorageLike;
+  readonly lifecycle: SwLifecycle;
   readonly fetcher: (request: RequestLike) => Promise<Response>;
   readonly entries: readonly PrecacheEntry[];
   readonly origin: string;
 }
 
-export function createSwHandlers({ storage, fetcher, entries, origin }: SwDeps) {
+export function createSwHandlers({ storage, lifecycle, fetcher, entries, origin }: SwDeps) {
   const name = cacheNameFor(entries);
   const shellUrls = new Set(entries.map((e) => e.url));
 
@@ -102,14 +109,25 @@ export function createSwHandlers({ storage, fetcher, entries, origin }: SwDeps) 
   }
 
   return {
+    /**
+     * precache가 끝나면 대기 없이 활성화한다(W-23b) — `waiting`에 머물면 push 핸들러 없는 옛 SW가 push를 받아
+     * 알림이 표시되지 않는다(iOS는 미표시 push가 쌓이면 구독을 끊을 수 있음). 열린 페이지는 `register.ts`가 1회 새로 고친다.
+     */
     onInstall(event: ExtendableEventLike): void {
-      event.waitUntil(storage.open(name).then((cache) => cache.addAll(entries.map((e) => e.url))));
+      event.waitUntil(
+        storage
+          .open(name)
+          .then((cache) => cache.addAll(entries.map((e) => e.url)))
+          .then(() => lifecycle.skipWaiting()),
+      );
     },
+    /** 이전 버전 셸 캐시를 지운 뒤 열린 클라이언트를 장악한다(`controllerchange` 발생). */
     onActivate(event: ExtendableEventLike): void {
       event.waitUntil(
         storage
           .keys()
-          .then((keys) => Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== name).map((k) => storage.delete(k)))),
+          .then((keys) => Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== name).map((k) => storage.delete(k))))
+          .then(() => lifecycle.claimClients()),
       );
     },
     onFetch(event: FetchEventLike): void {

@@ -17,7 +17,8 @@ const ENTRIES: readonly PrecacheEntry[] = [
 ];
 
 function handlers(storage = fakeCacheStorage().storage, fetcher = vi.fn(async () => new Response('net'))) {
-  return { h: createSwHandlers({ storage, fetcher, entries: ENTRIES, origin: ORIGIN }), fetcher, storage };
+  const lifecycle = { skipWaiting: vi.fn(async () => undefined), claimClients: vi.fn(async () => undefined) };
+  return { h: createSwHandlers({ storage, lifecycle, fetcher, entries: ENTRIES, origin: ORIGIN }), fetcher, storage, lifecycle };
 }
 
 afterEach(() => {
@@ -66,6 +67,38 @@ describe('features/pwa/sw 라우팅', () => {
     await Promise.all(waits);
     expect([...stores.keys()].sort()).toEqual([name, 'other-app'].sort());
     expect([...(stores.get(name)?.keys() ?? [])]).toEqual(ENTRIES.map((e) => e.url));
+  });
+
+  it('W-23b install은 precache 완료 후 skipWaiting, activate는 이전 캐시 정리 후 clients.claim을 호출한다', async () => {
+    const { storage, stores } = fakeCacheStorage({ [`${CACHE_PREFIX}old`]: ['/index.html'] });
+    const { h, lifecycle } = handlers(storage);
+    const order: string[] = [];
+    lifecycle.skipWaiting.mockImplementation(async () => {
+      order.push(`skip:${stores.get(cacheNameFor(ENTRIES))?.size ?? 0}`);
+    });
+    lifecycle.claimClients.mockImplementation(async () => {
+      order.push(`claim:${stores.has(`${CACHE_PREFIX}old`) ? 'old-left' : 'old-gone'}`);
+    });
+    const installed: Promise<unknown>[] = [];
+    h.onInstall({ waitUntil: (p) => installed.push(p) });
+    await Promise.all(installed);
+    expect(lifecycle.skipWaiting).toHaveBeenCalledTimes(1);
+    expect(lifecycle.claimClients).not.toHaveBeenCalled();
+    const activated: Promise<unknown>[] = [];
+    h.onActivate({ waitUntil: (p) => activated.push(p) });
+    await Promise.all(activated);
+    expect(lifecycle.claimClients).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([`skip:${ENTRIES.length}`, 'claim:old-gone']);
+  });
+
+  it('W-23b precache가 실패하면 skipWaiting하지 않는다(설치 실패 — 옛 SW 유지)', async () => {
+    const { storage } = fakeCacheStorage();
+    const broken = { ...storage, open: async () => ({ addAll: async () => Promise.reject(new Error('net')), match: async () => undefined }) };
+    const { h, lifecycle } = handlers(broken);
+    const waits: Promise<unknown>[] = [];
+    h.onInstall({ waitUntil: (p) => waits.push(p) });
+    await expect(Promise.all(waits)).rejects.toThrow('net');
+    expect(lifecycle.skipWaiting).not.toHaveBeenCalled();
   });
 
   it('셸은 cache-first, 탐색은 네트워크 우선·오프라인 시 캐시된 셸, 우회 요청은 respondWith 하지 않는다', async () => {
