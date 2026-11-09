@@ -135,12 +135,14 @@
 
 `AccessAction`(`apps/server/src/modules/conversations/service.ts:8`)에 `manage_bots`를 더한다. 판정은 `assertAccess` 안에서만 한다(`docs/04-dev-design/DEV_DESIGN.md:90` B2).
 
-| 조건 | 실패 시 |
-|---|---|
-| 대화 행 존재 | 404 |
-| `kind = 'channel'` | 400 (DM의 `leave`가 400인 기존 규칙과 같은 계열, `apps/server/src/modules/conversations/service.ts:80-81`) |
-| 호출자가 그 채널의 활성 멤버 | 404 (비참여자에게 존재를 드러내지 않는 기존 규칙) |
-| 호출자 워크스페이스 역할 = `owner` | 403 (`admin` 메타의 "일반 멤버 403"과 같은 결과, `docs/04-dev-design/DEV_DESIGN.md:116`) |
+판정 순서(앞에서 걸리면 끝 — 비참여자에게 대화 종류를 드러내지 않도록 멤버십을 종류보다 먼저 본다. 기존 `leave`도 멤버 확인 뒤 DM 400, `apps/server/src/modules/conversations/service.ts:79-83`):
+
+| 순서 | 조건 | 실패 시 |
+|---|---|---|
+| 1 | 대화 행 존재 | 404 |
+| 2 | 호출자가 그 대화의 활성 멤버 | 404 (FR-CONV-04 비참여자 404) |
+| 3 | 호출자 워크스페이스 역할 = `owner` | 403 (`admin` 메타의 "일반 멤버 403"과 같은 결과, `docs/04-dev-design/DEV_DESIGN.md:116`) |
+| 4 | `kind = 'channel'` | 400 (DM `leave` 400과 같은 계열) |
 
 - 현재 `ACCESS_SQL`(`apps/server/src/modules/conversations/repo.ts:37-40`)은 역할을 읽지 않는다 → `manage_bots`일 때만 `workspace_members.role`을 함께 읽는 쿼리 확장이 필요하다(구현 레인 판단, 쿼리 1개).
 - 대상 봇 검증(활성·`kind='bot'`·같은 워크스페이스)은 `bots` 서비스가 한다(B1: 다른 모듈 repo 직접 호출 금지, `docs/04-dev-design/DEV_DESIGN.md:89`).
@@ -170,7 +172,10 @@
 ### 4-5. 봇 읽기 범위 (§10 Q2)
 
 사실: 이력·답글·snapshot·sync·WS replay는 `joined_seq`로 자르지 않는다(§1-1 #8). 봇을 채널에 추가하면 봇 토큰으로 **참여 전 전체 이력**을 읽을 수 있다.
-- ★ 안: **봇 행위자에 한해** 메시지 읽기를 `seq > joined_seq`로 제한한다(봇 리스너의 이력·답글·snapshot·sync·WS replay). 사람은 바뀌지 않는다. 참여 전 루트에 참여 후 달린 답글은 보이되, 루트 본문은 보이지 않는다(세션 키는 `thread_root_id`만 쓰므로 어댑터 동작에 지장 없음 — 추정, 어댑터 pytest로 확인).
+- ★ 안 — **봇 행위자에 한해** 가시성 규칙 하나로 판정한다: 메시지 M은 `M.seq > joined_seq` **이고** (M이 최상위이거나 M의 루트 `seq > joined_seq`)일 때만 봇에게 보인다. 즉 **참여 전에 시작된 스레드는 통째로(루트·참여 후 답글 모두) 보이지 않는다.** 사람은 바뀌지 않는다.
+- 적용 경로(전부 봇 행위자일 때만): ① 이력 ② 답글 조회 — 루트가 안 보이면 404(현행 `repliesResponseSchema`가 `root`를 필수로 요구하므로 숨김 루트 표현을 새로 만들지 않는다, `packages/shared/src/messages.ts`) ③ snapshot ④ sync ⑤ WS replay ⑥ **WS 실시간 팬아웃** — `message.created`·`message.updated`(답글 생성·삭제 때 루트 projection을 다시 보내는 `emitRoot` 포함, `apps/server/src/modules/messages/service.ts:59-61,78,97`)·`message.deleted` ⑦ 첨부 다운로드(`attachment` 메타 → 첨부의 메시지에 같은 규칙).
+- 근거(사실): 팬아웃의 `deliverable`은 세션과 `canRead`(멤버십)만 본다(`apps/server/src/modules/realtime/hub.ts:197-202`). 위 ⑥을 빼면 참여 후 답글 하나로 참여 전 루트 본문이 실시간으로 나간다(Codex 리뷰 P2).
+- 결과: owner가 참여 전 스레드에서 봇을 멘션해도 봇은 받지 못한다 → 새 최상위 메시지로 불러야 한다(§3-3에 안내 필요, 문구는 Q8).
 - 재추가 시 `UPSERT_MEMBER_SQL`이 `joined_seq`를 덮어쓴다(`apps/server/src/modules/conversations/repo.ts:49-54`) → 제거 기간의 글도 보이지 않는다.
 
 ### 4-6. DB 변경
@@ -250,7 +255,7 @@
 | S1 | owner 외 작성자 메시지는 **채널에서도** 세션 생성·지시 처리·응답 0. 봇을 멘션해도 같다 | 어댑터 `_is_owner_instruction`이 게이팅보다 먼저(§5-2) | `docs/decisions/ADR-001-hermes-agent-integration.md:73`, TM-BOT-04 `docs/08-security/THREAT_MODEL.md:213` |
 | S2 | 승인 명령은 owner·같은 스레드만. 채널에서도 FR-BOT-06 규칙 그대로 | 어댑터 | TM-BOT-06 `docs/08-security/THREAT_MODEL.md:215` |
 | S3 | 봇은 owner가 명시적으로 추가한 공개 채널에만 들어간다. 봇 토큰으로 참여·추가 경로 0 | 서버 `manage_bots`(owner 역할) + 봇 리스너 라우트 미등록 | `docs/03-trd/TRD.md:201-202`, `apps/server/src/modules/bots/routes.ts:130-133` |
-| S4 | 봇이 읽는 범위: ★ 참여 시점 `joined_seq` **이후** 메시지만(§4-5, §10 Q2). 채택 전 현재 상태는 "참여 전 전체 이력 읽기 가능"(사실, §1-1 #8) | 서버 봇 읽기 경로 | 최소 권한. 토큰 탈취(TM-BOT-01, `docs/08-security/THREAT_MODEL.md:210`) 시 노출 범위 축소 |
+| S4 | 봇이 읽는 범위: ★ 참여 시점 `joined_seq` **이후** 메시지, 참여 전 시작된 스레드는 통째로 제외(§4-5, §10 Q2). REST·snapshot·sync·WS replay·**WS 실시간 팬아웃(루트 재전송 포함)**·첨부 모두 적용. 채택 전 현재 상태는 "참여 전 전체 이력 읽기 가능"(사실, §1-1 #8) | 서버 봇 읽기·전달 경로 7곳(§4-5) | 최소 권한. 토큰 탈취(TM-BOT-01, `docs/08-security/THREAT_MODEL.md:210`) 시 노출 범위 축소 |
 | S5 | 제거 후 접근 즉시 차단: REST는 매 요청 `assertAccess`(404), WS는 `membershipEnded` → 구독 삭제 + 팬아웃마다 `canRead` 재확인 | 서버(기존 경로 재사용) | `apps/server/src/modules/conversations/service.ts:52-61`, `apps/server/src/modules/realtime/hub.ts:197-206` |
 | S6 | 수치 판정 "5초 안에 구독 중단"은 FR-CONV-02와 같은 기준을 쓴다(새 수치 없음) | 서버 테스트 | `docs/02-prd/PRD.md:70` |
 | S7 | `author_kind`·`author_id`·`mention_user_ids`는 서버 결정값. 어댑터는 본문으로 작성자·멘션을 판정하지 않는다 | 서버 projection·어댑터 | `docs/03-trd/TRD.md:204`, `apps/server/src/modules/messages/repo.ts:35-37` |
@@ -279,7 +284,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 |---|---|---|---|---|
 | FR-BOT-03 (개정) | 봇은 owner와의 Jarvis DM에만 참여하고, 서버 이벤트는 작성자 종류를 서버 값으로 싣는다 (채널 참여는 FR-BOT-08–11) | P0 | (현행 유지) | U, ADR-001 §3-c |
 | FR-BOT-08 | owner가 웹에서 참여 중인 공개 채널에 봇을 추가·제거한다 | P1 | owner만 성공(일반 멤버 403·DB 변화 0); 비참여 채널 404; DM 대상 400; 비활성·사람·다른 워크스페이스 사용자 대상 404; 재추가 멱등; 봇 토큰으로 추가·제거 경로 0; 제거 후 봇의 이력·쓰기 404, 기존 구독 5초 안에 중단(FR-CONV-02와 같은 기준) | U, ADR-001 §3-c, 이 스펙 §4-1·§4-2 |
-| FR-BOT-09 | 채널에 추가된 봇은 참여 이후의 메시지만 읽고, 멤버십 변화를 연결 중에 통지받는다 | P1 | 봇의 이력·답글·snapshot·sync·WS replay에 `seq ≤ joined_seq` 메시지 0(§10 Q2 ★ 채택 시); 사람 읽기 범위 변화 0; 추가·제거 때 봇 연결에 `membership.changed` 1회(§10 Q4 ★ 채택 시); `/api/bot/v1/me`에 대화 종류 포함 | 이 스펙 §4-3–4-5 |
+| FR-BOT-09 | 채널에 추가된 봇은 참여 이후의 메시지만 읽고, 멤버십 변화를 연결 중에 통지받는다 | P1 | 봇의 이력·답글·snapshot·sync·WS replay·WS 실시간(`message.created`·`updated`·`deleted`, 루트 재전송 포함)·첨부에 참여 전 메시지와 참여 전 시작 스레드의 메시지 0, 참여 전 루트의 답글 조회 404(§10 Q2 ★ 채택 시); 사람 읽기 범위 변화 0; 추가·제거 때 봇 연결에 `membership.changed` 1회(§10 Q4 ★ 채택 시); `/api/bot/v1/me`에 대화 종류 포함 | 이 스펙 §4-3–4-5 |
 | FR-BOT-10 | 채널에서 봇은 owner가 멘션한 메시지에만 반응하고, 스레드=세션 규칙을 따른다 | P1 | owner 멘션 메시지의 `mention_user_ids`에 봇 ID 포함(서버); 어댑터: 비owner 0·비멘션 0·`chat_type=channel`·최상위=새 세션·답글=같은 세션·채널 최상위 송신 0·채널 백로그 안내는 DM으로 → 어댑터 pytest + 수동 증거 `QA-FR-BOT-10` | ADR-001 §3-c·§3-d, 이 스펙 §5 |
 | FR-BOT-11 | 채널 헤더에서 owner가 봇을 추가·제거하는 웹 컨트롤 | P1 | owner·채널일 때만 보임(일반 멤버·DM·나간 채널 0); 추가 후 멘션 후보에 봇 배지와 함께 표시; 실패는 기존 오류 표시(`ErrorState`) 재사용; 문구는 COPY_GAPS 결정 후 | 이 스펙 §3-1·§3-4 |
 
@@ -288,7 +293,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 | FR | 지정 테스트 이름 | 계층·파일 | 실행 | 필수 보조 증거 | 수동 |
 |---|---|---|---|---|---|
 | FR-BOT-08 | `FR-BOT-08 owner만 참여 중인 공개 채널에 활성 봇을 추가·제거하고 일반 멤버·비참여자·DM·사람 대상 요청은 거부되며 제거 후 봇 이력·쓰기는 404이고 기존 구독은 끊긴다` | 통합 `apps/server/test/bots/bot-channel-membership.int.test.ts` | PR | 통합 `apps/server/test/conversations/access-matrix.int.test.ts`: 새 라우트 2개 × {owner, 일반 멤버, 비참여자, 봇 토큰} | — |
-| FR-BOT-09 | `FR-BOT-09 채널에 추가된 봇은 참여 이후 메시지만 이력·답글·snapshot·sync·WS로 받고 추가·제거 때 봇 연결에 멤버십 변화 프레임이 한 번 온다` | 통합 `apps/server/test/bots/bot-channel-scope.int.test.ts` | PR | 단위 `apps/server/test/bots/bots.unit.test.ts`: `/me` 대화 종류 projection | — |
+| FR-BOT-09 | `FR-BOT-09 채널에 추가된 봇은 참여 이후 메시지만 이력·답글·snapshot·sync·WS replay·WS 실시간·첨부로 받고 참여 전 루트에 달린 새 답글과 루트 재전송도 받지 않으며 추가·제거 때 봇 연결에 멤버십 변화 프레임이 한 번 온다` | 통합 `apps/server/test/bots/bot-channel-scope.int.test.ts` | PR | 단위 `apps/server/test/bots/bots.unit.test.ts`: `/me` 대화 종류 projection | — |
 | FR-BOT-10 | `FR-BOT-10 채널에서 owner가 봇을 멘션하면 봇이 받는 message.created의 mention_user_ids에 봇 ID가 있고 멘션 없는 글과 비참여 봇에는 없다` | 통합 `apps/server/test/bots/bot-channel-mention.int.test.ts` | PR | — | `QA-FR-BOT-10`(어댑터 pytest `integrations/hermes-plugin/tests/test_channel.py` §5-9 케이스 1–8 결과 첨부 + 실기 채널 멘션 왕복 1회) |
 | FR-BOT-11 | `FR-BOT-11 채널 헤더 봇 컨트롤은 owner에게만 보이고 봇을 추가하면 멘션 후보에 봇 배지와 함께 나타난다` | 컴포넌트 `apps/web/test/conv-bots/bot-channel-control.test.tsx` | PR | — | — |
 
@@ -357,7 +362,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 ### 10-1. 영환님 결정 (★ 추천 먼저)
 
 1. **Q1 FR-BOT-03·채널 우선순위** — ★ A(§9-1): DM 전용 P0 + 채널 P1 FR 4개. 근거: 구현·테스트·ADR H1–H4 어디에도 채널이 없음(§1-2), G1 범위 변화 0.
-2. **Q2 봇 읽기 범위** — ★ 봇 행위자만 `seq > joined_seq`로 제한(§4-5). 대안: 사람과 같게 전체 이력. 근거: 최소 권한, 토큰 탈취 시 노출 축소(TM-BOT-01). 비용: 봇 읽기 쿼리 5곳 수정(L1 규모 L의 주원인).
+2. **Q2 봇 읽기 범위** — ★ 봇 행위자만 "참여 후 메시지 + 참여 후 시작된 스레드"로 제한(§4-5, 경로 7곳: REST 2·snapshot·sync·WS replay·WS 실시간·첨부). 대안: 사람과 같게 전체 이력. 근거: 최소 권한, 토큰 탈취 시 노출 축소(TM-BOT-01). 비용: 읽기·전달 경로 7곳 수정(L1 규모 L의 주원인), owner는 참여 전 스레드에서 봇을 부를 수 없음.
 3. **Q3 권한 판정 위치** — ★ `conversation` 메타 + `AccessAction 'manage_bots'`를 `assertAccess` 안에서 판정(역할 owner + 활성 멤버 + 채널). 대안: `admin` 메타 가드 + `assertAccess(…,'read')` 두 번 검사. 근거: B2 "assertAccess 하나로만"(`docs/04-dev-design/DEV_DESIGN.md:90`).
 4. **Q4 멤버십 추가 통지** — ★ N1 새 프레임 `membership.changed`(영향받는 봇 연결에만). 대안 N2 `sync.required` 재사용, N3 봇 WS 재연결. 근거: 의미가 명확하고 재연결 비용 0, 프레임 1종 추가(공유 스키마 변경).
 5. **Q5 채널 스레드 답글의 멘션** — ★ 채널에서는 **모든 메시지(답글 포함)에 멘션 필수**. 대안: 봇이 답한 스레드는 멘션 없이 이어짐(어댑터가 세션 루트 집합을 cursor 파일에 저장해야 함). 근거: 상태 없음·재시작 안전·다른 멤버와의 대화 중 오작동 0. 비용: owner가 답글마다 `@Jarvis`를 붙여야 함.
@@ -390,7 +395,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 
 ### 11-2. 추정
 - PRD:158 괄호는 ADR의 "P1"을 P0 행에 옮기며 생긴 표기 누락(§1-2).
-- 참여 전 루트에 달린 참여 후 답글은 Q2 ★에서 루트 없이도 세션 키가 만들어진다(`thread_root_id`만 사용).
+- (정정) 참여 전 루트에 참여 후 답글이 달리면 현행 서버는 답글과 함께 **루트 projection을 `message.updated`로 다시 보낸다**(사실, `apps/server/src/modules/messages/service.ts:59-61,78`). 그래서 Q2 ★는 "참여 전 시작 스레드 통째 제외"로 정했다(§4-5). 부분 공개(답글만 보이고 루트 숨김)는 답글 API 계약(`root` 필수) 변경이 필요해 택하지 않았다.
 - Q2를 채택하지 않으면, 봇이 추가된 직후 sync·WS replay(`after_cursor` = 봇 watermark)로 참여 직전 채널 변경이 들어올 수 있다. 참여 전 글에는 봇 멘션이 저장될 수 없으므로(멘션 필터가 활성 참여자만, `apps/server/src/modules/messages/repo.ts:35-37`) 게이팅으로 실행은 0이다.
 - 규모 S/M/L과 max-turns는 경험적 추정.
 
