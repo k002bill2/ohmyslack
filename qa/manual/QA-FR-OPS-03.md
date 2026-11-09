@@ -12,9 +12,9 @@
 | 접속 경로 | tailnet Serve HTTPS(`https://<tailnet-host>`, 같은 Mac에서 호출) → `127.0.0.1:8787` |
 | 절차 | 아래 "점검 절차" 1–6번 |
 | 기대 결과 | Serve(tailscaled) 쪽 로그와 앱 로그에 요청 본문·쿠키·`Authorization`·봇 토큰(`omsb_`)·push endpoint·쿼리 문자열 비밀값 0건 |
-| 실제 결과 | 볼 수 있었던 범위(1·2·3·5)에서 카나리 0건(L1). 단 Serve 쪽은 요청 단위 로그 줄 자체가 관측되지 않아 "가린다"와 "이 상세 수준에서는 안 찍는다"를 구분하지 못함. root 전용 파일 내용·원격 logtail 업로드분·프록시 오류 경로는 미확인 |
+| 실제 결과 | 볼 수 있었던 범위(1·2·5)에서 카나리 0건(L1). 3은 파일 크기·시각 메타데이터만 확인(내용 미열람). 단 Serve 쪽은 요청 단위 로그 줄 자체가 관측되지 않아 "가린다"와 "이 상세 수준에서는 안 찍는다"를 구분하지 못함. root 전용 파일 내용·원격 logtail 업로드분·프록시 오류 경로는 미확인 |
 | 판정 | `미검증` — 볼 수 없는 영역(4·6)이 남음 |
-| 증거 경로 | 이 문서 "점검 절차" 표(가린 출력 인용), `dev/active/p1-g1-qa-ops/REPORT.md`. 자동 증거(경로만): `apps/server/test/ops/log-redaction.int.test.ts`, `pnpm check:log-leak`(`tools/check-log-leak.ts`·`tools/log-canaries.ts`), `apps/server/test/ops/metrics-allowlist.unit.test.ts` |
+| 증거 경로 | 이 문서 "점검 절차" 표(가린 출력 인용), `dev/active/p1-g1-qa-ops/REPORT.md`(worktree 전용, 저장소 미포함 — `dev/`는 gitignore). 자동 증거(경로만): `apps/server/test/ops/log-redaction.int.test.ts`, `pnpm check:log-leak`(`tools/check-log-leak.ts`·`tools/log-canaries.ts`), `apps/server/test/ops/metrics-allowlist.unit.test.ts` |
 
 ## 카나리 요청 (2026-11-09 10:20:21 KST, 같은 Mac → Serve HTTPS)
 
@@ -27,8 +27,8 @@
 
 | # | 점검 | 명령·방법 [조회·승인 필요] | 기대 | 실제 |
 |---|---|---|---|---|
-| 1 | tailscaled 실시간 로그 | 카나리 전송 전후 약 8초 `tailscale debug daemon-logs`(읽기 전용 스트림, 원격 logtail로 올라가는 것과 같은 로그) 수집 → 카나리 grep | 카나리 0건 | 수집 1줄(`[logtap connected]`)뿐, 카나리 0건, serve/proxy/http 언급 0건(L1). **한계:** 요청 단위 Serve 줄 자체가 안 찍혀 판별력 낮음 — 기본 상세 수준에서는 성공 프록시 요청을 기록하지 않는 것으로 보임(추정, L2) |
-| 2 | macOS 통합 로그 | `/usr/bin/log show --start <전송 직전> --predicate 'subsystem BEGINSWITH "io.tailscale" OR process CONTAINS[c] "tailscale"' --info --debug`, 그리고 `process == "io.tailscale.ipn.macsys.network-extension"` 따로 | 카나리 0건 | 178줄(대부분 Tailscale GUI 앱의 CFNetwork·networkextension·XPC 일반 로그), 네트워크 확장 프로세스 15줄. 카나리 0건. 쿠키 관련 3줄은 `NSHTTPCookieStorage` 초기화 문구(요청 값 아님). **한계:** `<private>`로 가려진 값 29건(10:20:15–10:21:00 구간) — macOS가 비공개 처리한 값이라 내용 확인 불가 |
+| 1 | tailscaled 실시간 로그 | 카나리 전송 전후 약 8초 `tailscale debug daemon-logs`(읽기 전용 스트림. 원격 logtail로 올라가는 것과 같은 로그로 보임 — 추정, L2) 수집 → 카나리 grep | 카나리 0건 | 수집 1줄(`[logtap connected]`)뿐, 카나리 0건, serve/proxy/http 언급 0건(L1). **한계:** 요청 단위 Serve 줄 자체가 안 찍혀 판별력 낮음 — 기본 상세 수준에서는 성공 프록시 요청을 기록하지 않는 것으로 보임(추정, L2) |
+| 2 | macOS 통합 로그 | `/usr/bin/log show --start <전송 직전> --predicate 'subsystem BEGINSWITH "io.tailscale" OR process CONTAINS[c] "tailscale"' --info --debug`, 그리고 `process == "io.tailscale.ipn.macsys.network-extension"` 따로 | 카나리 0건 | 178줄(대부분 Tailscale CLI(점검용으로 띄운 `debug daemon-logs` 프로세스 포함)·앱 프로세스의 CFNetwork·networkextension·XPC 일반 로그), 네트워크 확장 프로세스 15줄. 카나리 0건. 쿠키 관련 3줄은 `NSHTTPCookieStorage` 초기화 문구(요청 값 아님). **한계:** `<private>`로 가려진 값 29건(10:20:15–10:21:00 구간) — macOS가 비공개 처리한 값이라 내용 확인 불가 |
 | 3 | 로컬 tailscaled 로그 파일 메타 | `ls -l /Library/Tailscale` (내용 열람 아님) | — | `ipn.log..log1.txt`·`log2.txt` = root 소유 0600, 크기 0바이트, 수정 시각 10:21(카나리 직후). `sockstats.log*` 0바이트. **한계:** 0바이트는 현재 크기일 뿐 — 버퍼가 회전·업로드됐을 가능성이 있어 "기록된 적 없음"의 증거가 아님. 내용은 `sudo` 필요(미실행) |
 | 4 | 원격 logtail·관리 콘솔 로그 | 관리 콘솔(로그 스트리밍·네트워크 플로 로그 설정) | 요청 내용 미포함 | (미실행 — 로컬에서 볼 수 없음. 사람 필요) |
 | 5 | 앱 쪽 로그(보조) | `/Users/younghwankang/Work/ohmyslack/.claude/logs/server.log`·`server.err.log` 읽기만, 키 이름 집계·패턴 건수만(원문 출력 없음) | 비밀 패턴 0건, PRD §10 허용 키만 | `server.log` 189줄 전부 JSON. 키 7종만: `event`·`method`·`route`·`status_code`·`duration_ms`·`request_id`·`error_code`. 이벤트 `http_request` 183·`push_send_result` 6. 패턴 건수 cookie 0·authorization/bearer 0·`omsb_` 0·push endpoint URL 0·쿼리 문자열 0·password 0·sid/session/token 키 0·카나리 0. `route`는 원문 URL이 아닌 라우트 템플릿(R1의 쿼리 미기록). `server.err.log` 0바이트, 카나리 0(L1) |
