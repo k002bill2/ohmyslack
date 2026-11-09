@@ -217,3 +217,19 @@ export const layoutVars: Readonly<Record<string, string>> = Object.freeze({
   '--body-min-medium': '380px',
   '--thread-overlay-w': 'min(420px, 100%)',
 });
+
+/**
+ * R4 분할선(wide 전용, DESIGN_REFERENCE §5-2 R4): 사용자가 끌어 내비·스레드 폭을 바꾼다. 기본 폭은 위 layoutVars 그대로.
+ * 내비를 navCollapseBelow 아래로 끌면 72px 레일로 접힌다. 본문은 bodyMin 아래로 줄지 않는다. 키보드 ←→는 step씩.
+ */
+export const splitLimits = Object.freeze({
+  navMin: 200,
+  navMax: 360,
+  navCollapseBelow: 160,
+  threadMin: 320,
+  threadMax: 560,
+  bodyMin: 480,
+  /** 분할선 자체 폭(= 패널 사이 여백). */
+  gutter: 12,
+  step: 16,
+});

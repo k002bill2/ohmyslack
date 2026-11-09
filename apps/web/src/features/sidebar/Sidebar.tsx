@@ -4,7 +4,7 @@ import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { SIDEBAR_SHELL_COPY } from './copy.js';
-import { AppMark, HashIcon, LogOutIcon, MessageSquareIcon, PlusIcon, SearchIcon, UsersIcon } from './icons.js';
+import { AppMark, HashIcon, LogOutIcon, MessageSquareIcon, PanelLeftIcon, PlusIcon, SearchIcon, UsersIcon } from './icons.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 
 export interface SidebarProps {
@@ -27,6 +27,8 @@ export interface SidebarProps {
   readonly onCreateChannel?: () => void;
   /** R4 「이동…」 버튼 → 공간 전환기(D §7-3 Ctrl/⌘+K). 없으면(compact) 렌더하지 않는다. */
   readonly onOpenSwitcher?: () => void;
+  /** R4 내비게이션 접기/펼치기(wide, §5-2 자동 접힘 중이 아닐 때만). */
+  readonly onToggleCollapse?: () => void;
   /** 오류 상태 「다시 시도」. */
   readonly onRetryList?: () => void;
   /** owner 전용 하단 「멤버 관리」(`/settings/members`). role이 owner가 아니면 렌더하지 않는다. */
@@ -70,6 +72,7 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
         aria-current={selected ? 'page' : undefined}
         aria-label={collapsed ? collapsedLabel(space) : undefined}
         title={collapsed ? space.name : undefined}
+        {...(collapsed ? { 'data-initial': Array.from(space.name)[0] ?? '' } : {})}
         onClick={() => onSelect(space.id)}
       >
         <span className="space-status" aria-hidden="true" />
@@ -184,6 +187,11 @@ export function Sidebar(props: SidebarProps) {
         ) : (
           <span className={collapsed ? 'visually-hidden' : 'sidebar-app-name'}>{APP_NAME}</span>
         )}
+        {props.onToggleCollapse && !collapsed && (
+          <IconAction label={SIDEBAR_SHELL_COPY.collapseNav} onClick={props.onToggleCollapse}>
+            <PanelLeftIcon />
+          </IconAction>
+        )}
       </header>
       {/* R4 시안: 「이동…」(전환기) + 공간 작업은 아이콘 버튼(접근 이름 = 기존 문구, 툴팁 같은 값). */}
       <div className="sidebar-actions">
@@ -211,6 +219,13 @@ export function Sidebar(props: SidebarProps) {
         )}
       </div>
       <SpaceListBody {...props} />
+      {props.onToggleCollapse && collapsed && (
+        <div className="sidebar-expand">
+          <IconAction label={SIDEBAR_SHELL_COPY.expandNav} onClick={props.onToggleCollapse}>
+            <PanelLeftIcon />
+          </IconAction>
+        </div>
+      )}
       {account !== undefined && (
         <div className="sidebar-account">
           <AccountCard account={account}>
@@ -225,7 +240,7 @@ export function Sidebar(props: SidebarProps) {
               </IconAction>
             )}
           </AccountCard>
-          {props.pushSettings}
+          {!collapsed && props.pushSettings}
         </div>
       )}
     </nav>

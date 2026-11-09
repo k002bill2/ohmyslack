@@ -23,6 +23,7 @@ import { HeaderMenu } from './HeaderMenu.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { SpaceSwitcher } from './SpaceSwitcher.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
+import { useSplit } from './useSplit.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
 // R4 시안 덮어쓰기 — 다른 기능 CSS(conversation·thread·members)보다 나중에 평가되도록 마지막 import.
 import './refresh.css';
@@ -273,8 +274,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const root = snap.messages.find((m) => m.id === state.threadRootId && m.conversationId === state.conversationId);
   // 나간 채널은 스레드도 닫힌 것으로 본다 — 답글 작성기로 나간 채널에 보내지 않게(Codex r1 P2).
   const threadOpen = space !== undefined && root !== undefined && space.left !== true;
-  const collapsed = isSidebarCollapsed(viewport, threadOpen);
   const bp = viewport.breakpoint;
+  const autoCollapsed = isSidebarCollapsed(viewport, threadOpen);
+  // R4 분할선(wide): 사용자 폭·접기. §5-2 자동 접힘이 우선.
+  const split = useSplit(shell, { enabled: bp === 'wide', threadOpen, autoCollapsed, onCloseThread: () => dispatch({ type: 'close-thread' }) });
+  const collapsed = autoCollapsed || split.userCollapsed;
   const historyReady = snap.loadedHistory === undefined || snap.loadedHistory === state.conversationId;
   // 알림 탭 `#message-:id` → 대상 메시지 스크롤·강조(W-23 Codex P2-3).
   const repliesReady = state.threadRootId === null || snap.loadedReplies === undefined || snap.loadedReplies.includes(state.threadRootId);
@@ -456,6 +460,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(dataSource.createChannel ? { onCreateChannel: () => setPanel('create') } : {})}
       {...(dataSource.reload ? { onRetryList: () => dataSource.reload?.() } : {})}
       {...(bp === 'compact' ? {} : { onOpenSwitcher: () => setOverlay('switcher') })}
+      {...(split.toggleNav === undefined ? {} : { onToggleCollapse: split.toggleNav })}
       {...(dataSource.listMembers && dataSource.createInvite && dataSource.deactivateMember
         ? { onManageMembers: () => setMembers(true) }
         : {})}
@@ -559,14 +564,17 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       className="app-shell"
       data-layout={bp}
       data-sidebar={collapsed ? 'collapsed' : 'expanded'}
-      data-thread={threadOpen ? 'open' : 'closed'}
+      data-thread={threadOpen && !members ? 'open' : 'closed'}
+      data-split={bp === 'wide' ? 'on' : undefined}
       onKeyDown={onKeyDown}
     >
       <ConnectionBanner state={snap.connection} />
       {bp === 'compact' ? compactScreen : (
         <>
           {sidebar}
+          {split.navSplitter}
           {memberAdmin || pane}
+          {!members && thread && split.threadSplitter}
           {!members && thread}
           {spacePanel}
           {overlay === 'switcher' && (

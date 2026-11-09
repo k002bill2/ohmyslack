@@ -379,3 +379,121 @@
     min-height: 36px;
   }
 }
+
+/*
+ * R4 분할선(wide): 패널 사이 여백(12px) 자리에 분할선 열을 둔다 — 내비 | 분할선 | 본문 | 분할선 | 스레드.
+ * 폭은 셸의 --sidebar-w·--thread-w(useSplit이 CSSOM으로 덮어씀). 본문 최소 폭 계산은 기존 규칙과 같다.
+ */
+.app-shell[data-split='on'] {
+  grid-template-columns: var(--sidebar-w) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr);
+}
+.app-shell[data-split='on'][data-thread='open'] {
+  grid-template-columns: var(--sidebar-w) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) auto;
+}
+/* 접힘(레일)은 사용자 폭(인라인 --sidebar-w)보다 우선해야 하므로 변수 재정의가 아니라 템플릿을 따로 둔다. */
+.app-shell[data-split='on'][data-sidebar='collapsed'] {
+  grid-template-columns: var(--sidebar-w-collapsed) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr);
+}
+.app-shell[data-split='on'][data-sidebar='collapsed'][data-thread='open'] {
+  grid-template-columns: var(--sidebar-w-collapsed) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) auto;
+}
+.app-shell[data-split='on'] > .conversation-pane,
+.app-shell[data-split='on'] > .member-admin-screen,
+.app-shell[data-split='on'] > .thread-wide {
+  margin-left: 0;
+}
+.splitter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  border-radius: var(--radius-md);
+}
+.splitter-handle {
+  width: 4px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--border-subtle);
+  transition: height var(--motion-fast), background var(--motion-fast);
+}
+.splitter:hover .splitter-handle,
+.splitter:focus-visible .splitter-handle,
+.splitter[data-dragging='true'] .splitter-handle {
+  height: 64px;
+  background: var(--accent-solid);
+}
+.splitter:focus-visible {
+  outline-offset: -2px;
+}
+.app-shell:has(> .splitter[data-dragging='true']) {
+  cursor: col-resize;
+  user-select: none;
+}
+.sidebar-expand {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2) 0;
+}
+
+/* 레일(72px, R4 시안): 공간 항목은 이름 첫 글자(장식 — 접근 이름은 aria-label), 상태 점은 숨기고 배지는 오른쪽 위. */
+.sidebar[data-collapsed='true'] .space-item[data-initial] {
+  position: relative;
+  justify-content: center;
+  width: 44px;
+  min-height: 44px;
+  margin-inline: auto;
+  padding: 0;
+  border-radius: var(--radius-lg);
+}
+.sidebar[data-collapsed='true'] .space-item[data-initial]::before {
+  content: attr(data-initial);
+  font-weight: 600;
+  color: var(--text);
+}
+.sidebar[data-collapsed='true'] .space-item[data-initial] .space-status {
+  display: none;
+}
+.sidebar[data-collapsed='true'] .space-item[data-initial] .unread-badge {
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 2px;
+  margin: 0;
+}
+.sidebar[data-collapsed='true'] .space-item[data-initial] .thread-dot {
+  position: absolute;
+  bottom: 2px;
+  inset-inline-end: 4px;
+}
+/* 스레드 헤더 X 버튼. */
+.thread-panel .thread-close-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.thread-panel .thread-close-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.thread-panel .thread-root > .msg-item,
+.thread-panel .thread-root > .msg-item:hover {
+  background: var(--bg-elevated);
+}
+.app-shell[data-split='on'] > .thread-wide {
+  box-sizing: border-box;
+}
+@media (pointer: fine) and (width > 640px) {
+  .thread-panel .thread-close-icon {
+    width: 36px;
+    height: 36px;
+  }
+}

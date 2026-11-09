@@ -90,3 +90,13 @@ export function LogOutIcon() {
     </svg>
   );
 }
+
+/** 내비게이션 접기·펼치기(Lucide `panel-left` 형태). */
+export function PanelLeftIcon() {
+  return (
+    <svg {...BASE}>
+      <rect x="2" y="2.5" width="12" height="11" rx="2" />
+      <path d="M6 2.5v11" />
+    </svg>
+  );
+}
