@@ -37,3 +37,15 @@
 | 원인(L1, 이벤트 로그로 확인 — 4차 확인 2026-11-09 01:12–01:16 KST) | **미러링 입력의 부산물이며 앱 결함이 아님.** 같은 출처의 dist 복사본 `index.html`에만 이벤트 기록 스크립트(`qa-evlog.js`, 저장소 밖)를 넣어 탭 순서를 기록함. iPhone 미러링은 탭마다 실제 터치보다 먼저 `pointerdown pt=mouse`·`mousedown`을 **`html`(y=-1)** 에 보낸다. 메시지 2가 포커스된 상태에서 트리거를 탭하면 ① `mousedown tgt=html` → ② `focusout li.msg-item`(트리거가 `:focus-within` 조건을 잃고 접힘) → ③ 실제 터치 `pointerdown pt=touch`가 **메시지 3의 `span.msg-author`(y=289)** 에 도달. 실제 손가락 탭에는 `html`에 대한 이 마우스 이벤트가 없다. 확인 과정에서 트리거에 `onMouseDown` preventDefault를 넣은 빌드도 시험했으나 결과가 같아(가짜 `mousedown`의 대상이 트리거가 아니라 `html`) 수정을 되돌림. 첫 가설(「iOS WebKit은 탭한 버튼에 포커스를 주지 않아 항목이 포커스를 잃음」)은 틀렸음 |
 | 판정 | `미검증` 유지 — S2 수정·삭제를 미러링으로 완료하지 못함. 길게 누르기(실제 손가락)·가상 키보드 가림·640.5/1023.5px 렌더가 남음 |
 | 증거 경로 | 4차 이벤트 로그 `reports/qa/f7-fix-device/`(`08-log-sequence.png`·`09-log-button-tap.png`·`qa-evlog.js`) · `reports/qa/client-02-mirroring/` — `01-tap-message.png`, `02-tap-actions.png`(탭 후 메시지 3 활성), `03-tap-actions-again.png`, `04-longpress-drag.png`, `05-keyboard-sheet.png`, `06-edit-key.png`, `07-logged-out.png` — `reports/`는 gitignore(로컬 보관) |
+
+## 5차 실행 — 실제 손가락 길게 누르기·가상 키보드 (사용자 실기, 2026-11-09)
+
+| 필드 | 값 |
+|---|---|
+| 실행자 | 강영환(실기, 실제 손가락) — Claude가 사용자 보고를 기록 |
+| 일시(KST) | 2026-11-09 02:10 KST 이전(사용자 보고, 정확한 시각 미기재) · 기록 02:40 KST |
+| 기기·OS·브라우저 | iPhone 16 Pro 실기(iOS 버전 미기재), iOS 가상 키보드 |
+| 절차 | ① 본인 메시지 길게 누르기 → 「메시지 작업」 시트 → 수정·삭제 ② 작성기 포커스로 가상 키보드를 띄워 작성기·전송 버튼 가림 확인 |
+| 실제 결과 | 사용자 보고: ① 길게 누르기로 수정·삭제 「작동됨」 ② 가상 키보드가 작성기·전송 버튼을 「안 가림」. 화면 기록 없음 |
+| 판정 | `미검증` 유지 — iPhone 실기 남은 항목(S2 수정·삭제, 가상 키보드 가림)은 이번 보고로 닫힘. 남은 것: 640.5·1023.5px 소수 폭 실제 렌더, 정본 390px 정확 폭(기기는 402pt) — QA 측정 항목 |
+| 증거 경로 | 사용자 보고(이 세션 대화, 2026-11-09) |

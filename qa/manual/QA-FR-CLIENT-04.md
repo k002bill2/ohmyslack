@@ -39,3 +39,15 @@
 | 실제 결과 | **iOS Safari 로그인 중:** localStorage `oms.cp.<id>` = `6` 1개, sessionStorage 0, IndexedDB 0, Cache Storage `oms-shell-*` 4개 44항목·`/api` 0, SW `/sw.js` active, `document.cookie` 0(세션 쿠키는 HttpOnly). 마커 적중은 `csrf` 4건뿐 — 캐시된 JS 번들 4개의 필드명 문자열 `csrf_token`(데이터 아님, 1차와 같음). 셸 캐시 4개는 이날 빌드한 이전 버전들로, **로그아웃 후 검사 때는 새 SW 활성화로 1개(`oms-shell-ycsw6c` 11항목)만 남음**(정리 동작 정상). **iOS Safari 로그아웃 후:** localStorage 0(checkpoint 삭제), sessionStorage 0, IndexedDB 0, 캐시 1개·`/api` 0, 마커 적중 `csrf` 1건(번들 코드). **macOS Safari 로그인 중:** localStorage `oms.cp.<id>` = `6` 1개, sessionStorage 0, IndexedDB 0, 캐시 1개 11항목·`/api` 0, 마커 적중 `csrf` 1건(번들 코드). **macOS Safari 로그아웃 후:** localStorage 0, 나머지 동일. 본문·이메일·표시 이름 마커는 모든 검사에서 0건 |
 | 판정 | `미검증` — iOS Safari 탭·macOS Safari 저장소 검사는 기대와 일치(로그아웃 후 재노출 0은 2차에서 확인). 남은 것: **홈 화면 웹 앱** 저장소(Safari 탭과 별도 저장 공간이고 주소창이 없어 진단 페이지를 열 수 없음 — Web Inspector 필요)와 웹 앱 가장자리 뒤로 제스처(실제 손가락). macOS Safari는 개인정보 보호 창이라 일반 창의 영구 저장소와 다를 수 있음 |
 | 증거 경로 | `reports/qa/client-04-iphone-storage/` — `01-qa-c4a.png`, `02-qa-c4b.png`, `03-storage-logged-in.png`, `05-after-logout.png`, `06-storage-logged-out.png`, 진단 페이지 원본 `qa-storage.{html,js}`, `qa-server.log` · `reports/qa/client-04-macos-safari/` — `storage-logged-{in,out}.{txt,png}` — `reports/`는 gitignore(로컬 보관) |
+
+## 4차 실행 — 홈 화면 웹 앱 가장자리 뒤로 제스처 (사용자 실기, 2026-11-09)
+
+| 필드 | 값 |
+|---|---|
+| 실행자 | 강영환(실기, 실제 손가락) — Claude가 사용자 보고를 기록 |
+| 일시(KST) | 2026-11-09 02:10 KST 이전(사용자 보고, 정확한 시각 미기재) · 기록 02:40 KST |
+| 기기·OS·브라우저 | iPhone 16 Pro 실기 홈 화면 웹 앱(iOS 버전 미기재) |
+| 절차 | 웹 앱 안에서 로그아웃 후 화면 왼쪽 가장자리에서 밀어 뒤로 이동 |
+| 실제 결과 | 사용자 보고: 「작동함」 — 로그아웃 후 가장자리 뒤로 제스처에서 본문 재노출 없음. 화면 기록 없음 |
+| 판정 | `미검증` 유지 — 가장자리 뒤로 제스처는 이번 보고로 닫힘. 남은 것: 홈 화면 웹 앱 저장소 검사(Mac Safari 「개발자용」 메뉴 → iPhone 웹 앱 Web Inspector로 localStorage·sessionStorage·IndexedDB·Cache Storage 확인, 기대: 숫자 checkpoint 1개만·`/api` 0·로그아웃 후 checkpoint 삭제) |
+| 증거 경로 | 사용자 보고(이 세션 대화, 2026-11-09) |
