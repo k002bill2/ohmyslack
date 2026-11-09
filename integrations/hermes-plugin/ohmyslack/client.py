@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, TypeVar
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -21,8 +21,11 @@ API_PREFIX = "/api/bot/v1"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 MAX_SEND_ATTEMPTS = 4
 RETRY_AFTER_CAP_SECONDS = 60.0
+ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024  # shared/attachments.ts ATTACHMENT_MAX_BYTES (ADR-001 §3-g)
+_READ_CHUNK = 64 * 1024
 
 Sleep = Callable[[float], Awaitable[None]]
+T = TypeVar("T")
 
 
 class BotApiError(Exception):
@@ -102,13 +105,39 @@ class BotClient:
         raise BotApiError(status, path, _parse_retry_after(retry_after))
 
     async def request(self, method: str, path: str, *, params: Optional[dict] = None,
-                      json: Any = None) -> Any:
+                      json: Any = None, data: Optional[bytes] = None,
+                      content_type: Optional[str] = None) -> Any:
         url = f"{self._base}{API_PREFIX}{path}"
-        async with self._session.request(method, url, params=params, json=json,
-                                         headers=self._headers()) as resp:
+        headers = self._headers()
+        if content_type:
+            headers["Content-Type"] = content_type
+        async with self._session.request(method, url, params=params, json=json, data=data,
+                                         headers=headers) as resp:
             if resp.status >= 400:
                 self._raise_for(resp.status, path, resp.headers.get("Retry-After"))
             return await resp.json()
+
+    async def _with_retry(self, call: Callable[[], Awaitable[T]], label: str) -> T:
+        """429(Retry-After)·5xx·연결 오류만 최대 MAX_SEND_ATTEMPTS회 다시 시도한다. 그 외 4xx·401은 즉시 올린다."""
+        last_exc: Optional[Exception] = None
+        for attempt in range(MAX_SEND_ATTEMPTS):
+            try:
+                return await call()
+            except BotAuthError:
+                raise
+            except BotApiError as exc:
+                if exc.status != 429 and exc.status < 500:
+                    raise
+                last_exc = exc
+                delay = exc.retry_after if exc.retry_after is not None else float(2 ** attempt)
+            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+                last_exc = exc
+                delay = float(2 ** attempt)
+            if attempt + 1 < MAX_SEND_ATTEMPTS:
+                logger.warning("ohmyslack: %s retry %d/%d in %.1fs", label, attempt + 1, MAX_SEND_ATTEMPTS, delay)
+                await self._sleep(delay)
+        assert last_exc is not None
+        raise last_exc
 
     async def get_me(self) -> dict:
         return await self.request("GET", "/me")
@@ -126,31 +155,47 @@ class BotClient:
         return await self.request("GET", "/sync/snapshot", params=params)
 
     async def post_message(self, conversation_id: str, body: str, *,
-                           thread_root_id: Optional[str] = None) -> dict:
-        """멱등 재시도: 같은 `client_message_id`로 429(Retry-After)·5xx·연결 오류만 다시 보낸다."""
+                           thread_root_id: Optional[str] = None,
+                           attachment_ids: Optional[list[str]] = None) -> dict:
+        """멱등 재시도: 같은 `client_message_id`로 429(Retry-After)·5xx·연결 오류만 다시 보낸다.
+
+        서버는 같은 키 재전송을 첨부 ID 집합까지 비교해 원래 메시지로 돌려준다(messages/repo.ts replay) → 중복 없음.
+        """
         payload: dict[str, Any] = {"client_message_id": str(uuid.uuid4()), "body": body}
         if thread_root_id:
             payload["thread_root_id"] = thread_root_id
+        if attachment_ids:
+            payload["attachment_ids"] = list(attachment_ids)
         path = f"/conversations/{conversation_id}/messages"
-        last_exc: Optional[Exception] = None
-        for attempt in range(MAX_SEND_ATTEMPTS):
-            try:
-                return await self.request("POST", path, json=payload)
-            except BotAuthError:
-                raise
-            except BotApiError as exc:
-                if exc.status != 429 and exc.status < 500:
-                    raise
-                last_exc = exc
-                delay = exc.retry_after if exc.retry_after is not None else float(2 ** attempt)
-            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
-                last_exc = exc
-                delay = float(2 ** attempt)
-            if attempt + 1 < MAX_SEND_ATTEMPTS:
-                logger.warning("ohmyslack: send retry %d/%d in %.1fs", attempt + 1, MAX_SEND_ATTEMPTS, delay)
-                await self._sleep(delay)
-        assert last_exc is not None
-        raise last_exc
+        return await self._with_retry(lambda: self.request("POST", path, json=payload), "send")
+
+    async def upload_attachment(self, conversation_id: str, data: bytes, mime: str) -> dict:
+        """원시 바이트 업로드 → 미결속 첨부(`attachment_id`). 재시도는 post_message와 같은 정책.
+
+        업로드에는 멱등 키가 없어, 응답 유실 뒤 재시도하면 미결속 첨부가 하나 더 생길 수 있다 — 결속되지 않은 것은
+        서버가 1시간 뒤 정리한다(ATTACHMENT_UNBOUND_TTL_MS). 메시지는 하나만 만들어진다.
+        """
+        return await self._with_retry(
+            lambda: self.request("POST", "/attachments", params={"conversation_id": conversation_id},
+                                 data=data, content_type=mime), "upload")
+
+    async def download_attachment(self, attachment_id: str, *, max_bytes: int = ATTACHMENT_MAX_BYTES) -> bytes:
+        """첨부 바이트를 상한까지만 읽는다(Content-Length·누적 크기 모두 검사). 넘으면 BotApiError(413)."""
+        path = f"/attachments/{attachment_id}"
+        url = f"{self._base}{API_PREFIX}{path}"
+        async with self._session.get(url, headers=self._headers()) as resp:
+            if resp.status >= 400:
+                self._raise_for(resp.status, path, resp.headers.get("Retry-After"))
+            if resp.content_length is not None and resp.content_length > max_bytes:
+                raise BotApiError(413, path)
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.content.iter_chunked(_READ_CHUNK):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise BotApiError(413, path)
+                chunks.append(chunk)
+            return b"".join(chunks)
 
     async def patch_message(self, message_id: str, body: str) -> dict:
         return await self.request("PATCH", f"/messages/{message_id}", json={"body": body})

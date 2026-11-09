@@ -5,6 +5,7 @@ import type { FetchLike } from './data/api.js';
 import type { SocketLike } from './data/realtime.js';
 import { InviteAccept, LoginForm, parseInviteHash, type InviteAcceptRequest, type InviteResult, type LoginResult } from './features/auth';
 import { AppShell } from './features/layout';
+import { resetPushBotHint, resetPushMemory } from './features/pwa';
 import { createSessionBus, type SessionBus } from './features/sync';
 import { INVITE_COPY, LOGIN_PATH } from './ui/copy.js';
 
@@ -84,6 +85,9 @@ export function LiveApp({
       session.onEnd((reason) => {
         setPhase({ kind: 'signed-out', sessionEnded: reason === 'unauthorized' && hadSession.current });
         hadSession.current = false;
+        // 알림 안내 닫음·구독 id는 세션 단위 메모리다(B7) — 다음 로그인 사용자에게 넘기지 않는다(W-23b).
+        resetPushBotHint();
+        resetPushMemory();
         // 로그아웃·401 → 로그인 화면 주소(D §4-2 `/login`). 이전 대화 경로를 남기지 않는다.
         replacePath(LOGIN_PATH);
       }),
