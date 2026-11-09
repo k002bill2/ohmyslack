@@ -60,6 +60,24 @@ describe('verify', () => {
     for (const rel of stale) expect(existsSync(join(cwd, rel)), rel).toBe(false);
   });
 
+  it('fails preflight without deleting a stray top-level reports/*.json', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'verify-'));
+    mkdirSync(join(cwd, 'reports/qa'), { recursive: true });
+    writeFileSync(join(cwd, 'reports/old-copy.json'), 'null');
+    writeFileSync(join(cwd, 'reports/qa/m.json'), '{}');
+    const ran: string[] = [];
+    const ctx = captureCtx(cwd, {});
+    const code = await runVerify(ctx, (step) => {
+      ran.push(step.label);
+      return 0;
+    });
+    expect(code).toBe(1);
+    expect(ran).toEqual([]);
+    expect(ctx.lines.join('\n')).toContain('old-copy.json');
+    expect(existsSync(join(cwd, 'reports/old-copy.json'))).toBe(true);
+    expect(existsSync(join(cwd, 'reports/qa/m.json'))).toBe(true);
+  });
+
   it('every artifact stays strictly inside reports/ and outside reports/qa', () => {
     for (const rel of VERIFY_ARTIFACTS) {
       expect(rel.startsWith('reports/') && !rel.startsWith('reports/qa')).toBe(true);

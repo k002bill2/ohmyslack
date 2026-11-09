@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import type { RunContext } from './lib/cli.ts';
 
-// 불변식: verify는 자기가 만드는(또는 게이트 리더가 읽는 도구) 산출물만 지운다.
+// 불변식: verify는 VERIFY_ARTIFACTS 목록(자기 산출물 + 게이트가 읽는 perf JSON)만 지운다.
 // reports/ 자체·reports/qa/(수동 QA 증거) 등 목록 밖 경로는 절대 지우지 않는다.
 
 /** PR 게이트 단계(정본: DEV_DESIGN §5-1 순서). */
@@ -97,8 +97,27 @@ function banner(ctx: RunContext, text: string): void {
   ctx.out(bar);
 }
 
+/**
+ * check-fr-coverage·check-no-persist-cache는 reports/*.json 전체를 Vitest 결과로 읽는다.
+ * 목록 밖 최상위 JSON은 지우지 않고(증거 보존) 그 이름을 돌려줘 verify를 멈추게 한다.
+ */
+export function unexpectedReportJson(cwd: string): string[] {
+  const dir = join(cwd, 'reports');
+  if (!existsSync(dir)) return [];
+  const known = new Set(VERIFY_ARTIFACTS);
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json') && !known.has(`reports/${name}`))
+    .sort();
+}
+
 export async function runVerify(ctx: RunContext, exec: Exec): Promise<number> {
   cleanArtifacts(ctx.cwd);
+  const strays = unexpectedReportJson(ctx.cwd);
+  if (strays.length > 0) {
+    ctx.err(`verify: reports/ 최상위에 목록 밖 JSON이 있어 게이트가 오판할 수 있습니다(삭제하지 않음): ${strays.join(', ')}`);
+    banner(ctx, 'VERIFY FAILED at preflight (reports/*.json 정리 필요 — reports/qa/ 등 하위로 옮기세요)');
+    return 1;
+  }
   const steps = buildSteps(ctx.env);
   for (const [index, step] of steps.entries()) {
     const head = `[${index + 1}/${steps.length}] pnpm ${step.args.join(' ')}`;
