@@ -70,6 +70,7 @@
 
 - 명령 출력·스크린샷·JSON: `reports/qa/<항목>/`, `reports/verify-app/`(gitignore — 이 맥에만 있음). 각 QA 문서의 "실제 결과" 칸에 요약을 옮겨 두었다.
 - 깨끗한 체크아웃 로그: 세션 스크래치패드 `w16-verify.log`, `w16-gate2.log`(저장소 밖).
+- **증거 유실(2026-11-09 22:34 KST, Jarvis):** 메인 체크아웃에서 `pnpm verify`를 실행해 `tools/verify.ts:65`의 `rmSync(reports)`가 `reports/` 전체를 지움. 유실 20경로: `reports/qa/{boot-01, client-01, client-01-r3, client-01-safari, client-02, client-02-iphone, client-02-mirroring, client-03, client-04, client-04-iphone-storage, client-04-macos-safari, client-04-safari-ios, client-07, f7-fix-device, f8-device, finding-dup, sync-04, sync-07, sync-07-r2}`, `reports/verify-app/20261108134042_eaf15b`. 남은 것: `reports/qa/{BOT-06, OPS-01-5, OPS-01-7, OPS-03}`(22:35:44에 다시 생성됨 — 생성 주체 미확인). Time Machine 마운트 실패·로컬 스냅샷 없음으로 복구 불가. 판정은 각 QA 문서 「실제 결과」 칸의 요약(실행 당시 기록)에 근거하며 바뀌지 않음. 원본 스크린샷·JSON은 더 이상 재검토할 수 없음.
 
 ## 7. 발견 수정 (브랜치 `feat/w16-keymap-focus`, 미커밋)
 
