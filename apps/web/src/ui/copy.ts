@@ -234,6 +234,32 @@ export const MESSAGE_ACTION_COPY = {
 } as const;
 
 /**
+ * R4 시안 메시지 툴바·메뉴(Floating-Menus A·B). 메뉴는 「더보기」 버튼·우클릭·Shift+F10으로 연다.
+ * 수정·삭제는 내 메시지에만, 삭제는 확인 Dialog(DELETE_MESSAGE_COPY)를 거친다.
+ */
+export const MESSAGE_MENU_COPY = {
+  menu: '메시지 메뉴',
+  more: '더보기',
+  reply: '답글',
+  replyInThread: '스레드로 답글',
+  copyText: '텍스트 복사',
+  copyLink: '메시지 링크 복사',
+  edit: '메시지 수정',
+  delete: '메시지 삭제…',
+  copiedText: '텍스트를 복사했습니다',
+  copiedLink: '링크를 복사했습니다',
+  copyFailed: '복사하지 못했습니다',
+} as const;
+
+/** R4 시안 대화 헤더 더보기 메뉴(Floating-Menus D). 「멤버 보기」는 채널 멤버 화면이 없어 아직 렌더하지 않는다. */
+export const HEADER_MENU_COPY = {
+  more: '대화 더보기',
+  menu: '대화 메뉴',
+  shortcuts: '키보드 단축키',
+  leave: '채널 나가기…',
+} as const;
+
+/**
  * CMP-14 ThreadSummary(UI_STATES §2-7, D §4-3 「답글 3」·「새 답글」). 「마지막 답글 n분 전」은 계약에 마지막 답글 시각이 없어
  * 렌더하지 않는다(W-10i REPORT).
  */

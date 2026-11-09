@@ -199,3 +199,183 @@
     border-radius: var(--radius-lg);
   }
 }
+
+/* 메시지 툴바(R4 Floating-Menus A·B): 떠 있는 둥근 막대 — 「답글」 글자 칩 + 수정·더보기 아이콘. 메뉴가 열린 동안은 계속 보인다. */
+@media (hover: hover) and (width > 640px) {
+  .msg-item .msg-toolbar {
+    top: calc(-1 * var(--space-5));
+    inset-inline-end: var(--space-2);
+    gap: 2px;
+    padding: var(--space-1);
+    border-color: var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--bg-app);
+    box-shadow: var(--shadow-float);
+  }
+  .msg-item > .msg-toolbar[data-open='true'] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.msg-item .msg-toolbar .msg-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.msg-item .msg-toolbar .msg-action:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.msg-item .msg-toolbar .msg-action-reply {
+  padding: 0 var(--space-3);
+  background: var(--accent-bg);
+  color: var(--text);
+  font-weight: 600;
+}
+.msg-item .msg-toolbar .msg-action-icon {
+  min-width: 44px;
+  padding: 0;
+}
+.msg-item .msg-toolbar .msg-action[aria-expanded='true'] {
+  background: var(--bg-active);
+  color: var(--text);
+}
+@media (pointer: fine) and (width > 640px) {
+  .msg-item .msg-toolbar .msg-action {
+    min-height: 32px;
+  }
+  .msg-item .msg-toolbar .msg-action-icon {
+    min-width: 32px;
+  }
+}
+
+/* 메시지 메뉴(R4 Floating-Menus B): 툴바 아래 오른쪽 정렬, 우클릭이면 누른 자리(항목 폭 안으로 제한). */
+.msg-menu {
+  position: absolute;
+  z-index: 4;
+  top: var(--space-6);
+  inset-inline-end: var(--space-2);
+  width: min(248px, 100%);
+  box-sizing: border-box;
+  padding: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
+  box-shadow: var(--shadow-overlay);
+}
+.msg-menu[data-at='pointer'] {
+  top: var(--msg-menu-y);
+  inset-inline-start: min(var(--msg-menu-x), calc(100% - min(248px, 100%)));
+  inset-inline-end: auto;
+}
+.msg-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+.msg-menu-item:hover,
+.msg-menu-item:focus-visible {
+  background: var(--bg-hover);
+}
+.msg-menu-label {
+  flex: 1 1 auto;
+}
+.msg-menu-danger {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+.msg-menu-key {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.msg-menu-separator {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-subtle);
+}
+@media (pointer: fine) and (width > 640px) {
+  .msg-menu-item {
+    min-height: 36px;
+  }
+}
+/* 복사 결과 안내: 항목 오른쪽 위 작은 반전 알약(role=status). */
+.msg-copy-note {
+  position: absolute;
+  z-index: 5;
+  top: var(--space-2);
+  inset-inline-end: var(--space-4);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--text);
+  color: var(--bg-app);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.msg-menu[data-flip='up'] {
+  top: auto;
+  bottom: calc(100% - var(--space-2));
+}
+.msg-menu[data-flip='up'][data-at='pointer'] {
+  bottom: calc(100% - var(--msg-menu-y));
+}
+
+/* 대화 헤더 더보기(R4 Floating-Menus D): 아이콘 버튼 + 그 아래 오른쪽 정렬 메뉴. */
+.header-menu {
+  position: relative;
+  flex: none;
+}
+.header-menu > .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.header-menu > .icon-button:hover,
+.header-menu > .icon-button[aria-expanded='true'] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.header-menu > .msg-menu {
+  /* 부모(아이콘 버튼 폭) 기준 100%가 아니라 메뉴 고유 폭. */
+  width: 248px;
+  top: calc(100% + var(--space-1));
+  inset-inline-end: 0;
+  z-index: 3;
+}
+@media (pointer: fine) and (width > 640px) {
+  .header-menu > .icon-button,
+  .conversation-header > button.icon-button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}

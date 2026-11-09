@@ -18,7 +18,7 @@ export interface ThreadPanelProps {
   readonly onRetry?: (clientMessageId: string) => void;
   readonly onDiscard?: (clientMessageId: string) => void;
   /** 본인 메시지 수정·삭제(W-10i). 원문·답글 모두 같은 규칙. */
-  readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete'>;
+  readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'messageLink'>;
   /** FR-SYNC-03: 패널이 맨 아래(마지막 답글이 보임)일 때 그 답글 seq를 알린다. 답글이 없으면 부르지 않는다(본문 열기 ≠ 답글 읽음). */
   readonly onSeen?: (seq: number) => void;
   /** 헤더 보조 줄 「채널 · 답글 n」의 채널 이름(시안 01·06). 없으면 「답글 n」만. */

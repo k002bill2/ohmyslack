@@ -241,13 +241,13 @@ describe('compact 액션 시트 — 「메시지 작업」 버튼(키보드·스
 });
 
 describe('toolbar 모드(medium·wide) — 변화 없음', () => {
-  it('timePlacement inline이면 인라인 답글·수정·삭제, 트리거 없음, 길게 눌러도 시트 없음', () => {
+  it('timePlacement inline이면 인라인 답글·수정·더보기(삭제는 메뉴), 트리거 없음, 길게 눌러도 시트 없음', () => {
     vi.useFakeTimers();
     const { li, container } = renderItem({ timePlacement: 'inline' });
     expect(container.querySelector('.msg-toolbar')).not.toBeNull();
     expect(screen.getByRole('button', { name: '답글' }).getAttribute('data-reply-for')).toBe('m1');
     expect(screen.getByRole('button', { name: MESSAGE_ACTION_COPY.edit })).toBeTruthy();
-    expect(screen.getByRole('button', { name: MESSAGE_ACTION_COPY.delete })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '더보기' }).getAttribute('aria-haspopup')).toBe('menu');
     expect(screen.queryByRole('button', { name: ACTIONS })).toBeNull();
     press(body(li));
     advance(600);

@@ -5,6 +5,7 @@ import { MessageItem, canModify, createPending, failureView, type MessageItemDat
 import { createMemoryHistory, parseThreadParam, withThread } from '../../src/app/route.js';
 import type { ActionResult } from '../../src/data/index.js';
 import { ERROR_COPY } from '../../src/ui/copy.js';
+import { deleteMenuItem } from '../helpers/message-menu.js';
 
 afterEach(cleanup);
 
@@ -29,7 +30,7 @@ describe('액션 노출 규칙', () => {
   it('본인 저장 확인 메시지 → 수정·삭제 노출', () => {
     renderItem();
     expect(within(li()).getByRole('button', { name: '수정' })).toBeTruthy();
-    expect(within(li()).getByRole('button', { name: '삭제' })).toBeTruthy();
+    expect(deleteMenuItem(li())).toBeTruthy();
   });
 
   it('타인·삭제됨·전송 중·내 ID 모름 → 액션 없음', () => {
@@ -131,12 +132,12 @@ describe('인라인 수정', () => {
 describe('삭제 확인 Dialog', () => {
   it('취소 → 요청 없음, 확인 → DELETE', async () => {
     const { onDelete } = renderItem();
-    fireEvent.click(within(li()).getByRole('button', { name: '삭제' }));
+    fireEvent.click(deleteMenuItem(li()));
     const dialog = screen.getByRole('dialog', { name: '메시지 삭제' });
     expect(within(dialog).getByText(/되돌릴 수 없습니다/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: '취소' }));
     expect(onDelete).not.toHaveBeenCalled();
-    fireEvent.click(within(li()).getByRole('button', { name: '삭제' }));
+    fireEvent.click(deleteMenuItem(li()));
     await act(async () => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '삭제' }));
     });
@@ -146,7 +147,7 @@ describe('삭제 확인 Dialog', () => {
 
   it.each([403, 404])('%s → 재시도 불가 안내(삭제·다시 시도 버튼 없음)', async (status) => {
     renderItem({ onDelete: async () => ({ ok: false, status }) });
-    fireEvent.click(within(li()).getByRole('button', { name: '삭제' }));
+    fireEvent.click(deleteMenuItem(li()));
     await act(async () => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '삭제' }));
     });
@@ -158,7 +159,7 @@ describe('삭제 확인 Dialog', () => {
 
   it('5xx → 다시 시도 가능', async () => {
     renderItem({ onDelete: async () => ({ ok: false, status: 503 }) });
-    fireEvent.click(within(li()).getByRole('button', { name: '삭제' }));
+    fireEvent.click(deleteMenuItem(li()));
     await act(async () => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '삭제' }));
     });

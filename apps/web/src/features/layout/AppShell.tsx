@@ -10,7 +10,7 @@ import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '..
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
-import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
+import { LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
@@ -19,6 +19,7 @@ import { useMessageAnchor } from './message-anchor.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
+import { HeaderMenu } from './HeaderMenu.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { SpaceSwitcher } from './SpaceSwitcher.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
@@ -62,7 +63,13 @@ function threadFrom(history: RouteHistory | undefined): string | null {
 }
 
 /** 메시지 항목 공통 props(W-10i): 본인 액션·스레드 요약. */
-type ItemActions = Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'onOpenThread' | 'threadHolding'>;
+type ItemActions = Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'onOpenThread' | 'threadHolding' | 'messageLink'>;
+
+/** R4 메뉴 「메시지 링크 복사」 주소: `/c/:id(?thread=:root)#message-:id`(알림 탭 앵커와 같은 형식, message-anchor.ts). */
+function messageLinkIn(conversationId: string, rootId: string | null): (id: string) => string {
+  const path = withThread(formatRoute({ kind: 'conversation', conversationId }), rootId);
+  return (id) => `${window.location.origin}${path}#message-${id}`;
+}
 
 function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
@@ -117,6 +124,8 @@ function ConversationPane(props: {
   readonly selfName?: string;
   /** 헤더 아래 안내(Jarvis DM 알림 1회 안내, W-23 ★Q-H4). */
   readonly notice?: ReactNode;
+  /** R4 헤더 더보기 「키보드 단축키」(compact는 없음). */
+  readonly onShortcuts?: () => void;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
@@ -155,7 +164,10 @@ function ConversationPane(props: {
             {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
           </span>
         </div>
-        {membership && space.kind === 'channel' && !left && membership.onLeave && <LeaveChannelControl onLeave={membership.onLeave} />}
+        <HeaderMenu
+          {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
+          {...(membership?.onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave: membership.onLeave } : {})}
+        />
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
         {props.onCloseThread && (
           <button
@@ -404,6 +416,13 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       dataSource.open?.(res.value);
     });
   };
+  // 링크 함수는 대화·스레드가 바뀔 때만 새로 — memo(MessageItem) 얕은 비교를 깨지 않게(F-1).
+  const spaceId = space?.id;
+  const mainLink = useMemo(() => (spaceId === undefined ? undefined : messageLinkIn(spaceId, null)), [spaceId]);
+  const threadLink = useMemo(
+    () => (spaceId === undefined || state.threadRootId === null ? undefined : messageLinkIn(spaceId, state.threadRootId)),
+    [spaceId, state.threadRootId],
+  );
   const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true);
   // 로딩 중 훅이 매번 새 []를 돌려줘도 같은 undefined가 되게 — memo(MessageItem)·MessageBody useMemo를 깨지 않는다.
   const mentionNames = useMemo(
@@ -495,12 +514,14 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         ...messageActions,
         onOpenThread: (id) => dispatch({ type: 'open-thread', rootId: id }),
         threadHolding: snap.connection === 'catching-up',
+        ...(mainLink === undefined ? {} : { messageLink: mainLink }),
       }}
       {...(membership === undefined ? {} : { membership })}
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
       holding={snap.connection === 'catching-up'}
       historyReady={historyReady}
+      {...(bp === 'compact' ? {} : { onShortcuts: () => setOverlay('shortcuts') })}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
@@ -516,7 +537,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       drafts={drafts}
       onRetry={retry}
       onDiscard={discard}
-      messageActions={messageActions}
+      messageActions={threadLink === undefined ? messageActions : { ...messageActions, messageLink: threadLink }}
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
       spaceTitle={spaceTitle(space)}
       notice={anchorNoticeEl(true)}

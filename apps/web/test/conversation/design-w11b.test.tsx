@@ -66,15 +66,15 @@ describe('MessageItem 시안 01·11', () => {
     expect(screen.queryByText('나를 멘션')).toBeNull();
   });
 
-  it('답글·수정·삭제는 한 툴바 안에 있고 답글이 먼저다', () => {
+  it('R4 툴바: 답글(글자)·수정·더보기(아이콘) 순서, 삭제는 더보기 메뉴 안', () => {
     const { container } = render(
       <ul>
         <MessageItem message={msg} selfId="u2" onReply={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />
       </ul>,
     );
     const toolbar = container.querySelector('.msg-toolbar');
-    const names = Array.from(toolbar?.querySelectorAll('button') ?? []).map((b) => b.textContent);
-    expect(names).toEqual(['답글', '수정', '삭제']);
+    const names = Array.from(toolbar?.querySelectorAll('button') ?? []).map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(names).toEqual(['답글', '수정', '더보기']);
   });
 });
 
