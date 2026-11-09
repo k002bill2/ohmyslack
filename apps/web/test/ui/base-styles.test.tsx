@@ -69,10 +69,10 @@ describe('auth.css', () => {
     expect(src('ui/base.css')).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
   });
 
-  // 시안 03(W-11c): 카드·입력 면은 slate1(--bg-app), 화면 바탕은 slate2(--bg-sidebar). 이전 기대값 --bg-elevated 카드 → 시안 근거로 교체.
-  it('카드는 --bg-app(바탕 --bg-sidebar), 제목 --text-xl, 입력·버튼 최소 44px, 오류 --danger-text, 링크 --accent-text', () => {
+  // R4 시안 Login: 카드·입력 면은 slate1(--bg-app), 화면 바탕은 slate3(--bg-elevated — 앱 셸 ground와 같은 면).
+  it('카드는 --bg-app(바탕 --bg-elevated), 제목 --text-xl, 입력·버튼 최소 44px, 오류 --danger-text, 링크 --accent-text', () => {
     expect(css).toMatch(/\.auth-card \{[^}]*background: var\(--bg-app\)/);
-    expect(css).toMatch(/\.auth-screen \{[^}]*background: var\(--bg-sidebar\)/);
+    expect(css).toMatch(/\.auth-screen \{[^}]*background: var\(--bg-elevated\)/);
     expect(css).toContain('font-size: var(--text-xl)');
     expect(css.match(/min-height: 44px/g)).toHaveLength(2);
     expect(css).toMatch(/\[role='alert'\][^{]*\{[^}]*color: var\(--danger-text\)/);

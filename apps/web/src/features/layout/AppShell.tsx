@@ -155,8 +155,11 @@ function ConversationPane(props: {
     <main className="conversation-pane" inert={props.inert}>
       <header className="conversation-header">
         {breakpoint === 'compact' && (
-          <button type="button" onClick={props.onBack}>
-            뒤로
+          // R4 모바일 시안: ‹ 아이콘(접근 이름 「뒤로」 그대로).
+          <button type="button" className="icon-button conversation-back" aria-label="뒤로" title="뒤로" onClick={props.onBack}>
+            <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" focusable="false">
+              <path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         )}
         <div className="conversation-heading">
