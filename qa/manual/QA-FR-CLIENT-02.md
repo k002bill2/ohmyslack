@@ -12,7 +12,7 @@
 | 절차 | ① 폭 320·390·640·641·768·1023·1024·1119·1120·1280·1440px × 스레드 닫힘/열림마다 새로 로드 → 채널 진입·메시지 렌더 대기(긴 무공백 단어 1건 포함) ② `documentElement.scrollWidth`·사이드바/스레드 사각형·작성기·전송 버튼이 뷰포트 안인지 측정, 스크린샷 ③ compact(320·390·640): 목록 → 채널 → `메시지 작업` 시트 → `답글` → 스레드, 브라우저 back → 본문, `뒤로` → 목록 |
 | 기대 결과 | compact(≤640) 1단, medium(640<w<1024) 2단·스레드 오버레이 `min(420px,100%)`·`aria-modal`, wide(≥1024) 3단·스레드 `clamp(320,32vw,380)`, 스레드 열림+1024–1119px 사이드바 72px 접힘·본문 ≥480, 1120px 펼침 복귀, 전 폭 가로 넘침 0·작성기/전송 가림 0, compact 공간→본문→스레드→뒤로. iPhone 390px S2·S4·S6·가상 키보드 가림 0 |
 | 실제 결과 | **데스크톱 Chromium 22조합 전부 기대대로:** 가로 넘침 0(scrollWidth = 뷰포트 폭) · 작성기·전송 버튼 전부 뷰포트 안 · 320/390/640 사이드바 없음(1단) · 641/768/1023 사이드바 260px + 스레드 오버레이 420px `aria-modal="true"`(2단) · 1024/1119 스레드 열림 시 사이드바 72px·스레드 330/360px·본문 ≥598px · 1120/1280/1440 사이드바 260px·스레드 360/382/382px(테두리 포함) · compact 3폭 모두 시트 버튼 `닫기·답글·수정·삭제·취소` → 스레드(답글 작성기·전송 뷰포트 안, 넘침 0) → back 시 본문 → `뒤로` 시 목록(`/`). **미측정:** 640.5·1023.5px 실제 렌더(CDP 폭은 정수라 재현 불가. `apps/web/test/layout/responsive.test.tsx`는 matchMedia 목으로 구간 분류만 확인하며 넘침·가림은 재지 않음 — 실제 창 폭 조절로 따로 측정 필요), iPhone 실기 390px S2·S4·S6·가상 키보드 |
-| 판정 | `미검증` — 측정한 데스크톱 22조합은 기대와 일치. 소수 폭 640.5·1023.5px 실제 렌더와 iPhone Safari 390px 실기(S2·S4·S6, 가상 키보드 가림)가 남아 있어 PASS로 적지 않음 |
+| 판정 | `미검증` — 측정한 데스크톱 22조합은 기대와 일치. 소수 폭 640.5·1023.5px 실제 렌더와 iPhone Safari 390px 실기(S2·S4·S6, 가상 키보드 가림)가 남아 있어 PASS로 적지 않음. **6차(2026-11-09) 기준 남은 것:** 640.5·1023.5px 실제 렌더만(iPhone 항목은 5차, 390px 정확 폭은 6차 에뮬레이션으로 확인 — 아래 각 절) |
 | 증거 경로 | `reports/qa/client-02/widths.json`, `reports/qa/client-02/w<폭>-{closed,thread}.png`(22장) — `reports/`는 gitignore(로컬 보관) |
 
 ## 2차 실행 — iPhone 실기 (2026-11-08 17:40–17:52 KST)
@@ -49,3 +49,18 @@
 | 실제 결과 | 사용자 보고: ① 길게 누르기로 수정·삭제 「작동됨」 ② 가상 키보드가 작성기·전송 버튼을 「안 가림」. 화면 기록 없음 |
 | 판정 | `미검증` 유지 — iPhone 실기 남은 항목(S2 수정·삭제, 가상 키보드 가림)은 이번 보고로 닫힘. 남은 것: 640.5·1023.5px 소수 폭 실제 렌더, 정본 390px 정확 폭(기기는 402pt) — QA 측정 항목 |
 | 증거 경로 | 사용자 보고(이 세션 대화, 2026-11-09) |
+
+## 6차 실행 — 소수 폭 시도·390px 에뮬레이션·경계 회귀 (2026-11-09 22:55–23:03 KST)
+
+| 필드 | 값 |
+|---|---|
+| 실행자 | Claude(p1-g1-client-02 QA 레인, ego-browser 자동 조작) |
+| 일시(KST) | 2026-11-09 22:55–23:03 KST |
+| 기기·OS·브라우저(버전) | 서버 Mac(arm64) / macOS 27.2 / ego-browser(Chromium, 가이드 v2.2.0), CDP `Emulation.setDeviceMetricsOverride`. 390px은 **에뮬레이션**(DSF 3, `mobile:true`, `Emulation.setTouchEmulationEnabled` maxTouchPoints 5, iPhone Safari UA `setUserAgentOverride`) — iPhone 실기 아님 |
+| 접속 경로 | localhost(`http://localhost:<임의 포트>`, 빌드 `903441b`, 테스트 DB `ohmyslack_test`의 실행별 스키마 — 종료 시 DROP). 127.0.0.1에 다른 세션 쿠키가 있어 덮어쓰지 않도록 호스트를 `localhost`로 분리 |
+| 절차 | ① 합성 채널 `r6-layout`·메시지 4건(긴 무공백 단어 1건 포함)을 UI로 작성(DB 4행 확인) ② 640.5·1023.5 CSS px 뷰포트 만들기 시도: CDP 폭 640.5(DSF 1·2·3), 브라우저 확대 단축키, 같은 출처 iframe `width:640.5px`(+`Page.setBypassCSP`, +`Fetch` 응답 헤더 제거), `setPageScaleFactor`·`scale` ③ 경계 이웃 640·641·1023·1024 × 스레드 닫힘/열림 × DSF 1·2·3(24조합), 1차와 같은 측정(`documentElement.scrollWidth`, `.app-shell[data-layout]`, 사이드바·스레드 사각형, 작성기·전송 버튼 뷰포트 안, 긴 단어 넘침) ④ 390×844 compact: 목록 → 채널 → `메시지 작업` 시트 → `답글` → 스레드 → 브라우저 back → 본문 → `뒤로` → 목록, 단계마다 측정·스크린샷 |
+| 기대 결과 | 1차와 같음. 640.5·1023.5 → medium, 640 → compact, 641·1023 → medium, 1024 → wide(스레드 열림 시 사이드바 72px 접힘). 전 조합 가로 넘침 0·작성기/전송 가림 0. 390 compact 흐름 완주·넘침 0 |
+| 실제 결과 | **② 소수 폭: 측정 불가(미검증).** CDP `width:640.5`는 DSF 1·2·3 모두 `Invalid parameters`(정수 파라미터). 확대 단축키는 브라우저 크롬에 전달되지 않음(DPR·폭 불변). iframe은 서버 CSP `frame-ancestors 'none'`으로 차단되어 `setBypassCSP`·`Fetch` 헤더 제거로도 열리지 않음(`requestPaused` 0건). `setPageScaleFactor`·`scale`은 레이아웃 폭을 바꾸지 않음. 따라서 640.5·1023.5px 실제 렌더 결과는 **없음**(코드상 구간 질의는 `(640px < width < 1024px)` 범위 문법이라 640.5·1023.5는 medium으로 분류될 것으로 **추정**, L3). **③ 경계 회귀 24조합 전부 기대대로:** 640 compact(사이드바 없음, 스레드 열림 시 640px 전체 화면, 시트 버튼 `닫기·답글·수정·삭제·취소`) · 641·1023 medium(사이드바 260px, 스레드 오버레이 420px `aria-modal="true"`) · 1024 wide(닫힘 사이드바 260px / 스레드 열림 사이드바 72px `data-sidebar=collapsed`, 스레드 329.68px, 스레드 시작 x=682.32) · `scrollWidth` = 뷰포트 폭(넘침 0) · 작성기·전송 버튼 전부 뷰포트 안 · 긴 단어 문단 넘침 0. DSF 1·2·3 결과 동일. **④ 390 에뮬레이션:** innerWidth 390·DPR 3·`pointer: coarse` true·maxTouchPoints 5, 6단계 모두 compact·`scrollWidth` 390(넘침 0), 채널·시트·스레드·back 후 본문에서 작성기·전송 버튼 뷰포트 안, 시트 버튼 `닫기·답글·수정·삭제·취소`, back → 본문, `뒤로` → 목록(`/`) |
+| 판정 | `미검증` 유지 — 정본 §11 폭 목록(`DESIGN_REFERENCE.md:550`)의 640.5·1023.5px 실제 렌더를 이 도구로 만들지 못함. 390px은 정확 폭 에뮬레이션으로 compact 흐름·넘침 0 확인(L1, 단 실기 아님 — 실기는 2·5차 iPhone 16 Pro 402pt). 경계 이웃 회귀 없음(L1) |
+| 증거 경로 | `reports/qa/client-02-r6/` — `widths.json`(전체 측정 통합), `fractional-probe.json`(소수 폭 시도 기록), `regression-integer.json`·`regression-integer-dsf23.json`, `w{640,641,1023,1024}-dsf{1,2,3}-{closed,thread}.png`(24장), `w390-dsf3-{1-list,2-channel,3-sheet,4-thread,5-back-channel,6-back-list}.png`(6장), `w390-flow.json` — `reports/`는 gitignore(로컬 보관) |
+| 남은 것(사람 필요) | 640.5·1023.5px: 실제 Chrome 창에서 확대 200% + 창 내부 폭 1281/2047 DIP(= CSS 640.5/1023.5)로 렌더해 `data-layout`·가로 스크롤 확인. CDP·iframe 경로는 위 사유로 불가 |
