@@ -30,14 +30,14 @@
 | 1 | tailscaled 실시간 로그 | 카나리 전송 전후 약 8초 `tailscale debug daemon-logs`(읽기 전용 스트림. 원격 logtail로 올라가는 것과 같은 로그로 보임 — 추정, L2) 수집 → 카나리 grep | 카나리 0건 | 수집 1줄(`[logtap connected]`)뿐, 카나리 0건, serve/proxy/http 언급 0건(L1). **한계:** 요청 단위 Serve 줄 자체가 안 찍혀 판별력 낮음 — 기본 상세 수준에서는 성공 프록시 요청을 기록하지 않는 것으로 보임(추정, L2) |
 | 2 | macOS 통합 로그 | `/usr/bin/log show --start <전송 직전> --predicate 'subsystem BEGINSWITH "io.tailscale" OR process CONTAINS[c] "tailscale"' --info --debug`, 그리고 `process == "io.tailscale.ipn.macsys.network-extension"` 따로 | 카나리 0건 | 178줄(대부분 Tailscale CLI(점검용으로 띄운 `debug daemon-logs` 프로세스 포함)·앱 프로세스의 CFNetwork·networkextension·XPC 일반 로그), 네트워크 확장 프로세스 15줄. 카나리 0건. 쿠키 관련 3줄은 `NSHTTPCookieStorage` 초기화 문구(요청 값 아님). **한계:** `<private>`로 가려진 값 29건(10:20:15–10:21:00 구간) — macOS가 비공개 처리한 값이라 내용 확인 불가 |
 | 3 | 로컬 tailscaled 로그 파일 메타 | `ls -l /Library/Tailscale` (내용 열람 아님) | — | `ipn.log..log1.txt`·`log2.txt` = root 소유 0600, 크기 0바이트, 수정 시각 10:21(카나리 직후). `sockstats.log*` 0바이트. **한계:** 0바이트는 현재 크기일 뿐 — 버퍼가 회전·업로드됐을 가능성이 있어 "기록된 적 없음"의 증거가 아님. 내용은 `sudo` 필요(미실행) |
-| 4 | 원격 logtail·관리 콘솔 로그 | 관리 콘솔(로그 스트리밍·네트워크 플로 로그 설정) | 요청 내용 미포함 | (미실행 — 로컬에서 볼 수 없음. 사람 필요) |
+| 4 | 원격 logtail·관리 콘솔 로그 | 관리 콘솔(로그 스트리밍·네트워크 플로 로그 설정) | 요청 내용 미포함 | **관리 콘솔 부분만 2026-11-09 21:47 KST, Aside(본인 계정 로그인, 조회만, L1):** Logs > Configuration logs = 「Not streaming」(Premium), 표에는 설정 변경 이벤트만(11-08–11-09 구간 「Log in to admin console」 1건) — 요청 경로·쿼리·헤더 항목 없음. Logs > Network flow logs = 「Not logging」, Free 플랜이라 「Start logging…」 비활성. → 콘솔 쪽 로그 스트리밍·플로 로그 꺼짐. **한계:** tailscaled가 Tailscale 내부 logtail로 올리는 진단 로그 내용은 콘솔에서 볼 수 없어 미확인(1번 `daemon-logs`가 간접 근거). 증거 `reports/qa/OPS-03/ops03-config-logs.png`·`ops03-flow-logs.png`(gitignore) |
 | 5 | 앱 쪽 로그(보조) | `/Users/younghwankang/Work/ohmyslack/.claude/logs/server.log`·`server.err.log` 읽기만, 키 이름 집계·패턴 건수만(원문 출력 없음) | 비밀 패턴 0건, PRD §10 허용 키만 | `server.log` 189줄 전부 JSON. 키 7종만: `event`·`method`·`route`·`status_code`·`duration_ms`·`request_id`·`error_code`. 이벤트 `http_request` 183·`push_send_result` 6. 패턴 건수 cookie 0·authorization/bearer 0·`omsb_` 0·push endpoint URL 0·쿼리 문자열 0·password 0·sid/session/token 키 0·카나리 0. `route`는 원문 URL이 아닌 라우트 템플릿(R1의 쿼리 미기록). `server.err.log` 0바이트, 카나리 0(L1) |
 | 6 | 프록시 오류 경로 | 백엔드 중지 상태에서 Serve 요청 → tailscaled 오류 로그에 URL·쿼리가 찍히는지 | 쿼리·헤더 미포함 | (미실행 — 서비스 중지 금지 범위) |
 
 ## 남은 절차 (확인 필요 — 영환님 실행)
 
 1. 터미널에서 카나리 요청 R1을 다시 보낸 직후 `sudo grep -c '<canary>' /Library/Tailscale/ipn.log*` → `0` 확인(파일이 회전됐으면 `ls -l` 크기·시각도 함께 기록).
-2. 관리 콘솔 Logs(설정 감사 로그·네트워크 플로 로그·로그 스트리밍)에서 활성 여부를 확인하고, 켜져 있으면 요청 경로·쿼리·헤더 값이 포함되는지 확인.
+2. ~~관리 콘솔 Logs(설정 감사 로그·네트워크 플로 로그·로그 스트리밍)에서 활성 여부를 확인하고, 켜져 있으면 요청 경로·쿼리·헤더 값이 포함되는지 확인.~~ → 2026-11-09 21:47 KST 완료(점검 절차 4번): 스트리밍·플로 로그 모두 꺼짐.
 3. (선택, 설정 변경이므로 영환님 판단) `tailscale debug component-logs` 상세 로그를 잠시 켜고 1번을 반복한 뒤 끔.
 4. 프록시 오류 경로(점검 절차 6): 서비스 중지가 필요하므로 별도 승인 후 영환님이 `launchctl` 로 앱을 잠시 멈춘 상태에서 카나리 요청 R1을 보내고(502 등 기대) 1번의 `sudo grep`·`tailscale debug daemon-logs`로 URL·쿼리·헤더 카나리가 0건인지 확인 → 앱 재기동.
 5. 위 1·2·4가 모두 0건일 때만 판정을 `PASS`로 바꾸고 실행자·일시를 기입. 4를 하지 않기로 하면 그 범위를 「실제 결과」에 별도 미검증으로 명시하고 Jarvis 판단을 받습니다(그 전에는 `미검증` 유지).
