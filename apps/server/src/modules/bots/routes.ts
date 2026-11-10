@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, preHandlerAsyncHookHandler } from
 import { z } from 'zod';
 import { BOT_ROUTE_PREFIX, markBotGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
-import { messageCreateRequestSchema, type BotMe, type HistoryResponse, type RepliesResponse, type SnapshotResponse, type SyncResponse } from '../../shared.js';
+import { historyQuerySchema, messageCreateRequestSchema, readStateRequestSchema, type BotMe, type HistoryResponse, type RepliesResponse, type SnapshotResponse, type SyncResponse } from '../../shared.js';
 import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService } from '../attachments/index.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import { editAs, historyOf, repliesOf, sendAs } from '../messages/routes.js';
@@ -131,14 +131,38 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
  */
 export async function assertReplyRootVisible(bots: Pick<BotService, 'visibleMessageIds'>, botId: string, rawBody: unknown): Promise<void> {
   const parsed = messageCreateRequestSchema.safeParse(rawBody);
-  const rootId = parsed.success ? parsed.data.thread_root_id?.toLowerCase() : undefined;
+  const rootId = parsed.success ? parsed.data.thread_root_id : undefined;
   if (rootId === undefined || rootId === null) return;
-  if (!(await bots.visibleMessageIds(botId, [rootId])).has(rootId)) throw new HttpError(404, 'not_found');
+  await assertMessageVisible(bots, botId, rootId);
+}
+
+/**
+ * 봇 가시성 단일 판정(§4-5): 메시지(답글이면 그 루트 기준)가 봇에게 안 보이면 숨김·없음·비참여 모두 같은 `404 not_found`.
+ * 답글 조회·답글 쓰기·read-state(thread_root_id, F-1)·메시지 수정(F-5)이 이 하나를 쓴다.
+ */
+export async function assertMessageVisible(bots: Pick<BotService, 'visibleMessageIds'>, botId: string, messageId: string): Promise<void> {
+  const id = messageId.toLowerCase();
+  if (!(await bots.visibleMessageIds(botId, [id])).has(id)) throw new HttpError(404, 'not_found');
 }
 
 const threadRootGuard = (deps: BotRouteDeps): preHandlerAsyncHookHandler =>
   markBotGuard(async (request: FastifyRequest): Promise<void> => {
     await assertReplyRootVisible(deps.bots, requireBot(request).botUserId, request.body);
+  });
+
+/** read-state의 `thread_root_id`도 같은 가시성 판정(F-1): 숨김 루트로 답글 seq 오라클을 만들 수 없다. 형식 오류는 markReadAs의 400. */
+const readStateRootGuard = (deps: BotRouteDeps): preHandlerAsyncHookHandler =>
+  markBotGuard(async (request: FastifyRequest): Promise<void> => {
+    const parsed = readStateRequestSchema.safeParse(request.body);
+    const rootId = parsed.success ? parsed.data.thread_root_id : undefined;
+    if (rootId === undefined || rootId === null) return;
+    await assertMessageVisible(deps.bots, requireBot(request).botUserId, rootId);
+  });
+
+/** 수정 대상 메시지도 같은 가시성 판정(F-5): 숨김 스레드 안의 자기 글을 고치거나 답글 수를 읽을 수 없다. */
+const visibleTargetGuard = (deps: BotRouteDeps): preHandlerAsyncHookHandler =>
+  markBotGuard(async (request: FastifyRequest): Promise<void> => {
+    await assertMessageVisible(deps.bots, requireBot(request).botUserId, pathId(request));
   });
 
 /** 봇 가시성(BOT_CHANNEL_SPEC §4-5)으로 메시지 목록을 거른다. 페이지 커서·has_more는 원래 페이지 기준 그대로(건너뛰기만). */
@@ -148,34 +172,46 @@ async function visibleOnly<T extends { readonly id: string }>(deps: BotRouteDeps
 }
 
 /**
- * 숨김 원문은 항상 seq ≤ joined_seq인 앞부분이다(이력은 원문만). after_seq 방향은 숨김만 있는 페이지를 서버가 건너뛰고(Codex P2),
- * 그 밖의 방향에서 거른 결과가 비면 더 오래된 쪽도 전부 숨김이므로 has_more=false로 끝낸다.
+ * 숨김 원문은 항상 seq ≤ joined_seq인 앞부분이다(이력은 원문만). after_seq 방향은 `after_seq < joined_seq`이면 joined_seq로 올려
+ * 숨김 구간을 한 번에 건너뛴다(F-4, 숨김 페이지 루프 없음). 그 밖의 방향에서 거른 결과가 비면 더 오래된 쪽도 전부 숨김이므로 has_more=false.
  */
 async function botHistory(deps: BotRouteDeps, request: FastifyRequest): Promise<HistoryResponse> {
   const botId = requireBot(request).botUserId;
   const conversationId = pathId(request);
-  let query = request.query as Record<string, unknown>;
-  for (;;) {
-    const page = await historyOf(deps.messages, conversationId, query);
-    const messages = await visibleOnly(deps, botId, page.messages);
-    const last = page.messages.at(-1);
-    if (messages.length > 0 || !page.has_more || last === undefined) return { ...page, messages };
-    if (query.after_seq === undefined) return { messages: [], has_more: false };
-    query = { ...query, after_seq: String(last.seq) };
-  }
+  const query = await clampAfterSeq(deps, botId, conversationId, request.query as Record<string, unknown>);
+  const page = await historyOf(deps.messages, conversationId, query);
+  const messages = await visibleOnly(deps, botId, page.messages);
+  return messages.length > 0 ? { ...page, messages } : { messages: [], has_more: false };
+}
+
+/** 유효한 after_seq가 joined_seq보다 작으면 joined_seq로 올린다. 형식 오류·멤버십 없음은 그대로 두어 historyOf의 400·가시성 필터에 맡긴다. */
+async function clampAfterSeq(deps: BotRouteDeps, botId: string, conversationId: string, query: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const parsed = historyQuerySchema.safeParse(query);
+  const after = parsed.success ? parsed.data.after_seq : undefined;
+  if (after === undefined) return query;
+  const joined = await deps.bots.joinedSeq(botId, conversationId);
+  return joined !== undefined && after < joined ? { ...query, after_seq: String(joined) } : query;
 }
 
 /** 루트가 봇에게 보이지 않으면(참여 전 시작 스레드) 404 — 숨김 루트 표현을 새로 만들지 않는다. */
 async function botReplies(deps: BotRouteDeps, request: FastifyRequest): Promise<RepliesResponse> {
   const rootId = pathId(request).toLowerCase();
-  const botId = requireBot(request).botUserId;
-  if (!(await deps.bots.visibleMessageIds(botId, [rootId])).has(rootId)) throw new HttpError(404, 'not_found');
+  await assertMessageVisible(deps.bots, requireBot(request).botUserId, rootId);
   return repliesOf(deps.messages, rootId, request.query);
 }
 
+/**
+ * snapshot은 seq 내림차순 페이지다. 다음 페이지(seq < next_before_seq)가 전부 seq ≤ joined_seq이면 모두 숨김이므로
+ * has_more=false·next_before_seq=null로 끝낸다(F-2, 숨김 구간 빈 페이지·seq 노출 없음). 멤버십이 없으면 빈 마지막 페이지.
+ */
 async function botSnapshot(deps: BotRouteDeps, request: FastifyRequest): Promise<SnapshotResponse> {
+  const botId = requireBot(request).botUserId;
   const page = await snapshotOf(deps.sync, request.query);
-  return { ...page, messages: await visibleOnly(deps, requireBot(request).botUserId, page.messages) };
+  const joined = await deps.bots.joinedSeq(botId, page.conversation_id);
+  const messages = joined === undefined ? [] : await visibleOnly(deps, botId, page.messages);
+  const next = page.next_before_seq;
+  const exhausted = joined === undefined || !page.has_more || next === null || next <= joined + 1;
+  return { ...page, messages, has_more: !exhausted, next_before_seq: exhausted ? null : next };
 }
 
 async function botSync(deps: BotRouteDeps, request: FastifyRequest): Promise<SyncResponse> {
@@ -220,12 +256,12 @@ export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): voi
     { config, preHandler: [...guarded('conversation', 'write'), threadRootGuard(deps), rateGuard(deps.limiter, 'create')] },
     (request, reply) => sendAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body, reply),
   );
-  app.patch(`${p}messages/:id`, { config, preHandler: [...guarded('message', 'write'), rateGuard(deps.limiter, 'edit')] }, (request) =>
+  app.patch(`${p}messages/:id`, { config, preHandler: [...guarded('message', 'write'), visibleTargetGuard(deps), rateGuard(deps.limiter, 'edit')] }, (request) =>
     editAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body),
   );
   app.get(`${p}sync`, { config, preHandler: token }, (request) => botSync(deps, request));
   app.get(`${p}sync/snapshot`, { config, preHandler: guarded('query', 'read') }, (request) => botSnapshot(deps, request));
-  app.put(`${p}read-state`, { config, preHandler: guarded('body', 'read') }, (request) =>
+  app.put(`${p}read-state`, { config, preHandler: [...guarded('body', 'read'), readStateRootGuard(deps)] }, (request) =>
     markReadAs(deps.sync, requireBot(request).botUserId, request.body),
   );
   if (deps.attachments !== undefined) registerBotAttachmentRoutes(app, deps, deps.attachments);

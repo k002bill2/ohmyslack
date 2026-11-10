@@ -229,3 +229,13 @@ export async function visibleMessageIds(db: Db, botUserId: string, messageIds: r
   );
   return new Set(res.rows.map((r) => r.id));
 }
+
+/** 봇의 활성 멤버십 joined_seq(BOT_CHANNEL_SPEC §4-5). seq ≤ joined_seq 원문은 항상 숨김이라 페이지 경계를 자르는 데 쓴다. 비활성이면 undefined. */
+export async function joinedSeq(db: Db, botUserId: string, conversationId: string): Promise<number | undefined> {
+  const res = await db.query<{ joined_seq: string | number }>(
+    'SELECT joined_seq FROM conversation_members WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL',
+    [conversationId, botUserId],
+  );
+  const raw = res.rows[0]?.joined_seq;
+  return raw === undefined ? undefined : Number(raw);
+}
