@@ -7,6 +7,7 @@ import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
 import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
+import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
@@ -74,6 +75,18 @@ function messageLinkIn(conversationId: string, rootId: string | null): (id: stri
 
 function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
+}
+
+/** 대화 머리 H1. 비활성 DM 상대는 이름만 말줄임하고 「(비활성)」은 항상 보인다 — 전체 이름은 title(QA D3). */
+function ConversationTitle({ space }: { readonly space: Space }) {
+  const title = spaceTitle(space);
+  const inactive = space.kind === 'dm' ? space.peerInactiveName : undefined;
+  const split = isSplitName(title, inactive);
+  return (
+    <h1 className={split ? 'conversation-title name-split' : 'conversation-title'} title={split ? title : undefined}>
+      <NameParts label={title} inactiveName={inactive} />
+    </h1>
+  );
 }
 
 /** 메시지 객체(불변)별 판정 캐시 — 렌더마다 모든 본문을 다시 파싱하지 않게(F-1). */
@@ -167,7 +180,7 @@ function ConversationPane(props: {
           </button>
         )}
         <div className="conversation-heading">
-          <h1 className="conversation-title">{spaceTitle(space)}</h1>
+          <ConversationTitle space={space} />
           <span className="conversation-meta">
             {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
           </span>

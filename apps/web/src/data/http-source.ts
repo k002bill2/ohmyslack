@@ -84,8 +84,9 @@ const readKey = (conversationId: string, rootId: string | null) => (rootId === n
  * 목록 항목 → Space. `reads`(WS `read.updated`로 받은 읽음 위치)와 서버 값을 단조 병합해 큰 쪽을 쓴다.
  * 병합한 위치가 마지막 seq에 닿으면 미읽음을 0으로, 스레드는 마지막 답글에 닿으면 미읽음 스레드에서 뺀다.
  */
-function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: ReadonlyMap<string, number>): Space {
+function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: ReadonlyMap<string, number>, inactive: ReadonlyMap<string, string>): Space {
   const peer = c.peer_user_id === null ? undefined : names.get(c.peer_user_id);
+  const peerInactive = c.name === null && c.peer_user_id !== null ? inactive.get(c.peer_user_id) : undefined;
   const read = Math.max(c.last_read_seq, reads.get(c.id) ?? 0);
   const caughtUp = read > c.last_read_seq && read >= c.last_seq;
   // mention_count는 본문·스레드 합산이라 로컬에서 줄이지 않는다 — read.updated 뒤 목록 재조회(서버 집계)를 따른다(Codex r1 P2).
@@ -103,6 +104,7 @@ function toSpace(c: Summary, names: ReadonlyMap<string, string>, reads: Readonly
     unreadThreadRoots: unreadRoots(c, reads),
     // 봇 DM 판정은 목록 projection의 peer_kind — 비활성 봇은 GET /api/members(활성만)에 없어도 배지·고정 유지(W-22b, Codex W-19b P2).
     ...(c.kind === 'dm' && c.peer_kind === 'bot' ? { bot: true } : {}),
+    ...(peerInactive === undefined ? {} : { peerInactiveName: peerInactive }),
   };
 }
 
@@ -198,6 +200,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   /** 이름 확인 전에는 빈 이름(UUID를 화면에 내지 않는다, W-10k A). */
   const author = (id: string) => names.get(id) ?? '';
+  /** 비활성으로 확인한 사용자 → 접미 없는 이름(QA D2·D3). 활성 멤버 목록에서 다시 보이면 지운다. */
+  let inactiveNames: ReadonlyMap<string, string> = new Map();
+  const inactiveName = (id: string) => inactiveNames.get(id);
+  /** 활성 멤버 목록(대화·워크스페이스)으로 이름을 배운다 — 그 ID는 더 이상 비활성이 아니다. */
+  const learnActive = (members: readonly { readonly id: string; readonly display_name: string }[]) => {
+    names = new Map([...names, ...members.map((m) => [m.id, m.display_name] as const)]);
+    const ids = new Set(members.map((m) => m.id));
+    if ([...inactiveNames.keys()].some((id) => ids.has(id))) inactiveNames = new Map([...inactiveNames].filter(([id]) => !ids.has(id)));
+  };
   /** 재조회를 이미 시도한 미지 ID(실패·응답에 없음 포함) — 같은 ID로 무한 재조회하지 않는다. */
   const triedAuthors = new Set<string>();
   /** 대화별 in-flight 재조회. */
@@ -209,13 +220,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     const messages = new Map(fold.messages);
     for (const [id, m] of fold.messages) {
       const name = m.authorId === undefined ? undefined : names.get(m.authorId);
-      if (name !== undefined && name !== m.author) {
-        messages.set(id, { ...m, author: name });
+      const bare = m.authorId === undefined ? undefined : inactiveNames.get(m.authorId);
+      if (name !== undefined && (name !== m.author || bare !== m.authorInactiveName)) {
+        // 다시 활성이 된 작성자는 키 자체를 뺀다(선택 필드는 undefined 대신 생략).
+        const rest = Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'authorInactiveName')) as Message;
+        messages.set(id, { ...rest, author: name, ...(bare === undefined ? {} : { authorInactiveName: bare }) });
         changed = true;
       }
     }
     if (changed) fold = { applied: fold.applied, messages };
-    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads)));
+    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads, inactiveNames)));
     emit();
   };
 
@@ -228,7 +242,12 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     const found = await lookupUserNames(api, want);
     if (ended) return;
     const rest = want.filter((id) => (recheck || !names.has(id)) && !found.has(id));
-    names = new Map([...names, ...found, ...rest.map((id) => [id, AUTHOR_NAME_COPY.unknown] as const)]);
+    names = new Map([...names, ...[...found].map(([id, n]) => [id, n.label] as const), ...rest.map((id) => [id, AUTHOR_NAME_COPY.unknown] as const)]);
+    const wanted = new Set(want);
+    inactiveNames = new Map([
+      ...[...inactiveNames].filter(([id]) => !wanted.has(id)),
+      ...[...found].flatMap(([id, n]) => (n.inactiveName === undefined ? [] : [[id, n.inactiveName] as const])),
+    ]);
   };
 
   /** 직전 `GET /api/members`(활성만)의 ID. 세션 중 비활성화돼 목록에서 사라진 ID는 캐시된 이름을 다시 확인한다(Codex r1 P2). */
@@ -260,7 +279,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         members = (await api.get<MembersResponse>('/api/members')).members;
       }
       if (ended) return;
-      names = new Map([...names, ...members.map((m) => [m.id, m.display_name] as const)]);
+      learnActive(members);
     } finally {
       if (!ended) {
         await settleNames(ids);
@@ -318,7 +337,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   const foldView = (changeId: number, view: MessageView) => {
     noteAuthor(view);
-    return foldMessage(fold, changeId, view, author);
+    return foldMessage(fold, changeId, view, author, inactiveName);
   };
 
   const pendingAsMessage = (p: PendingMessage): Message => {
@@ -629,7 +648,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 세션 종료 뒤 늦게 도착한 목록 응답은 버린다(Codex r1 P2).
     if (ended) return [];
     summaries = all;
-    spaces = withLeft(all.map((c) => toSpace(c, names, reads)));
+    spaces = withLeft(all.map((c) => toSpace(c, names, reads, inactiveNames)));
     listState = 'ready';
     notePeers();
     syncBackground();
@@ -649,7 +668,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     const key = readKey(conversationId, rootId);
     if (seq <= (reads.get(key) ?? 0)) return;
     reads = new Map(reads).set(key, seq);
-    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads)));
+    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads, inactiveNames)));
     emit();
     void loadList().then(
       () => {
@@ -678,7 +697,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const loadMembers = async () => {
     try {
       const res = await api.get<MembersResponse>('/api/members');
-      names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
+      learnActive(res.members);
       noteKinds(res.members);
       noteActive(res.members);
     } catch (e) {
@@ -993,7 +1012,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     listMembers: () =>
       attempt(async () => {
         const res = await api.get<MembersResponse>('/api/members');
-        names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
+        learnActive(res.members);
         noteKinds(res.members);
         noteActive(res.members);
         return res.members.map((m) => ({ id: m.id, displayName: m.display_name, role: m.role, kind: m.kind }));

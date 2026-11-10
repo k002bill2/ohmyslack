@@ -21,6 +21,8 @@ export interface Space {
   readonly left?: boolean;
   /** 상대가 봇(`GET /api/members` kind)인 DM — 목록 최상단 고정 + CMP-26 배지(UI_STATES §2-3 「Jarvis DM」, W-19b). */
   readonly bot?: boolean;
+  /** 비활성 상대 DM이면 접미 없는 상대 이름(`name`은 「{이름} (비활성)」 그대로). 화면이 이름·접미를 따로 그린다(QA D3). */
+  readonly peerInactiveName?: string;
 }
 
 export interface Message {
@@ -28,6 +30,8 @@ export interface Message {
   readonly conversationId: string;
   readonly rootId?: string;
   readonly author: string;
+  /** 비활성 작성자면 접미 없는 이름(`author`는 「{이름} (비활성)」 그대로 — 접근 이름용). 화면이 이름·접미를 따로 그린다(QA D2). */
+  readonly authorInactiveName?: string;
   readonly createdAt: string;
   readonly body: string;
   readonly replyCount: number;

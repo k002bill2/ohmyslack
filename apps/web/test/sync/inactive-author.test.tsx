@@ -48,7 +48,8 @@ describe('비활성 작성자 이름(G-50·G-51)', () => {
     fireEvent.click(within(screen.getByRole('navigation', { name: '공간' })).getByRole('button', { name: 'general' }));
     await settle();
     expect(screen.getByText('예전 글')).toBeTruthy();
-    expect(screen.getAllByText('떠난이 (비활성)').length).toBeGreaterThan(0);
+    // 이름·접미가 별도 span(QA D2)이라 getByText(자기 텍스트 노드만) 대신 작성자 줄 전체 텍스트로 본다.
+    expect([...document.querySelectorAll('.msg-author')].map((e) => e.textContent)).toContain('떠난이 (비활성)');
     const item = document.querySelector('[aria-label^="떠난이 (비활성), "]');
     expect(item).not.toBeNull();
     expect(document.querySelector('[aria-label^=", "]')).toBeNull();

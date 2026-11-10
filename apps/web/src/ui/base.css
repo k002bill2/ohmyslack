@@ -87,3 +87,25 @@ body {
   line-height: 1.4;
   white-space: nowrap;
 }
+
+/*
+ * QA D2·D3 비활성 이름(NameParts): 접미 「(비활성)」은 줄지 않고 한 덩어리로만 줄바꿈된다.
+ * 말줄임 자리(.name-split — 사이드바 DM 이름·대화 머리)는 이름 span만 말줄임하고 접미는 항상 보인다.
+ * flex 안에서는 사이 공백 텍스트 노드가 그려지지 않아 간격은 gap 토큰으로 준다(텍스트 노드는 접근 이름용으로 남긴다).
+ */
+.name-suffix {
+  flex: none;
+  white-space: nowrap;
+}
+.name-split {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.name-split .name-base {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -10,14 +10,20 @@ export function userLabel(user: UserNamesResponse['users'][number]): string {
   return user.status === 'disabled' ? AUTHOR_NAME_COPY.inactive(user.display_name) : user.display_name;
 }
 
-export async function lookupUserNames(api: Api, ids: readonly string[]): Promise<ReadonlyMap<string, string>> {
+/** 조회 결과: 화면·접근 이름(`label`)과, 비활성이면 접미 없는 원래 이름(`inactiveName`, QA D2·D3 — 문자열을 다시 쪼개지 않게). */
+export interface UserName {
+  readonly label: string;
+  readonly inactiveName?: string;
+}
+
+export async function lookupUserNames(api: Api, ids: readonly string[]): Promise<ReadonlyMap<string, UserName>> {
   const unique = [...new Set(ids)];
-  const found = new Map<string, string>();
+  const found = new Map<string, UserName>();
   for (let i = 0; i < unique.length; i += USER_NAMES_MAX_IDS) {
     const chunk = unique.slice(i, i + USER_NAMES_MAX_IDS);
     try {
       const res = await api.get<UserNamesResponse>(`/api/users/names?ids=${chunk.map(encodeURIComponent).join(',')}`);
-      for (const u of res.users) found.set(u.id, userLabel(u));
+      for (const u of res.users) found.set(u.id, { label: userLabel(u), ...(u.status === 'disabled' ? { inactiveName: u.display_name } : {}) });
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
     }

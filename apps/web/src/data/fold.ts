@@ -14,13 +14,17 @@ export interface FoldState {
 export const emptyFold: FoldState = Object.freeze({ applied: new Map(), messages: new Map() });
 
 export type AuthorName = (authorId: string) => string;
+/** 비활성 작성자면 접미 없는 원래 이름(QA D2·D3), 아니면 undefined. */
+export type InactiveName = (authorId: string) => string | undefined;
 
-function toMessage(view: MessageView, prev: Message | undefined, author: AuthorName): Message {
+function toMessage(view: MessageView, prev: Message | undefined, author: AuthorName, inactiveName: InactiveName): Message {
+  const bare = inactiveName(view.author_id);
   return {
     id: view.id,
     conversationId: view.conversation_id,
     ...(view.thread_root_id === null ? {} : { rootId: view.thread_root_id }),
     author: author(view.author_id),
+    ...(bare === undefined ? {} : { authorInactiveName: bare }),
     createdAt: view.created_at,
     body: view.body ?? '',
     // 원문의 root_reply_count가 오면 그 값이 정본(TRD §4). 오지 않으면 이전 값을 유지한다.
@@ -37,11 +41,11 @@ function toMessage(view: MessageView, prev: Message | undefined, author: AuthorN
 }
 
 /** `changeId`가 이미 반영한 값 이하이면 그대로 돌려준다(멱등). */
-export function foldMessage(state: FoldState, changeId: number, view: MessageView, author: AuthorName): FoldState {
+export function foldMessage(state: FoldState, changeId: number, view: MessageView, author: AuthorName, inactiveName: InactiveName = () => undefined): FoldState {
   const seen = state.applied.get(view.id);
   if (seen !== undefined && changeId <= seen) return state;
   const applied = new Map(state.applied).set(view.id, changeId);
-  const messages = new Map(state.messages).set(view.id, toMessage(view, state.messages.get(view.id), author));
+  const messages = new Map(state.messages).set(view.id, toMessage(view, state.messages.get(view.id), author, inactiveName));
   return { applied, messages };
 }
 
