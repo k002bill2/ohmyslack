@@ -67,6 +67,12 @@ function memoryConversations(auth: MemoryAuthStore): Fixture {
       async openDm(dm) {
         return fx.dmResult ?? { ok: true, id: dm.id };
       },
+      async addBot() {
+        return 'invalid_target' as const;
+      },
+      async removeBot() {
+        return false;
+      },
     },
   };
   return fx;

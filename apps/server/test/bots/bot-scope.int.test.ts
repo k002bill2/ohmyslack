@@ -174,7 +174,13 @@ describe('봇 리스너 멤버십 상한(§5-2 5항)', () => {
     );
     const me = await botCall(lc, 'GET', 'me');
     expect(me.status).toBe(200);
-    expect(me.json).toEqual({ id: lc.bot.botUserId, owner_user_id: lc.conv.ids.a, conversation_ids: [lc.bot.dmConversationId] });
+    expect(me.json).toEqual({
+      id: lc.bot.botUserId,
+      owner_user_id: lc.conv.ids.a,
+      display_name: 'Listener Bot',
+      conversation_ids: [lc.bot.dmConversationId],
+      conversations: [{ id: lc.bot.dmConversationId, kind: 'dm' }],
+    });
     expect((await botCall(lc, 'GET', `conversations/${left}/messages`)).status).toBe(404);
   });
 

@@ -120,11 +120,21 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
   });
 }
 
+/** `/me` projection: `conversation_ids`는 호환 유지, `conversations`(종류)·`display_name`을 더한다(BOT_CHANNEL_SPEC §4-4). */
+export function toBotMe(botId: string, found: Awaited<ReturnType<BotService['me']>>): BotMe {
+  if (found.ownerUserId === undefined) throw new HttpError(401, 'unauthenticated');
+  return {
+    id: botId,
+    owner_user_id: found.ownerUserId,
+    display_name: found.displayName,
+    conversation_ids: found.conversations.map((c) => c.id),
+    conversations: found.conversations.map((c) => ({ id: c.id, kind: c.kind })),
+  };
+}
+
 async function me(deps: BotRouteDeps, request: FastifyRequest): Promise<BotMe> {
   const botId = requireBot(request).botUserId;
-  const found = await deps.bots.me(botId);
-  if (found.ownerUserId === undefined) throw new HttpError(401, 'unauthenticated');
-  return { id: botId, owner_user_id: found.ownerUserId, conversation_ids: [...found.conversationIds] };
+  return toBotMe(botId, await deps.bots.me(botId));
 }
 
 /**

@@ -30,6 +30,8 @@ declare module 'fastify' {
 }
 
 const idParams = z.object({ id: z.uuid() });
+const botParams = z.object({ id: z.uuid(), bot_user_id: z.uuid() });
+const botBody = z.object({ bot_user_id: z.uuid() });
 
 function parseOr400<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
@@ -109,6 +111,22 @@ async function openDm(deps: ConversationRouteDeps, request: FastifyRequest): Pro
   return deps.conversations.openDm(requireAuth(request).user.id, body.user_id);
 }
 
+/** 봇 추가: 대상 오류(형식 포함)는 404, 새로 추가 201·이미 멤버 200(BOT_CHANNEL_SPEC §4-1). */
+async function addBot(deps: ConversationRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<ConversationRef> {
+  const id = conversationId(request);
+  const parsed = botBody.safeParse(request.body);
+  if (!parsed.success) throw new HttpError(404, 'not_found');
+  reply.code((await deps.conversations.addBot(id, parsed.data.bot_user_id)) ? 201 : 200);
+  return { id };
+}
+
+async function removeBot(deps: ConversationRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const parsed = botParams.safeParse(request.params);
+  if (!parsed.success) throw new HttpError(404, 'not_found');
+  await deps.conversations.removeBot(parsed.data.id, parsed.data.bot_user_id);
+  return reply.code(204).send();
+}
+
 /** 대화 공간 라우트(정본: TRD §3, DEV_DESIGN §2-4 access 메타). */
 export function registerConversationRoutes(app: FastifyInstance, deps: ConversationRouteDeps): void {
   const account = accountGuard(deps.auth);
@@ -139,6 +157,14 @@ export function registerConversationRoutes(app: FastifyInstance, deps: Conversat
       const members = await deps.conversations.store.listMembers(conversationId(request));
       return { members: members.map((m) => ({ id: m.id, display_name: m.displayName })) };
     },
+  );
+
+  // 봇 채널 참여(메인 리스너·사람 세션 전용, BOT_CHANNEL_SPEC §4-1). 봇 리스너에는 등록하지 않는다.
+  app.post('/api/conversations/:id/bots', { config: { access: 'conversation' }, preHandler: guarded('manage_bots') }, (request, reply) =>
+    addBot(deps, request, reply),
+  );
+  app.delete('/api/conversations/:id/bots/:bot_user_id', { config: { access: 'conversation' }, preHandler: guarded('manage_bots') }, (request, reply) =>
+    removeBot(deps, request, reply),
   );
 
   app.post('/api/dms', { config: { access: 'account' }, preHandler: account }, (request) => openDm(deps, request));

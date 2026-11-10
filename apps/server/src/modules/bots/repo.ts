@@ -187,7 +187,13 @@ export async function liveTokenIdsAmong(db: Db, tokenIds: readonly string[]): Pr
  * `GET /api/bot/v1/me`(TRD §5-2 6·8항): owner = 봇이 속한 워크스페이스의 활성 owner, 대화 = **활성(left_at IS NULL)** 참여만.
  * 비활성 봇은 토큰 검증에서 이미 걸러지므로 여기서는 보지 않는다.
  */
-export async function botMe(db: Db, botUserId: string): Promise<{ readonly ownerUserId: string | undefined; readonly conversationIds: readonly string[] }> {
+export interface BotMeRow {
+  readonly ownerUserId: string | undefined;
+  readonly displayName: string;
+  readonly conversations: readonly { readonly id: string; readonly kind: 'channel' | 'dm' }[];
+}
+
+export async function botMe(db: Db, botUserId: string): Promise<BotMeRow> {
   const owner = await db.query<{ user_id: string }>(
     `SELECT wm.user_id FROM workspace_members bm
        JOIN workspace_members wm ON wm.workspace_id = bm.workspace_id AND wm.role = 'owner'
@@ -195,9 +201,15 @@ export async function botMe(db: Db, botUserId: string): Promise<{ readonly owner
       WHERE bm.user_id = $1 ORDER BY wm.user_id LIMIT 1`,
     [botUserId],
   );
-  const convs = await db.query<{ conversation_id: string }>(
-    'SELECT conversation_id FROM conversation_members WHERE user_id = $1 AND left_at IS NULL ORDER BY conversation_id',
+  const convs = await db.query<{ conversation_id: string; kind: 'channel' | 'dm' }>(
+    `SELECT m.conversation_id, c.kind FROM conversation_members m JOIN conversations c ON c.id = m.conversation_id
+      WHERE m.user_id = $1 AND m.left_at IS NULL ORDER BY m.conversation_id`,
     [botUserId],
   );
-  return { ownerUserId: owner.rows[0]?.user_id, conversationIds: convs.rows.map((r) => r.conversation_id) };
+  const self = await db.query<{ display_name: string }>('SELECT display_name FROM users WHERE id = $1', [botUserId]);
+  return {
+    ownerUserId: owner.rows[0]?.user_id,
+    displayName: self.rows[0]?.display_name ?? '',
+    conversations: convs.rows.map((r) => ({ id: r.conversation_id, kind: r.kind })),
+  };
 }

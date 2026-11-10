@@ -135,6 +135,8 @@ function setup(clock: () => number = () => T0) {
     listMembers: unused,
     listForUser: unused,
     openDm: unused,
+    addBot: unused,
+    removeBot: unused,
   };
   const syncStore: SyncStore = {
     async watermark() {
