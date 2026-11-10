@@ -181,12 +181,8 @@ function MessageItemView(props: MessageItemProps) {
     if (sheetOpen || pendingAction === null) return;
     setPendingAction(null);
     if (pendingAction === 'reply') onReply?.(message.id);
-    else if (pendingAction === 'copy-text') copy(message.body, MESSAGE_MENU_COPY.copiedText);
-    else if (pendingAction === 'copy-link') {
-      if (messageLink !== undefined) copy(messageLink(message.id), MESSAGE_MENU_COPY.copiedLink);
-    } else if (pendingAction === 'edit') setEditing(true);
-    else setConfirming(true);
-    // copy·messageLink는 렌더마다 새 함수 — 시트 선택 한 번에 한 번만 적용하므로 의존성에서 뺀다.
+    else if (pendingAction === 'edit') setEditing(true);
+    else if (pendingAction === 'delete') setConfirming(true);
   }, [sheetOpen, pendingAction, onReply, message.id]);
 
   const longPress = useLongPress(sheetMode && hasActions && !sheetOpen, () => {
@@ -281,7 +277,11 @@ function MessageItemView(props: MessageItemProps) {
           onClose={() => setSheetOpen(false)}
           onSelect={(action) => {
             setSheetOpen(false);
-            setPendingAction(action);
+            // 복사는 클립보드 사용자 동작(클릭) 안에서 바로 — 언마운트 뒤 effect로 미루면 일부 브라우저가 거부한다.
+            if (action === 'copy-text') copy(message.body, MESSAGE_MENU_COPY.copiedText);
+            else if (action === 'copy-link') {
+              if (messageLink !== undefined) copy(messageLink(message.id), MESSAGE_MENU_COPY.copiedLink);
+            } else setPendingAction(action);
           }}
         />
       )}
