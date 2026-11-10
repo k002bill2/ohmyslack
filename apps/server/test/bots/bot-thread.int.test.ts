@@ -32,11 +32,11 @@ describe('봇 답글 스레드', () => {
     // 답글의 답글(2단) → 400, 저장 0
     const nested = await bot(lc, 'POST', `conversations/${dm}/messages`, send('2단', reply.json.message.id));
     expect(nested.status).toBe(400);
-    // 다른 대화의 root → 400
+    // 다른 대화의 root → 거부. 봇에게 보이지 않는 루트는 없는 루트·숨김 루트와 같은 404(BOT_CHANNEL_SPEC §4-5 ★ 2026-11-10, 이전 400)
     const channel = await createChannel(lc.conv.app, owner, 'other');
     const otherRoot = await req(lc.conv.app, 'POST', `/api/conversations/${channel}/messages`, owner, send('다른 대화'));
     const cross = await bot(lc, 'POST', `conversations/${dm}/messages`, send('교차', otherRoot.json<{ message: { id: string } }>().message.id));
-    expect(cross.status).toBe(400);
+    expect(cross.status).toBe(404);
     const stored = await lc.conv.schema.pool.query<{ n: number }>('SELECT count(*)::int AS n FROM messages WHERE conversation_id = $1', [dm]);
     expect(stored.rows[0]?.n).toBe(2);
 

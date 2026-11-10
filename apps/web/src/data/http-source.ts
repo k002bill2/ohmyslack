@@ -921,6 +921,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         const res = await api.get<ConversationMembersResponse>(`/api/conversations/${encodeURIComponent(conversationId)}/members`);
         return res.members.map((m) => ({ id: m.id, displayName: m.display_name, ...(bots.has(m.id) ? { bot: true } : {}) }));
       }),
+    addBotToChannel: (conversationId, botUserId) =>
+      attempt(async () => {
+        await api.post<unknown>(`/api/conversations/${encodeURIComponent(conversationId)}/bots`, { bot_user_id: botUserId });
+        return null;
+      }),
+    removeBotFromChannel: (conversationId, botUserId) =>
+      attempt(async () => {
+        await api.del<undefined>(`/api/conversations/${encodeURIComponent(conversationId)}/bots/${encodeURIComponent(botUserId)}`);
+        return null;
+      }),
     listMembers: () =>
       attempt(async () => {
         const res = await api.get<MembersResponse>('/api/members');

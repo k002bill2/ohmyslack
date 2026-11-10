@@ -7,7 +7,12 @@ export type PeerKind = 'human' | 'bot';
 export interface AccessRow {
   readonly kind: ConversationKind;
   readonly activeMember: boolean;
+  /** 요청자의 워크스페이스 역할. `manage_bots` 판정 때만 읽는다(BOT_CHANNEL_SPEC §4-2). */
+  readonly role?: string;
 }
+
+/** 봇 채널 추가 결과: 새로 추가·이미 활성 멤버·대상 오류(활성 `kind='bot'`·같은 워크스페이스가 아님). */
+export type AddBotResult = 'added' | 'exists' | 'invalid_target';
 
 export interface NewChannel {
   readonly id: string;
@@ -67,7 +72,12 @@ export type CreateChannelResult = { readonly ok: true } | { readonly ok: false; 
 export type OpenDmResult = { readonly ok: true; readonly id: string } | { readonly ok: false };
 
 export interface ConversationsStore {
-  findAccess(conversationId: string, userId: string): Promise<AccessRow | undefined>;
+  /** withRole이면 워크스페이스 역할도 함께 읽는다(같은 쿼리 1개). */
+  findAccess(conversationId: string, userId: string, withRole?: boolean): Promise<AccessRow | undefined>;
+  /** 봇 멤버십 UPSERT(joinIn과 같은 규칙). 대상이 대화와 같은 워크스페이스의 활성 봇이 아니면 invalid_target(변경 0). */
+  addBot(conversationId: string, botUserId: string, at: Date): Promise<AddBotResult>;
+  /** 활성 **봇** 멤버십에만 left_at을 기록한다(사람 대상은 바뀌지 않음). 바뀐 행이 없으면 false. */
+  removeBot(conversationId: string, botUserId: string, at: Date): Promise<boolean>;
   /** 채널 생성 + 생성자 멤버십·read state(한 트랜잭션). 같은 workspace의 같은 name_norm은 name_taken. */
   createChannel(channel: NewChannel): Promise<CreateChannelResult>;
   /** 요청자에게 활성 멤버십이 없는 같은 workspace 공개 채널(id 오름차순 cursor). */

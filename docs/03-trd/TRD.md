@@ -93,6 +93,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/conversations/discover?after=&limit=` | 아직 참여하지 않은 공개 채널 목록. join 전에는 메시지·멤버 정보를 반환하지 않음 |
 | `POST /api/conversations` | `{kind:"channel",name}` 채널 생성. owner 전용(PRD FR-CONV-01) |
 | `POST /api/conversations/{id}/join`, `DELETE /api/conversations/{id}/membership` | 공개 채널 참여·나가기. 나간 뒤 구독 즉시 해제 |
+| `POST /api/conversations/{id}/bots`, `DELETE /api/conversations/{id}/bots/{bot_user_id}` | owner가 참여 중인 공개 채널에 봇 추가·제거(access `conversation`, action `manage_bots`, P1 FR FR-BOT-08). 추가 201·이미 멤버 200, 제거 204(멱등). 제거 뒤 봇 구독 즉시 해제 |
 | `POST /api/dms` | `{user_id}`로 DM 시작. 정렬된 pair key로 동시 중복 생성 방지 |
 | `GET /api/conversations/{id}/members` | 활성 참여자 목록. 참여자만 접근 |
 | `GET /api/conversations/{id}/messages?before_seq=&after_seq=&around_seq=&limit=` | 접근 가능한 대화 이력. `roots_only=true`로 본문만, 기본 최대 100건 |
@@ -130,6 +131,7 @@ Endpoint는 same-origin `/api/ws`입니다. handshake에서 cookie session, 정�
 | `message.deleted` | server→client: `conversation_id`, `change_id`, `message_id`, `seq`, `deleted_at`; body·mention 없음 |
 | `read.updated` | server→client: `conversation_id`, `thread_root_id?`, `last_read_seq`, `updated_at`; null root은 본문 읽음 |
 | `sync.required` | server→client: REST catch-up 수행 지시 |
+| `membership.changed` | server→client: `conversation_id`, `state: 'joined' \| 'left'`. 영향받는 봇의 모든 연결에만 보냄(대화 구독자 팬아웃 아님, P1 FR FR-BOT-09). `left`는 기존 멤버십 종료 처리(`error not_found` + 구독 삭제) 뒤에 보냄 |
 | `error` | 비민감 `code`, `retryable` |
 
 메시지 read/history 응답과 create/update 이벤트는 `mention_user_ids: uuid[]`를 제공하며, 본문 속 `@이름`은 표시용입니다. 멘션 집계는 ID 배열과 `message_mentions`를 기준으로 합니다. 답글 생성은 `root_reply_count`를 갱신해 이벤트 및 root 응답에 반영하며, 삭제된 답글은 이 수에서 제외합니다. 원문·답글 작성 및 수신 mention은 해당 root의 `thread_unread_targets`를 원자적으로 추가합니다. 읽은 메시지에 나중에 추가된 mention은 unread cursor를 후퇴시키지 않습니다. 수정은 같은 트랜잭션에서 mention 관계를 교체합니다.
@@ -198,8 +200,8 @@ TR-SEC 추가 행(R3.3, ADR-001): **TR-SEC-13** 봇 토큰 경계(§5-2) — 토
 2. **토큰**: CSPRNG 32바이트 base64url에 접두사 `omsb_`(로그 마스킹·유출 스캔용). DB에는 SHA-256만 저장합니다. 원문은 발급 시 1회 출력합니다. 회전은 새 토큰 발급 → 어댑터 교체 → 옛 토큰 폐기 순서이며 봇당 미폐기 토큰은 2개까지입니다. 폐기·봇 비활성화 시 열린 봇 WS를 5초 안에 close합니다(TR-SEC-04와 같은 sweep). 만료 시각은 두지 않고(ADR-001 D-7 ★, 로컬 전용·회전 CLI로 관리) `last_used_at`을 기록합니다.
 3. **봇 리스너**: 별도 Fastify 인스턴스가 `127.0.0.1:<BOT_PORT>`에만 바인드합니다(bind 가드 재사용). Tailscale Serve 설정에 넣지 않습니다. 등록 라우트는 `/api/bot/v1/**`뿐이며 Host 허용목록은 `127.0.0.1:<BOT_PORT>`·`localhost:<BOT_PORT>`입니다. 메인 리스너는 `Authorization` 헤더를 인증에 쓰지 않습니다.
 4. **CSRF·Origin 예외 범위**: 봇 리스너에서만 CSRF 헤더·Origin 일치 검사를 적용하지 않습니다. 근거: 쿠키를 인증에 쓰지 않으므로 브라우저 자동 자격 증명 첨부가 없습니다. 대신 **`Origin` 또는 `Cookie` 헤더가 있는 요청은 400으로 거부**(브라우저발 요청 차단)합니다. 메인 리스너의 기존 규칙(security.ts 전역 훅, accountGuard CSRF)은 바꾸지 않습니다.
-5. **멤버십 상한**: 봇은 ① 봇 생성 시 CLI가 만드는 owner와의 DM ② owner가 웹에서 명시적으로 봇을 추가한 채널(P1)에만 참여합니다. 봇 토큰으로 `POST /api/dms`·채널 참여·멤버 목록 조회는 등록하지 않습니다. 접근 검사는 기존 `assertAccess` 단일 경계를 그대로 씁니다.
-6. **봇 라우트(최소)**: `GET /api/bot/v1/me`(봇 id, owner_user_id, 참여 대화 id 목록), `GET /api/bot/v1/conversations/{id}/messages`, `GET /api/bot/v1/messages/{root_id}/replies`, `POST /api/bot/v1/conversations/{id}/messages`, `PATCH /api/bot/v1/messages/{id}`, `GET /api/bot/v1/sync`, `GET /api/bot/v1/sync/snapshot`(사람 `GET /api/sync/snapshot`과 같은 계약·`assertAccess`), `POST /api/bot/v1/attachments`, `GET /api/bot/v1/attachments/{id}`, `PUT /api/bot/v1/read-state`, WS `/api/bot/v1/ws`. 요청·응답 스키마는 사람 라우트와 같은 shared zod 스키마입니다. **최초 연결·cursor 만료(410) 복구**는 사람 기기와 같은 절차(§3 snapshot·§4 복귀 순서)를 봇 라우트로 수행합니다: `GET /api/bot/v1/me`로 참여 대화 확인 → 대화별 `GET /api/bot/v1/sync/snapshot`으로 `snapshot_cursor` 확보 → 그 cursor부터 `GET /api/bot/v1/sync` 페이지 catch-up → WS 구독. 복구 중 받은 지시는 ADR-001 D-7의 밀린 메시지 처리 상한(15분)을 그대로 적용합니다.
+5. **멤버십 상한**: 봇은 ① 봇 생성 시 CLI가 만드는 owner와의 DM ② owner가 웹에서 명시적으로 봇을 추가한 공개 채널(P1 FR FR-BOT-08)에만 참여합니다. 수치 상한은 두지 않습니다. 채널에서 봇이 읽는 메시지는 참여 시점 `joined_seq` 이후 메시지이며, 참여 전에 시작된 스레드는 통째로 제외합니다(P1 FR FR-BOT-09, 봇 행위자에만 적용). 봇 토큰용 `POST /api/dms`·채널 참여·멤버 추가·멤버 목록 조회 라우트는 등록하지 않습니다. 접근 검사는 기존 `assertAccess` 단일 경계를 그대로 씁니다.
+6. **봇 라우트(최소)**: `GET /api/bot/v1/me`(봇 id, owner_user_id, 참여 대화 id 목록; P1 FR FR-BOT-09에서 `conversations[{id,kind}]`·`display_name` 추가, `conversation_ids`는 호환 유지), `GET /api/bot/v1/conversations/{id}/messages`, `GET /api/bot/v1/messages/{root_id}/replies`, `POST /api/bot/v1/conversations/{id}/messages`, `PATCH /api/bot/v1/messages/{id}`, `GET /api/bot/v1/sync`, `GET /api/bot/v1/sync/snapshot`(사람 `GET /api/sync/snapshot`과 같은 계약·`assertAccess`), `POST /api/bot/v1/attachments`, `GET /api/bot/v1/attachments/{id}`, `PUT /api/bot/v1/read-state`, WS `/api/bot/v1/ws`. 요청·응답 스키마는 사람 라우트와 같은 shared zod 스키마입니다. **최초 연결·cursor 만료(410) 복구**는 사람 기기와 같은 절차(§3 snapshot·§4 복귀 순서)를 봇 라우트로 수행합니다: `GET /api/bot/v1/me`로 참여 대화 확인 → 대화별 `GET /api/bot/v1/sync/snapshot`으로 `snapshot_cursor` 확보 → 그 cursor부터 `GET /api/bot/v1/sync` 페이지 catch-up → WS 구독. 복구 중 받은 지시는 ADR-001 D-7의 밀린 메시지 처리 상한(15분)을 그대로 적용합니다.
 7. **rate limit(봇 토큰별, 메모리)**: 메시지 생성 30건/분, 수정 60건/분, 첨부 업로드 10건/분·100 MiB/일. 초과 시 429, 저장 0.
 8. **작성자 종류 노출**: 모든 메시지 projection에 `author_kind`를 싣습니다. 어댑터의 owner 판정은 `GET /api/bot/v1/me`의 `owner_user_id`와 서버가 채운 `author_id` 비교로 합니다(본문 내용으로 판정 금지).
 
@@ -278,6 +280,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 | R3.1 (Jarvis 정합) | 2026-11-07 | 디자인 ⚖️-D1 해소: 전송 응답과 `message.created` projection에 `client_message_id` 추가(저장된 컬럼 노출만, 계약 의미 변경 없음). Node 26.13.0 LTS 확인(nodejs.org dist index, 2026-10-28 배포) — 착수 시 고정값 |
 | R3.2 (Jarvis 보안 결정) | 2026-11-07 | 위협 모델 §6 공백 해소: §5-1 S1–S13, TR-SEC-11·12, 초대 폐기 route |
 | R3.3 (ADR-001) | 2026-11-08 | Hermes 연동 P0 승격(영환님 결정, ADR-001 D-1–D-7 ★ 채택): `users.kind`·`bot_tokens`·`attachments`·`attachment_blobs`·`push_subscriptions`, 봇 리스너(§5-2), 첨부(§6-1)·Web Push(§6-2) 라우트, `author_kind`·`attachments` projection, 413/415, TR-SEC-13–15, §1·§6 「파일·Push MVP 제외」 문장 정정, 계측 2종 |
+| R3.4 (BOT_CHANNEL_SPEC) | 2026-11-10 | 봇 채널 참여 P1 FR(영환님 결정, BOT_CHANNEL_SPEC §10-1 Q1–Q8 ★ 채택): §3 봇 추가·제거 라우트, §4 `membership.changed`, §5-2 (5) 공개 채널·수치 상한 없음·봇 읽기 `joined_seq` 이후, (6) 봇 `/me` 대화 종류·표시 이름 |
 
 ## 리뷰 반영 기록
 

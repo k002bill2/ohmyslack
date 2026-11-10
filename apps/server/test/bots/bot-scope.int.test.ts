@@ -6,7 +6,7 @@ import { bot as botCall, count, setupBotListener, teardownBotListener, type BotL
 import { connectedBot, subscribeBot } from './bot-ws-harness.js';
 
 /**
- * 봇 참여 범위 경계(TRD §5-2 5항: owner DM + owner가 추가한 채널, Codex r1 P1·P2).
+ * 봇 참여 범위 경계(TRD §5-2 5항: CLI가 만든 owner DM + owner가 `POST /api/conversations/{id}/bots`로 추가한 채널, BOT_CHANNEL_SPEC §4-1, Codex r1 P1·P2).
  * 봇 DM은 CLI create가 만드는 owner DM만, 봇 비활성화는 CLI disable만 — 사람 API는 없는 상대와 같은 거부.
  */
 let ctx: ConvIntContext;
@@ -174,7 +174,13 @@ describe('봇 리스너 멤버십 상한(§5-2 5항)', () => {
     );
     const me = await botCall(lc, 'GET', 'me');
     expect(me.status).toBe(200);
-    expect(me.json).toEqual({ id: lc.bot.botUserId, owner_user_id: lc.conv.ids.a, conversation_ids: [lc.bot.dmConversationId] });
+    expect(me.json).toEqual({
+      id: lc.bot.botUserId,
+      owner_user_id: lc.conv.ids.a,
+      display_name: 'Listener Bot',
+      conversation_ids: [lc.bot.dmConversationId],
+      conversations: [{ id: lc.bot.dmConversationId, kind: 'dm' }],
+    });
     expect((await botCall(lc, 'GET', `conversations/${left}/messages`)).status).toBe(404);
   });
 

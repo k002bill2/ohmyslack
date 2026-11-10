@@ -45,6 +45,8 @@ export const wsServerFrameSchema = z.discriminatedUnion('type', [
     updated_at: z.string(),
   }),
   z.object({ type: z.literal('sync.required') }),
+  /** 봇 연결 전용: 그 봇의 대화 멤버십 변화(BOT_CHANNEL_SPEC §4-3). 사람 연결에는 보내지 않는다. */
+  z.object({ type: z.literal('membership.changed'), conversation_id: z.uuid(), state: z.enum(['joined', 'left']) }),
   z.object({ type: z.literal('error'), code: wsErrorCodeSchema, retryable: z.boolean(), conversation_id: z.uuid().optional() }),
 ]);
 

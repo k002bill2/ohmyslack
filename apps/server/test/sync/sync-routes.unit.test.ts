@@ -76,6 +76,8 @@ async function setup() {
     listMembers: unused,
     listForUser: unused,
     openDm: unused,
+    addBot: unused,
+    removeBot: unused,
   };
   const messagesStore: MessagesStore = {
     locate: unused,

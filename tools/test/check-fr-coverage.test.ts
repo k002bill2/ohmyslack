@@ -34,6 +34,8 @@ interface Fixture {
   readonly reports?: readonly unknown[];
   readonly qa?: Readonly<Record<string, string>>;
   readonly secRows?: readonly string[];
+  /** 주어지면 `### 6-6.` 절(P1 선택 FR 표)을 쓴다. 없으면 절 자체가 없다. */
+  readonly p1Rows?: readonly string[];
 }
 
 const defaultRows = [
@@ -59,8 +61,9 @@ function build(f: Fixture = {}): string {
   write(root, 'docs/02-prd/PRD.md', `# PRD\n\n${prd.join('\n')}\n`);
   const table = [f.header ?? HEADER, '|---|---|---|---|---|---|', ...(f.rows ?? defaultRows)];
   const sec = [SEC_HEADER, '|---|---|---|---|---|', ...(f.secRows ?? defaultSecRows)];
+  const p1 = f.p1Rows === undefined ? '' : `\n### 6-6. p1\n\n${[HEADER, '|---|---|---|---|---|---|', ...f.p1Rows].join('\n')}\n\n- note\n`;
   write(root, 'docs/04-dev-design/DEV_DESIGN.md',
-    `### 6-1. x\n\n### 6-2. 매핑\n\n${table.join('\n')}\n\n| ID | x |\n|---|---|\n| BOOT-01 | y |\n### 6-3. y\n\n${sec.join('\n')}\n\n### 6-4. z\n`);
+    `### 6-1. x\n\n### 6-2. 매핑\n\n${table.join('\n')}\n\n| ID | x |\n|---|---|\n| BOOT-01 | y |\n### 6-3. y\n\n${sec.join('\n')}\n\n### 6-4. z\n${p1}`);
   for (const [rel, content] of Object.entries(f.sources ?? {})) write(root, rel, content);
   (f.reports ?? []).forEach((r, i) => write(root, `reports/r${i}.json`, JSON.stringify(r)));
   for (const [id, content] of Object.entries(f.qa ?? {})) write(root, `qa/manual/${id}.md`, content);
@@ -484,5 +487,89 @@ describe('designated auxiliary test files (both modes)', () => {
     const r = await exec(root, '--mode=gate');
     expect(r.code).toBe(1);
     expect(r.text).toContain(`FR-TST-01: 지정 보조 테스트 파일 없음 ${AUX}`);
+  });
+});
+
+describe('check-fr-coverage P1 선택 FR 6-6', () => {
+  const N9 = 'FR-TST-09 later works';
+  const P1FILE = 'apps/server/test/p1/later.int.test.ts';
+  const p1Row = (fr = 'FR-TST-09', name = N9): string => `| ${fr} | \`${name}\` | 통합 \`${P1FILE}\` | PR | — | — |`;
+  const qa = { 'QA-FR-TST-01': QA_FIELDS, 'QA-BOOT-01': QA_FIELDS };
+
+  function p1Fixture(p1Rows: readonly string[], withTest: boolean): string {
+    const root = build({
+      p1Rows,
+      sources: {
+        'apps/server/test/a.int.test.ts': `it('${N1}', () => {});`,
+        'perf/b.perf.ts': `test('${N2}', () => {});`,
+        [AUX]: `it('FR-TST-01 aux', () => {});`,
+        ...(withTest ? { [P1FILE]: `it('${N9}', () => {});` } : {}),
+      },
+      qa,
+    });
+    const reports = [
+      report(root, 'apps/server/test/a.int.test.ts', [N1]),
+      report(root, 'perf/b.perf.ts', [N2]),
+      report(root, AUX, ['aux']),
+      ...(withTest ? [report(root, P1FILE, [N9])] : []),
+    ];
+    reports.forEach((r, i) => write(root, `reports/r${i}.json`, JSON.stringify(r)));
+    return root;
+  }
+
+  it('passes a PRD P1 FR whose designated test exists and passed (both modes)', async () => {
+    const root = p1Fixture([p1Row()], true);
+    const prog = await exec(root, '--mode=progress');
+    expect(prog.text).toContain('P0 FR 2개 / 구현 2 / 미구현 0');
+    expect(prog.text).toContain('P1 선택 FR 1개 / 구현 1 / 미구현 0');
+    expect(prog.code).toBe(0);
+    const gate = await exec(root, '--mode=gate');
+    expect(gate.text).not.toContain('실패');
+    expect(gate.code).toBe(0);
+  });
+
+  it('gate fails when a 6-6 designated test is missing; progress lists it as P1 미구현', async () => {
+    const root = p1Fixture([p1Row()], false);
+    const gate = await exec(root, '--mode=gate');
+    expect(gate.text).toContain('FR-TST-09: 지정 테스트 미발견');
+    expect(gate.code).toBe(1);
+    const prog = await exec(root, '--mode=progress');
+    expect(prog.text).toContain('P1 미구현 1개:');
+    expect(prog.text).toContain('P0 FR 2개 / 구현 2 / 미구현 0');
+    expect(prog.text).toContain('P1 선택 FR 1개 / 구현 0 / 미구현 1');
+    expect(prog.code).toBe(0);
+  });
+
+  it('applies 6-2 judgments to 6-6 rows (duplicate place, skip)', async () => {
+    const root = p1Fixture([p1Row()], true);
+    write(root, 'e2e/dup.e2e.test.ts', `it.skip('${N9}', () => {});`);
+    const res = await exec(root, '--mode=progress');
+    expect(res.text).toContain('FR-TST-09: 지정 테스트 이름이 2곳에 있음');
+    expect(res.text).toContain('FR-TST-09: 지정 테스트가 skip 상태');
+    expect(res.code).toBe(1);
+  });
+
+  it('fails when a 6-6 FR is absent from the PRD or not P1', async () => {
+    const absent = await exec(p1Fixture([p1Row('FR-TST-08', 'FR-TST-08 x')], false), '--mode=progress');
+    expect(absent.text).toContain('실패: 6-6 FR이 PRD P1에 없음: FR-TST-08');
+    expect(absent.code).toBe(1);
+    const p0 = await exec(p1Fixture([p1Row('FR-TST-01', 'FR-TST-01 other')], false), '--mode=progress');
+    expect(p0.text).toContain('실패: 6-6 FR이 PRD P1에 없음: FR-TST-01');
+    expect(p0.code).toBe(1);
+  });
+
+  it('scanner error when the 6-6 heading exists but its table does not parse', async () => {
+    const root = p1Fixture([p1Row()], true);
+    const path = join(root, 'docs/04-dev-design/DEV_DESIGN.md');
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/### 6-6\. p1\n\n\| FR \| 지정 테스트 이름/, '### 6-6. p1\n\n| FR | 이름'));
+    const res = await exec(root, '--mode=progress');
+    expect(res.text).toContain('스캐너 오류: 6-6 표 머리 형식 불일치');
+    expect(res.code).toBe(1);
+  });
+
+  it('omits the P1 summary when 6-6 is absent', async () => {
+    const res = await exec(build(), '--mode=progress');
+    expect(res.text).not.toContain('P1 선택 FR');
+    expect(res.code).toBe(0);
   });
 });

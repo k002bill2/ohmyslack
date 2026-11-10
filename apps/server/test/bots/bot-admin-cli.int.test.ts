@@ -163,7 +163,11 @@ describe('원격 생성 경로 없음(TRD §5-2 1항)', () => {
     try {
       const routes = ctx.app.accessRoutes;
       expect(routes.length).toBeGreaterThan(10);
-      expect(routes.filter((r) => /bot/i.test(r.url) || r.access === 'bot')).toEqual([]);
+      // 예외는 채널 멤버십 추가·제거 2개뿐(BOT_CHANNEL_SPEC §4-1, conversation 메타). 봇 생성·토큰 경로는 0.
+      const membership = new Set(['POST /api/conversations/:id/bots', 'DELETE /api/conversations/:id/bots/:bot_user_id']);
+      const botRoutes = routes.filter((r) => /bot/i.test(r.url) || r.access === 'bot');
+      expect(botRoutes.filter((r) => !membership.has(`${r.method} ${r.url}`))).toEqual([]);
+      expect(botRoutes.every((r) => r.access === 'conversation')).toBe(true);
     } finally {
       await teardownConvInt(ctx);
     }

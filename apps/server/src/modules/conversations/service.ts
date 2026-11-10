@@ -4,8 +4,11 @@ import { CHANNEL_NAME_MAX } from '../../shared.js';
 import type { ConversationEvents } from './events.js';
 import type { AccessRow, ConversationsStore } from './store.js';
 
-/** 대화 단위 동작. `join`만 비참여자에게 열려 있다(공개 채널 한정, DEV_DESIGN §2-4). */
-export type AccessAction = 'read' | 'write' | 'join' | 'leave';
+/**
+ * 대화 단위 동작. `join`만 비참여자에게 열려 있다(공개 채널 한정, DEV_DESIGN §2-4).
+ * `manage_bots`: 존재 404 → 활성 멤버 404 → 워크스페이스 owner 403 → 채널 400(BOT_CHANNEL_SPEC §4-2).
+ */
+export type AccessAction = 'read' | 'write' | 'join' | 'leave' | 'manage_bots';
 
 export interface ConversationsServiceDeps {
   readonly store: ConversationsStore;
@@ -23,6 +26,10 @@ export interface ConversationsService {
   openDm(userId: string, peerId: string): Promise<{ readonly id: string }>;
   leave(userId: string, conversationId: string, access: AccessRow): Promise<void>;
   join(userId: string, conversationId: string): Promise<void>;
+  /** 봇 추가(대상 검증은 저장소 트랜잭션 안). 새로 추가면 true, 이미 멤버면 false. 대상 오류 404. */
+  addBot(conversationId: string, botUserId: string): Promise<boolean>;
+  /** 봇 제거(멱등). 실제로 빠졌을 때만 membershipEnded를 발행한다. */
+  removeBot(conversationId: string, botUserId: string): Promise<void>;
   readonly store: ConversationsStore;
 }
 
@@ -50,14 +57,27 @@ export function createConversationsService(deps: ConversationsServiceDeps): Conv
   return {
     store,
     async assertAccess(userId, conversationId, action) {
-      const row = await store.findAccess(conversationId, userId);
+      const row = await store.findAccess(conversationId, userId, action === 'manage_bots');
       if (row === undefined) throw notFound();
       if (action === 'join') {
         if (row.kind !== 'channel') throw notFound();
         return row;
       }
       if (!row.activeMember) throw notFound();
+      if (action === 'manage_bots') {
+        if (row.role !== 'owner') throw new HttpError(403, 'forbidden');
+        if (row.kind !== 'channel') throw new HttpError(400, 'invalid_request');
+      }
       return row;
+    },
+    async addBot(conversationId, botUserId) {
+      const result = await store.addBot(conversationId, botUserId, now());
+      if (result === 'invalid_target') throw notFound();
+      if (result === 'added') events.membershipStarted(conversationId, botUserId);
+      return result === 'added';
+    },
+    async removeBot(conversationId, botUserId) {
+      if (await store.removeBot(conversationId, botUserId, now())) events.membershipEnded(conversationId, botUserId);
     },
     async createChannel(creatorId, rawName) {
       const { name, nameNorm } = normalizeChannelName(rawName);

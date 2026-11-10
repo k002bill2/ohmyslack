@@ -205,4 +205,8 @@ export interface MembershipApi {
   listConversationMembers?(
     conversationId: string,
   ): Promise<ActionResult<readonly { readonly id: string; readonly displayName: string; readonly bot?: boolean }[]>>;
+  /** `POST /api/conversations/:id/bots` `{bot_user_id}`(owner, FR-BOT-11). 201(추가)·200(이미 멤버) → ok. */
+  addBotToChannel?(conversationId: string, botUserId: string): Promise<ActionResult<null>>;
+  /** `DELETE /api/conversations/:id/bots/:bot_user_id`(owner, 204 멱등, FR-BOT-11). */
+  removeBotFromChannel?(conversationId: string, botUserId: string): Promise<ActionResult<null>>;
 }
