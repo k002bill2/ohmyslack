@@ -4,7 +4,7 @@
 - 범위: 저장소·`~/.hermes` **읽기 전용** 정적 대조. 코드·DB·서버 실행·설치·`.env` 열람 없음. 이 파일 1개만 작성.
 - 읽은 상태: 작업 디렉터리 브랜치 `fix/split-clamp-on-resize` HEAD `13a614c`. 브리프 기준(`main` `92382b7`, `feat/design-refresh-r4` `901a34c`)과 다르며, 아래 `adapter.py` 줄번호는 이 작업 트리 기준입니다.
 - Git 사용 고지: 스레드 규칙은 Git 금지지만, 브리프 §1-2가 지정한 `git show k002bill2/p1-bot-channel-spec:docs/09-specs/BOT_CHANNEL_SPEC.md`와 `git rev-parse`·`git branch --show-current`(상태 확인)만 읽기 전용으로 실행했습니다.
-- 교차검토 반영: **A(GPT-Sol)·B(GPT-Luna) 반영, C(Claude-Fable)는 작성 시점에 파일이 없어 미반영**(브리프 §3-D "먼저 초안, A–C 반영 갱신 가능").
+- 교차검토 반영: A(GPT-Sol)·B(GPT-Luna)·**C(Claude-Fable) 반영(2026-11-10 갱신 — Fable 교차 코멘트 3건 정정, §3-1)**.
 
 ---
 
@@ -22,7 +22,7 @@
 | 1 | Jarvis 대화 동등성 우선 | 3 | 목적에는 가장 맞지만, 위 2번대로 "끄기 전 필수" 공백이 거의 없고 남은 항목(입력 중·문서·버튼)은 모두 서버 계약 변경이라 지금 착수하면 관찰을 깹니다. **단독 방향보다 실행 원칙**으로 씁니다. |
 | 2 | 일반 메신저 동등성 우선 | 1 | 사용자 1명+Jarvis 맥락에서 presence·그룹 DM·반응은 전환 기준 6개 어디에도 기여하지 않습니다. 검색만 예외(→ 3에 흡수). |
 | 3 | 하이브리드 | 4 | G1 이후 다음 단계로 적합. 단 "1의 2–3개 + 2의 2–3개"가 아니라 **최대 3개, 서버 계약 변경 묶음 1개씩**으로 좁혀야 합니다. |
-| 4 | 동결 | **5** | 관찰 1일째이고 ⑤ 승인 왕복은 운영 0건입니다(`QA-HERMES-CUTOVER.md` ⑤행). 지금 바꾸면 판정 원인을 분리할 수 없습니다. **추천.** |
+| 4 | 동결 | **5** | 관찰 1일째입니다. ⑤ 승인 왕복은 `QA-FR-BOT-06.md:16`에 11-09 `manual` 시험 1회 PASS가 있으나 전환 문서 ⑤행은 "운영 0건"으로 남아 있어 두 기록이 어긋납니다(§3-1). 지금 바꾸면 판정 원인을 분리할 수 없습니다. **추천.** |
 
 ---
 
@@ -35,11 +35,11 @@
 |---|---|---|---|---|---|
 | 지시·세션 | (인바운드) | 최상위=새 세션, 답글=같은 세션 | **필수 — 이미 있음**. 단 ④ 런타임 연속성은 미검증 | 없음 | `adapter.py:3-6`; `QA-HERMES-CUTOVER.md` ④ |
 | 진행 상태 | `send_typing`·`stop_typing`·`on_processing_start/complete` | no-op / 미구현 | **있으면 좋음** | **필요** — 봇 typing API 또는 ephemeral WS frame(TRD §5-2·WS 절) | `adapter.py:575-576`; `base.py:2865-2869,3285-3300,3415-3420` |
-| 실행 승인 | `send_exec_approval` → `_send_exec_approval_prompt` | 미구현 → 텍스트 `/approve` 프롬프트 | **필수 = 텍스트 경로 실증**(⑤). 버튼은 있으면 좋음 | 버튼 시 **필요**(B안 action·nonce 테이블) | `base.py:2780-2810`; `run.py:591-613`; QA ⑤ "운영 `/approve` 0건" |
+| 실행 승인 | `send_exec_approval` → `_send_exec_approval_prompt` | 미구현 → 텍스트 `/approve` 프롬프트 | **필수 = 텍스트 경로 실증**(⑤). 버튼은 있으면 좋음 | 버튼 시 **필요**(B안 action·nonce 테이블) | `base.py:2780-2810`; `run.py:591-613`; `QA-FR-BOT-06.md:16`(11-09 `manual` 1회 PASS) vs `QA-HERMES-CUTOVER.md` ⑤행(운영 0건) |
 | clarify | `send_clarify` | 미구현 → 번호 목록 + `mark_awaiting_text` | **필수 = 텍스트 경로 실증**. 구조화 UI는 있으면 좋음 | 텍스트는 없음 | `base.py:2830-2857`; `clarify_gateway.py:34,124-130,233-248` |
 | slash 확인 | `send_slash_confirm` | 미구현 → `/approve`·`/always`·`/cancel` 텍스트 | 있으면 좋음 | 없음 | `base.py:2820-2828` |
 | 결과 텍스트 | `send`·`edit_message` | 구현 | 이미 있음 | 없음 | `adapter.py:444-499` |
-| 스트리밍 | `send_draft` / `send`+`edit_message` 대체 | `supports_draft_streaming=False` → 편집 대체 경로 가능 | **불필요(현재 꺼짐)** | 없음(편집 대체 사용 시) | `base.py:1962-1987`; `~/.hermes/config.yaml:454-455` `streaming.enabled: false` |
+| 스트리밍 | `send_draft` / `send`+`edit_message` 대체 | `supports_draft_streaming=False` → 편집 대체 경로 가능 | **불필요(현재 꺼짐)** | 없음(편집 대체 사용 시) | `base.py:1962-1987`; `~/.hermes/profiles/jarvis/config.yaml:506-507` `streaming.enabled: false`(Jarvis 프로필 — 기본 `~/.hermes/config.yaml:454-455`도 같은 값) |
 | 미리보기 삭제 | `delete_message` | 미구현(False) | 불필요(스트리밍 꺼짐) | 봇 삭제 API 필요 시 | `base.py:2658-2667` |
 | 음성·이미지 | `send_voice`·`send_image_file` | 업로드 구현 | 이미 있음(② 단발 PASS) | 없음 | `adapter.py:509-570`; QA ② |
 | 문서 | `send_document` | 텍스트 안내로 대체 | **조건부 필수** — Slack에서 Jarvis가 문서를 실제로 보내는 빈도에 달림(확인 필요 #3) | **필요** — TRD §6-1 허용목록·다운로드 전용 | `adapter.py:564-566`; Luna #4 |
@@ -55,7 +55,9 @@
 - **승인 텍스트 경로:** `supports_exec_approval_buttons()`는 어댑터가 `_send_exec_approval_prompt`를 재정의했을 때만 True이고, 아니면 러너가 `/approve` 텍스트 프롬프트를 보냅니다(`base.py:2780-2783`, `run.py:591-613`). ohmyslack은 재정의하지 않으므로 텍스트 경로입니다. **버튼이 없어서 승인을 못 하는 상황은 코드상 없습니다.**
 - **clarify 텍스트 경로:** 대기 항목은 `session_key`별로 색인되고(`clarify_gateway.py:34`), 다음 텍스트가 **같은 세션**으로 들어와야 해결됩니다(`:233-248`). ohmyslack은 세션=스레드이므로 **답을 같은 스레드의 답글로 달아야** 합니다. 최상위 새 메시지로 답하면 새 세션이 열려 clarify가 시간 초과될 수 있습니다(추정 — 확인 필요 #2).
 - **standalone 첨부 누락:** `standalone_send`는 `media_files`를 받지만 쓰지 않고 `{"success": True, ...}`만 돌려줍니다(`adapter.py:582-606`, 독스트링 "첨부는 쓰지 않는다"). Hermes 대체 경로는 결과의 `warnings`만 오류로 올리므로(`scheduler_delivery.py:1637-1642`) **누락이 기록되지 않습니다.** live 어댑터가 정상이면 `_live_send_media`가 `send_voice`로 올리므로(`:1489-1490`) 평소에는 문제가 드러나지 않습니다. GPT-Sol 확인 필요 #5를 **코드 수준 사실**로 확정합니다(배포 경로에서 실제 발생 여부는 미확인).
-- **스트리밍:** 게이트웨이 `streaming.enabled: false`(`~/.hermes/config.yaml:454-455`). `display.streaming: true`(`:210`)는 CLI 표시 설정으로 추정합니다(확인 필요 #4). 즉 현재 편집 기반 스트리밍도 일어나지 않으며, 관찰 창 중 edit 폭주·푸시 영향은 없습니다.
+- **스트리밍:** Jarvis 프로필 `streaming.enabled: false`(`~/.hermes/profiles/jarvis/config.yaml:506-507`; 기본 파일 `:454-455`도 같음). 기본 파일 `display.streaming: true`(`:210`)는 CLI 표시 설정으로 추정합니다(확인 필요 #4).
+- **승인 설정:** Jarvis 프로필 `approvals.mode: smart`·`timeout: 300`·`cron_mode: deny`(`profiles/jarvis/config.yaml:426-429`). `smart`에서는 무해 명령이 자동 승인되어 사람 승인 요청이 자연 발생하지 않을 수 있습니다.
+- **텍스트 승인 결속:** `request_id` 없는 `/approve`는 그 세션 대기열의 **가장 오래된(FIFO)** 요청을 승인합니다(`tools/approval.py:150-167`). 기능은 완결이지만 "어느 요청을 승인했는가"의 결속은 약합니다 — 버튼을 만든다면 목적은 `request_id` 결속입니다(Fable C-1). 즉 현재 편집 기반 스트리밍도 일어나지 않으며, 관찰 창 중 edit 폭주·푸시 영향은 없습니다.
 
 ---
 
@@ -69,7 +71,22 @@
 | X4 | 버튼 승인 순위 | 5순위(텍스트 대체 가능) | 9순위·L·별도 위협 검토 | **동의.** §2-1대로 텍스트 경로가 기능적으로 완결. 버튼은 B안의 nonce·단회 소비 테이블이 선행이며 C(Fable) 위협 검토 결과를 받기 전 착수하지 않습니다. |
 | X5 | 처리 상태 구현 방식 | "WS 계약 검토" | ephemeral WS frame, DB·sync 미사용 | **동의 + 보충:** Hermes `_keep_typing`은 2초마다 `send_typing`을 호출합니다(`base.py:3285-3300`). 봇 리스너에 HTTP 호출을 2초마다 받는 방식보다 **봇 WS 상향 frame**이 rate limit(429)과 충돌하지 않습니다. 승인 대기 중에는 Hermes가 typing을 멈추므로(`_typing_paused`, `base.py:1922`) "처리 중"과 "내 응답 대기"를 구분 표시할 수 있습니다. |
 | X6 | cron 첨부 | 확인 필요로 보류 | 언급 없음 | **사실로 확정**(§2-1). 단 수정은 관찰 창 뒤. 창 안에서는 관찰 방법만 보강(D-1). |
-| X7 | C 미반영 | — | — | 이모지 에셋·버튼 위협·디자인 레퍼런스는 Fable 결과 도착 후 이 파일 갱신 또는 교차 코멘트 1회로 처리. |
+| X7 | C 반영 | — | — | 아래 §3-1. |
+
+
+### 3-1. C(Claude-Fable) 반영 — 2026-11-10 갱신
+
+| # | Fable 지적·결론 | D 판단 |
+|---|---|---|
+| F1 | 스트리밍 근거는 Jarvis 프로필 `profiles/jarvis/config.yaml:506-507` | **정정 반영**(값 동일, 결론 유지). L1 재확인. |
+| F2 | 승인 설정이 기본 파일(꺼짐)과 Jarvis 프로필(`smart`·300초)에서 다름 | **정정 반영**(§2-1). L1 재확인(`:426-429`, `cron_mode: deny` 포함). |
+| F3 | ⑤ 기록 불일치: `QA-FR-BOT-06.md:16` 11-09 `manual` 1회 PASS vs 전환 문서 "운영 0건" | **정정 반영.** 제 초안의 "운영 0건" 인용은 전환 문서만 본 것입니다. 관찰 창 안 설정 변경은 동결 위반이므로 Fable C-2(11-09 기록 인정)에 동의합니다. |
+| F4 | 텍스트 `/approve`는 FIFO, 버튼은 `request_id` 결속 | 동의. 버튼 보류(D-6) 유지하되 만든다면 Fable 조건 3개(C-1)를 수용 기준으로. |
+| F5 | 문서 첨부 1차 = PDF·텍스트, 봇→사람만, 다운로드 `attachment` + 파일명 컬럼 필요 | 동의. 1단계 문서 첨부(D-2)의 범위로 채택 권고(C-8). 서버 계약 축은 여전히 §6-1 1개. |
+| F6 | 현재 구현 정합 문제 3건(푸시 Topic 평문 대화 ID, 알림 제목, TM-BOT-06 문서 불일치) | 관찰 창 뒤 1단계에 **"정합 수정" 묶음**으로 추가 권고. 푸시 Topic(C-5)은 푸시 경로 변경이라 창 안 금지. |
+| F7 | 이모지 OS 기본·사운드 없음·에셋 0 | 동의. 반응은 3단계 이후이며 C-7 결정만 미리 받아 두면 됨. |
+
+**갱신된 1단계 후보(최대 3개 유지):** ① standalone 첨부 처리(D-1) ② 기기 세션 UI(C-4 라벨 규칙 포함) ③ 문서 첨부(D-2·C-8). 정합 수정(F6)은 기능이 아니라 결함 정정이므로 3개 상한과 별도로, 단 푸시 Topic 변경은 ①–③과 같은 배포에 섞지 않습니다.
 
 ---
 
@@ -81,7 +98,7 @@
 1. 이 라운드 문서 확정 — 범위 분류, FR ID 정리(X1), 단계별 수용 기준.
 2. 합성 한국어 검색 질의 세트·기대 결과 **설계 문서**(실행·DB 접속 없이).
 3. 문서 첨부 허용 형식·크기·다운로드 전용 규칙의 **계약 초안**(TRD §6-1 개정안 텍스트만).
-4. **관찰 행동(이미 QA 문서에 있는 것):** ⑤ 텍스트 `/approve` 왕복 1회(`QA-FR-BOT-06` 절차 ④), ④ 같은 스레드 2턴 연속성, clarify가 나오면 **같은 스레드 답글로** 응답해 결과 기록.
+4. **관찰 행동(이미 QA 문서에 있는 것):** ④ 같은 스레드 2턴 연속성, clarify가 나오면 **같은 스레드 답글로** 응답해 결과 기록. ⑤는 설정 변경 없이 채우기 어려우므로(`smart`) **11-09 `manual` 시험 기록 인정 여부를 먼저 결정**(Fable C-2, 권고: 인정 + 전환 문서 ⑤행 정정).
 5. D-1 결정 시: 음성 브리핑 도착을 "메시지 도착"이 아니라 **"mp3 첨부 도착"** 으로 기록하는 관찰 항목 추가(문서 변경만).
 
 **하지 않을 것:** 어댑터·서버·웹·푸시 코드 변경, Hermes `config.yaml`(예: `streaming`·`cron.mirror_delivery`) 변경, 마이그레이션, 배포. 결함 수정이 불가피하면 영환님 승인 + 관찰 재시작일 기록을 조건으로 별도 처리.
@@ -120,7 +137,8 @@
 **사실 (코드·설정 직접 대조, L1)**
 1. ohmyslack은 typing·문서·영상·승인 버튼·clarify·slash 확인·draft·삭제 훅을 재정의하지 않으며, Hermes base 기본(텍스트 대체 또는 no-op)을 씁니다(§2 표).
 2. cron standalone 경로는 첨부를 보내지 않고 성공을 보고하며, 누락이 Hermes 로그 오류로 올라가지 않습니다(§2-1).
-3. 게이트웨이 스트리밍은 꺼져 있습니다(`config.yaml:454-455`).
+3. 게이트웨이 스트리밍은 꺼져 있습니다(`profiles/jarvis/config.yaml:506-507`).
+5. Jarvis 승인 모드는 `smart`, 텍스트 `/approve`는 FIFO 결속입니다(§2-1).
 4. `BOT_CHANNEL_SPEC.md`가 FR-BOT-08–11을 이미 씁니다(스펙 §7).
 
 **추정**
@@ -133,7 +151,7 @@
 2. clarify 프롬프트의 `metadata`에 `thread_id`가 실려 스레드 안에 게시되는지(런타임 1회 관찰).
 3. Slack에서 Jarvis가 문서·영상을 보낸 실제 빈도(영환님 기억 기준, Slack 워크스페이스 조회 금지).
 4. `display.streaming: true`가 게이트웨이 동작에 영향을 주는지.
-5. C(Fable)의 버튼 승인 위협·에셋 대안 결론.
+5. (해소) C 결과 반영 완료. 남은 미재현 추정: 봇 단절 중 보낸 `/approve`가 재연결 후 같은 스레드의 다른 승인 요청에 적용될 가능성(Fable — FIFO 결속과 15분 백로그 규칙의 조합, 미실행).
 
 ---
 
