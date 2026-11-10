@@ -47,12 +47,13 @@
 
 | 필드 | 값 |
 |---|---|
-| 실행자 | (Jarvis 판정 대기) |
-| 일시(KST) | (Jarvis 판정 대기) |
-| 기기·OS·브라우저(버전) | (Jarvis 판정 대기) |
-| 접속 경로 | (Jarvis 판정 대기) |
-| 절차 | 운영 채널에 봇 추가 → owner가 `@봇` 최상위 멘션 → 봇 스레드 답글 확인 → 같은 스레드 후속 답글로 세션 연속 확인 → 봇 제거 후 멘션 무응답 확인 |
-| 기대 결과 | BOT_CHANNEL_SPEC §3-2·§3-3·§3-4 |
-| 실제 결과 | 이 QA 레인에서 **실행하지 않음**(운영 미사용 원칙) |
-| 판정 | `Jarvis 판정 대기` |
-| 증거 경로 | — |
+| 실행자 | 영환님(owner 계정 조작) / 판정 Jarvis(운영 DB·게이트웨이 로그 읽기 전용) |
+| 일시(KST) | 2026-11-10 16:44:18–16:44:35 |
+| 기기·OS·브라우저(버전) | 영환님 기기(기록 없음 — 미확인) |
+| 접속 경로 | 운영 서버 main `86f7d43`(prod-main), Hermes 게이트웨이 PID 66171(16:22:13 시작, 새 어댑터) |
+| 절차 | 운영 채널 `샘픙방`(멤버 owner 1명)에 웹에서 봇 추가 → owner가 `@Jarvis 채널 연결 테스트` 최상위 멘션 → 멘션 없는 최상위 글 1건 |
+| 기대 결과 | BOT_CHANNEL_SPEC §3-1·§3-2: 멘션 글에만 봇 스레드 답글, 비멘션 글 무응답, 채널 최상위 봇 글 0 |
+| 실제 결과 | ① 봇 멤버 행 `joined_seq=3`, `left_at` 없음(웹 추가 성공). ② seq 4 owner 멘션 글 `message_mentions`에 봇 1건. ③ 게이트웨이 `inbound … chat=<채널> msg='채널 연결 테스트'`(멘션 토큰 제거됨), 세션 키 `agent:jarvis:ohmyslack:channel:<채널>:<seq4 id>` → 5.4초 뒤 `response ready`. ④ seq 5 봇 글은 `thread_root_id = seq 4`(스레드 답글), 채널 최상위 봇 글 0. ⑤ seq 6 비멘션 글(멘션 0)은 게이트웨이 inbound 기록 0·봇 응답 0. |
+| 미실행 | 같은 스레드 후속 답글로 세션 연속 확인, 봇 제거 후 멘션 무응답(운영) — 실행하지 않음. 제거 후 차단은 격리 QA ②에서 PASS(404). |
+| 판정 | `PASS`(실행한 범위 ①–⑤에 한함) |
+| 증거 경로 | 운영 DB `ohmyslack` 읽기 전용 조회(conversation_members·messages·message_mentions, 채널 `6d9fb0df-…`), `~/.hermes/profiles/jarvis/logs/gateway.log` 16:44:18·16:44:23 줄 |
