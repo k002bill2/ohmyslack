@@ -10,7 +10,7 @@ import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '..
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
-import { LeaveChannelControl, LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
+import { LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
@@ -19,10 +19,14 @@ import { useMessageAnchor } from './message-anchor.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
+import { HeaderMenu } from './HeaderMenu.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { SpaceSwitcher } from './SpaceSwitcher.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
+import { useSplit } from './useSplit.js';
 import { isSidebarCollapsed, useViewport, type Breakpoint } from './viewport.js';
+// R4 시안 덮어쓰기 — 다른 기능 CSS(conversation·thread·members)보다 나중에 평가되도록 마지막 import.
+import './refresh.css';
 
 export interface AppShellProps {
   readonly dataSource: DataSource;
@@ -60,7 +64,13 @@ function threadFrom(history: RouteHistory | undefined): string | null {
 }
 
 /** 메시지 항목 공통 props(W-10i): 본인 액션·스레드 요약. */
-type ItemActions = Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'onOpenThread' | 'threadHolding'>;
+type ItemActions = Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'onOpenThread' | 'threadHolding' | 'messageLink'>;
+
+/** R4 메뉴 「메시지 링크 복사」 주소: `/c/:id(?thread=:root)#message-:id`(알림 탭 앵커와 같은 형식, message-anchor.ts). */
+function messageLinkIn(conversationId: string, rootId: string | null): (id: string) => string {
+  const path = withThread(formatRoute({ kind: 'conversation', conversationId }), rootId);
+  return (id) => `${window.location.origin}${path}#message-${id}`;
+}
 
 function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
@@ -106,6 +116,8 @@ function ConversationPane(props: {
   readonly onSeen?: (seq: number) => void;
   /** wide에서 스레드가 열려 있으면 헤더 오른쪽 패널 토글(시안 01)로 닫는다. */
   readonly onCloseThread?: () => void;
+  /** 지금 열린 스레드의 루트 ID(시안 01 칩 강조). 닫혀 있으면 없음. */
+  readonly openThreadRootId?: string;
   /** catch-up 중 — 「여기부터 새 메시지」 위치 계산 보류(UI_STATES §2-4). */
   readonly holding: boolean;
   /** 이 대화의 이력 조회가 끝났는가 — 끝난 뒤에 구분선 위치를 고정한다(Codex r2 P2). */
@@ -115,6 +127,8 @@ function ConversationPane(props: {
   readonly selfName?: string;
   /** 헤더 아래 안내(Jarvis DM 알림 1회 안내, W-23 ★Q-H4). */
   readonly notice?: ReactNode;
+  /** R4 헤더 더보기 「키보드 단축키」(compact는 없음). */
+  readonly onShortcuts?: () => void;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
@@ -143,8 +157,11 @@ function ConversationPane(props: {
     <main className="conversation-pane" inert={props.inert}>
       <header className="conversation-header">
         {breakpoint === 'compact' && (
-          <button type="button" onClick={props.onBack}>
-            뒤로
+          // R4 모바일 시안: ‹ 아이콘(접근 이름 「뒤로」 그대로).
+          <button type="button" className="icon-button conversation-back" aria-label="뒤로" title="뒤로" onClick={props.onBack}>
+            <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" focusable="false">
+              <path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         )}
         <div className="conversation-heading">
@@ -153,7 +170,10 @@ function ConversationPane(props: {
             {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
           </span>
         </div>
-        {membership && space.kind === 'channel' && !left && membership.onLeave && <LeaveChannelControl onLeave={membership.onLeave} />}
+        <HeaderMenu
+          {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
+          {...(membership?.onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave: membership.onLeave } : {})}
+        />
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
         {props.onCloseThread && (
           <button
@@ -191,6 +211,7 @@ function ConversationPane(props: {
                 onDiscard={props.onDiscard}
                 {...props.itemActions}
                 threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
+                threadActive={m.id === props.openThreadRootId}
                 timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
                 mentionsSelf={mentionsSelf(m)}
                 {...(mentionNames === undefined ? {} : { mentionNames })}
@@ -259,8 +280,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const root = snap.messages.find((m) => m.id === state.threadRootId && m.conversationId === state.conversationId);
   // 나간 채널은 스레드도 닫힌 것으로 본다 — 답글 작성기로 나간 채널에 보내지 않게(Codex r1 P2).
   const threadOpen = space !== undefined && root !== undefined && space.left !== true;
-  const collapsed = isSidebarCollapsed(viewport, threadOpen);
   const bp = viewport.breakpoint;
+  const autoCollapsed = isSidebarCollapsed(viewport, threadOpen);
+  // R4 분할선(wide): 사용자 폭·접기. §5-2 자동 접힘이 우선.
+  const split = useSplit(shell, { enabled: bp === 'wide', threadOpen, autoCollapsed, onCloseThread: () => dispatch({ type: 'close-thread' }) });
+  const collapsed = autoCollapsed || split.userCollapsed;
   const historyReady = snap.loadedHistory === undefined || snap.loadedHistory === state.conversationId;
   // 알림 탭 `#message-:id` → 대상 메시지 스크롤·강조(W-23 Codex P2-3).
   const repliesReady = state.threadRootId === null || snap.loadedReplies === undefined || snap.loadedReplies.includes(state.threadRootId);
@@ -402,6 +426,13 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       dataSource.open?.(res.value);
     });
   };
+  // 링크 함수는 대화·스레드가 바뀔 때만 새로 — memo(MessageItem) 얕은 비교를 깨지 않게(F-1).
+  const spaceId = space?.id;
+  const mainLink = useMemo(() => (spaceId === undefined ? undefined : messageLinkIn(spaceId, null)), [spaceId]);
+  const threadLink = useMemo(
+    () => (spaceId === undefined || state.threadRootId === null ? undefined : messageLinkIn(spaceId, state.threadRootId)),
+    [spaceId, state.threadRootId],
+  );
   const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true);
   // 로딩 중 훅이 매번 새 []를 돌려줘도 같은 undefined가 되게 — memo(MessageItem)·MessageBody useMemo를 깨지 않는다.
   const mentionNames = useMemo(
@@ -434,6 +465,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(dataSource.listMembers && dataSource.startDm ? { onStartDm: () => setPanel('dm') } : {})}
       {...(dataSource.createChannel ? { onCreateChannel: () => setPanel('create') } : {})}
       {...(dataSource.reload ? { onRetryList: () => dataSource.reload?.() } : {})}
+      {...(bp === 'compact' ? {} : { onOpenSwitcher: () => setOverlay('switcher') })}
+      {...(split.toggleNav === undefined ? {} : { onToggleCollapse: split.toggleNav })}
       {...(dataSource.listMembers && dataSource.createInvite && dataSource.deactivateMember
         ? { onManageMembers: () => setMembers(true) }
         : {})}
@@ -492,12 +525,15 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         ...messageActions,
         onOpenThread: (id) => dispatch({ type: 'open-thread', rootId: id }),
         threadHolding: snap.connection === 'catching-up',
+        ...(mainLink === undefined ? {} : { messageLink: mainLink }),
       }}
       {...(membership === undefined ? {} : { membership })}
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
+      {...(threadOpen && state.threadRootId !== null ? { openThreadRootId: state.threadRootId } : {})}
       holding={snap.connection === 'catching-up'}
       historyReady={historyReady}
+      {...(bp === 'compact' ? {} : { onShortcuts: () => setOverlay('shortcuts') })}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
@@ -513,7 +549,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       drafts={drafts}
       onRetry={retry}
       onDiscard={discard}
-      messageActions={messageActions}
+      messageActions={threadLink === undefined ? messageActions : { ...messageActions, messageLink: threadLink }}
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
       spaceTitle={spaceTitle(space)}
       notice={anchorNoticeEl(true)}
@@ -535,14 +571,17 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       className="app-shell"
       data-layout={bp}
       data-sidebar={collapsed ? 'collapsed' : 'expanded'}
-      data-thread={threadOpen ? 'open' : 'closed'}
+      data-thread={threadOpen && !members ? 'open' : 'closed'}
+      data-split={bp === 'wide' ? 'on' : undefined}
       onKeyDown={onKeyDown}
     >
       <ConnectionBanner state={snap.connection} />
       {bp === 'compact' ? compactScreen : (
         <>
           {sidebar}
+          {split.navSplitter}
           {memberAdmin || pane}
+          {!members && thread && split.threadSplitter}
           {!members && thread}
           {spacePanel}
           {overlay === 'switcher' && (

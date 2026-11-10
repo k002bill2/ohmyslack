@@ -9,6 +9,7 @@ import { createMemoryHistory, type MemoryHistory } from '../../src/app/route.js'
 import { createHttpDataSource } from '../../src/data/http-source.js';
 import { CONV, FakeServer, ME, MemoryStorage, PEER, U, flush, message, summary } from '../sync/fake-server.js';
 import { installViewport } from '../helpers/viewport.js';
+import { deleteMenuItem } from '../helpers/message-menu.js';
 
 afterEach(cleanup);
 beforeEach(() => installViewport(1400));
@@ -145,7 +146,7 @@ describe('W-10i LiveApp 시나리오', () => {
     expect(within(panel).getAllByRole('listitem')).toHaveLength(3);
 
     // 원문 삭제(본문 목록에서) → 확인 Dialog → DELETE → 자리표시자 + 요약 유지
-    fireEvent.click(within(item(/^A,/)).getByRole('button', { name: '삭제' }));
+    fireEvent.click(deleteMenuItem(item(/^A,/)));
     const dialog = screen.getByRole('dialog', { name: '메시지 삭제' });
     fireEvent.click(within(dialog).getByRole('button', { name: '삭제' }));
     await settle();

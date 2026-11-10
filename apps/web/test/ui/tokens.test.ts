@@ -24,7 +24,7 @@ const CANON_ROLE_NAMES = [
   '--bg-app', '--bg-sidebar', '--bg-elevated', '--bg-hover', '--bg-active',
   '--border-subtle', '--border', '--text-muted', '--text',
   '--accent-solid', '--accent-text', '--accent-bg', '--success-text',
-  '--warning-bg', '--warning-text', '--danger-text', '--danger-solid', '--focus-ring',
+  '--warning-bg', '--warning-text', '--danger-bg', '--danger-text', '--danger-solid', '--focus-ring',
 ];
 const SCHEMES = ['light', 'dark'] as const;
 
@@ -70,6 +70,7 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
       ['--text', '--bg-sidebar'], ['--text', '--bg-elevated'], ['--text', '--bg-hover'], ['--text', '--bg-active'],
       ['--text-muted', '--bg-sidebar'], ['--text-muted', '--bg-elevated'], ['--text-muted', '--bg-hover'],
       ['--text-muted', '--bg-active'], ['--text', '--accent-bg'], ['--accent-text', '--accent-bg'],
+      ['--danger-text', '--danger-bg'],
     ];
     for (const s of SCHEMES) {
       for (const [fg, bg] of pairs) {

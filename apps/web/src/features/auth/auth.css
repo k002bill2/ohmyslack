@@ -1,7 +1,8 @@
 /*
  * 로그인 전 화면(SCR-01 로그인·SCR-02 초대 수락, CMP-19). 토큰 변수만 쓴다(§3-2·§3-5).
  * 입력·버튼 최소 높이 44px는 §7-1 히트 영역. compact 경계는 `tokens.ts` mediaQueries.compact와 같아야 한다(테스트 고정).
- * 시안 03(W-11c): 바탕 slate2(--bg-sidebar) 위 slate1(--bg-app) 카드 400px, 패딩 40(--space-10), 큰 반경(시안 24px → 최대 토큰 --radius-lg).
+ * 시안 03(W-11c) → R4 시안 Login: 바탕 slate3(--bg-elevated) 위 slate1(--bg-app) 카드 400px, 패딩 40(--space-10),
+ * 반경 --radius-2xl(시안 24px → 최대 토큰), overlay 그림자. 시안의 카드 아래 초대 안내 문구는 정본(COPY_GAPS) 밖이라 넣지 않음.
  */
 .auth-screen {
   display: flex;
@@ -11,7 +12,7 @@
   min-height: 100dvh;
   padding: var(--space-6) var(--space-4);
   box-sizing: border-box;
-  background: var(--bg-sidebar);
+  background: var(--bg-elevated);
 }
 .auth-card {
   display: flex;
@@ -23,8 +24,8 @@
   padding: var(--space-10);
   background: var(--bg-app);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-popover);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-overlay);
   line-height: var(--leading-body);
 }
 /* 카드 머리: 심볼 56px + 제목 + 보조 문구 가운데 정렬(시안 03). */

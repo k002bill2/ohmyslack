@@ -19,7 +19,13 @@ describe('FR-CLIENT-01 키보드', () => {
       const user = userEvent.setup();
       render(<App dataSource={memory()} />);
 
-      // 공간 선택: Tab으로 첫 공간 → Enter.
+      // R4: wide는 사이드바 헤더 「내비게이션 접기」가 첫 정류장, 그다음 「이동…」(전환기), 그다음 첫 공간 → Enter.
+      await user.tab();
+      if (width === 1280) {
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: '내비게이션 접기' }));
+        await user.tab();
+      }
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: '공간 이동 (Ctrl/⌘+K)' }));
       await user.tab();
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'general' }));
       await user.keyboard('{Enter}');
@@ -45,8 +51,10 @@ describe('FR-CLIENT-01 키보드', () => {
       expect(document.activeElement).toBe(composer);
       expect((composer as HTMLTextAreaElement).value).toBe('');
 
-      // 스레드: Shift+Tab → 방금 보낸 메시지의 「답글」 → Enter → 답글 작성기.
+      // 스레드: Shift+Tab → 방금 보낸 메시지 툴바(R4: 답글 · [수정] · 더보기)를 거슬러 「답글」 → Enter → 답글 작성기.
       await user.tab({ shift: true });
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('더보기');
+      while (!(document.activeElement as HTMLElement).hasAttribute('data-reply-for')) await user.tab({ shift: true });
       const reply = document.activeElement as HTMLElement;
       expect(reply.textContent).toBe('답글');
       await user.keyboard('{Enter}');

@@ -80,6 +80,22 @@ function world() {
 
 const nav = () => screen.getByRole('navigation', { name: '공간' });
 
+/** R4 헤더 더보기 메뉴 → 「채널 나가기…」 항목(메뉴를 열고 찾은 뒤 닫는다). 없으면 null. */
+function leaveMenuItem(): HTMLElement | null {
+  const more = screen.queryByRole('button', { name: '대화 더보기' });
+  if (more === null) return null;
+  fireEvent.click(more);
+  const item = screen.queryByRole('menuitem', { name: '채널 나가기…' });
+  fireEvent.keyDown(screen.getByRole('menu', { name: '대화 메뉴' }), { key: 'Escape' });
+  return item;
+}
+
+/** 헤더 더보기 → 「채널 나가기…」 → 확인 Dialog. */
+function openLeaveDialog(): void {
+  fireEvent.click(screen.getByRole('button', { name: '대화 더보기' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: '채널 나가기…' }));
+}
+
 describe('LiveApp 사용자 시나리오(W-10j)', () => {
   it('새 DM 재조회 → @멘션 전송 → 채널 나가기 → 다시 참여', async () => {
     const w = world();
@@ -112,7 +128,7 @@ describe('LiveApp 사용자 시나리오(W-10j)', () => {
     expect(post.mention_user_ids).toEqual([PEER]);
 
     // 3) 채널 나가기 → 확인 Dialog → DELETE → 구독 해제 → 사이드바 muted + 「나간 채널 · 다시 참여」, 작성기 숨김.
-    fireEvent.click(screen.getByRole('button', { name: LEFT_CHANNEL_COPY.leave }));
+    openLeaveDialog();
     const dialog = screen.getByRole('dialog', { name: LEAVE_CHANNEL_COPY.title });
     expect(within(dialog).getByText(LEAVE_CHANNEL_COPY.body)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: LEAVE_CHANNEL_COPY.confirm }));
@@ -125,11 +141,11 @@ describe('LiveApp 사용자 시나리오(W-10j)', () => {
     expect(within(nav()).getByRole('button', { name: LEFT_CHANNEL_COPY.rejoinRow })).toBeTruthy();
     expect(screen.queryByLabelText('#general에 메시지 작성')).toBeNull();
     expect(screen.getByText(LEFT_CHANNEL_COPY.notice)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: LEFT_CHANNEL_COPY.leave })).toBeNull();
+    expect(leaveMenuItem()).toBeNull();
     // DM에는 나가기 없음.
     fireEvent.click(within(nav()).getByRole('button', { name: 'B' }));
     await settle();
-    expect(screen.queryByRole('button', { name: LEFT_CHANNEL_COPY.leave })).toBeNull();
+    expect(leaveMenuItem()).toBeNull();
     fireEvent.click(within(nav()).getByRole('button', { name: 'general' }));
     await settle();
     // 나간 채널은 다시 선택해도 구독하지 않는다.
@@ -143,7 +159,7 @@ describe('LiveApp 사용자 시나리오(W-10j)', () => {
     expect(within(nav()).getByRole('button', { name: 'general' }).className).not.toContain('space-left');
     expect(within(nav()).queryByRole('button', { name: LEFT_CHANNEL_COPY.rejoinRow })).toBeNull();
     expect(screen.getByLabelText('#general에 메시지 작성')).toBeTruthy();
-    expect(screen.getByRole('button', { name: LEFT_CHANNEL_COPY.leave })).toBeTruthy();
+    expect(leaveMenuItem()).toBeTruthy();
   });
 
   it('헤더 「다시 참여」·안내 「참여」도 join으로 기본 상태 복귀', async () => {
@@ -151,13 +167,13 @@ describe('LiveApp 사용자 시나리오(W-10j)', () => {
     await settle();
     fireEvent.click(within(nav()).getByRole('button', { name: 'general' }));
     await settle();
-    fireEvent.click(screen.getByRole('button', { name: LEFT_CHANNEL_COPY.leave }));
+    openLeaveDialog();
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: LEAVE_CHANNEL_COPY.confirm }));
     await settle();
     fireEvent.click(screen.getByRole('button', { name: LEFT_CHANNEL_COPY.join }));
     await settle();
     expect(screen.getByLabelText('#general에 메시지 작성')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: LEFT_CHANNEL_COPY.leave }));
+    openLeaveDialog();
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: LEAVE_CHANNEL_COPY.confirm }));
     await settle();
     fireEvent.click(screen.getByRole('button', { name: LEFT_CHANNEL_COPY.rejoin }));
@@ -172,7 +188,7 @@ describe('LiveApp 사용자 시나리오(W-10j)', () => {
     await settle();
     fireEvent.click(within(nav()).getByRole('button', { name: 'general' }));
     await settle();
-    fireEvent.click(screen.getByRole('button', { name: LEFT_CHANNEL_COPY.leave }));
+    openLeaveDialog();
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: LEAVE_CHANNEL_COPY.confirm }));
     await settle();
     expect(screen.getByRole('dialog')).toBeTruthy();

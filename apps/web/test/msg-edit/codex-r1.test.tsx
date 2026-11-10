@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ThreadPanel } from '../../src/features/thread';
+import { deleteMenuItem } from '../helpers/message-menu.js';
 
 afterEach(cleanup);
 
@@ -33,7 +34,7 @@ describe('Codex r1', () => {
 
   it('P2: 삭제 Dialog 안 Tab은 스레드 포커스 트랩이 preventDefault하지 않는다', () => {
     render(panel('a'));
-    fireEvent.click(screen.getByRole('button', { name: '삭제' }));
+    fireEvent.click(deleteMenuItem(document.body));
     const dialog = screen.getByRole('dialog', { name: '메시지 삭제' });
     const cancel = within(dialog).getByRole('button', { name: '취소' });
     cancel.focus();

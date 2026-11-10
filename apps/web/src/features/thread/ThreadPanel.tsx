@@ -18,7 +18,7 @@ export interface ThreadPanelProps {
   readonly onRetry?: (clientMessageId: string) => void;
   readonly onDiscard?: (clientMessageId: string) => void;
   /** 본인 메시지 수정·삭제(W-10i). 원문·답글 모두 같은 규칙. */
-  readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete'>;
+  readonly messageActions?: Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'messageLink'>;
   /** FR-SYNC-03: 패널이 맨 아래(마지막 답글이 보임)일 때 그 답글 seq를 알린다. 답글이 없으면 부르지 않는다(본문 열기 ≠ 답글 읽음). */
   readonly onSeen?: (seq: number) => void;
   /** 헤더 보조 줄 「채널 · 답글 n」의 채널 이름(시안 01·06). 없으면 「답글 n」만. */
@@ -121,11 +121,19 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
   const Tag = variant === 'wide' ? 'aside' : 'section';
   const replyCount = THREAD_SUMMARY_COPY.replies(replies.length);
   const subtitle = spaceTitle === undefined ? replyCount : `${spaceTitle} · ${replyCount}`;
-  const closeButton = (
-    <button type="button" className="btn btn-secondary thread-close" onClick={onClose}>
-      {variant === 'compact' ? '뒤로' : '닫기'}
-    </button>
-  );
+  // R4 시안: wide·medium은 X 아이콘 버튼(접근 이름 「닫기」 그대로), compact는 글자 「뒤로」 유지.
+  const closeButton =
+    variant === 'compact' ? (
+      <button type="button" className="btn btn-secondary thread-close" onClick={onClose}>
+        뒤로
+      </button>
+    ) : (
+      <button type="button" className="thread-close thread-close-icon" aria-label="닫기" title="닫기" onClick={onClose}>
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+          <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
+    );
   return (
     <Tag
       ref={container}

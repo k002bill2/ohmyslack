@@ -96,6 +96,8 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
     scale: 'amber', step: 11, role: 'text', on: '--warning-bg',
     override: { light: { step: 12, reason: 'amber11/amber3 4.25 < 4.5 (§7-1 1.4.3)' } },
   },
+  /** 시안 01 「여기부터 새 메시지」 라벨 바탕(red 3). danger-text 11/3 대비 light 4.54·dark 7.75. */
+  '--danger-bg': { scale: 'red', step: 3, role: 'surface' },
   '--danger-text': { scale: 'red', step: 11, role: 'text', on: BG_APP },
   '--danger-solid': { scale: 'red', step: 9, role: 'nontext', on: BG_APP },
   '--focus-ring': {
@@ -168,8 +170,15 @@ const SPACE: Readonly<Record<string, string>> = {
   '--space-1': '0.25rem', '--space-2': '0.5rem', '--space-3': '0.75rem', '--space-4': '1rem',
   '--space-5': '1.25rem', '--space-6': '1.5rem', '--space-8': '2rem', '--space-10': '2.5rem',
 };
-const RADIUS: Readonly<Record<string, string>> = { '--radius-sm': '4px', '--radius-md': '8px', '--radius-lg': '12px' };
-const SHADOW: Readonly<Record<string, string>> = { '--shadow-popover': '0 4px 16px rgb(0 0 0 / 0.12)' };
+/** §3-5. xl·2xl·float·overlay는 R4 디자인 시안(떠 있는 패널·작성기·다이얼로그) 반영으로 추가. */
+const RADIUS: Readonly<Record<string, string>> = {
+  '--radius-sm': '4px', '--radius-md': '8px', '--radius-lg': '12px', '--radius-xl': '16px', '--radius-2xl': '20px',
+};
+const SHADOW: Readonly<Record<string, string>> = {
+  '--shadow-popover': '0 4px 16px rgb(0 0 0 / 0.12)',
+  '--shadow-float': '0 8px 24px rgb(0 0 0 / 0.10)',
+  '--shadow-overlay': '0 16px 48px rgb(0 0 0 / 0.14)',
+};
 const MOTION: Readonly<Record<string, string>> = { '--motion-fast': '120ms', '--motion-base': '200ms' };
 /** §3-5 `prefers-reduced-motion: reduce` 값. */
 const MOTION_REDUCED: Readonly<Record<string, string>> = { '--motion-fast': '0ms', '--motion-base': '0ms' };
@@ -209,4 +218,20 @@ export const layoutVars: Readonly<Record<string, string>> = Object.freeze({
   '--body-min': '480px',
   '--body-min-medium': '380px',
   '--thread-overlay-w': 'min(420px, 100%)',
+});
+
+/**
+ * R4 분할선(wide 전용, DESIGN_REFERENCE §5-2 R4): 사용자가 끌어 내비·스레드 폭을 바꾼다. 기본 폭은 위 layoutVars 그대로.
+ * 내비를 navCollapseBelow 아래로 끌면 72px 레일로 접힌다. 본문은 bodyMin 아래로 줄지 않는다. 키보드 ←→는 step씩.
+ */
+export const splitLimits = Object.freeze({
+  navMin: 200,
+  navMax: 360,
+  navCollapseBelow: 160,
+  threadMin: 320,
+  threadMax: 560,
+  bodyMin: 480,
+  /** 분할선 자체 폭(= 패널 사이 여백). */
+  gutter: 12,
+  step: 16,
 });

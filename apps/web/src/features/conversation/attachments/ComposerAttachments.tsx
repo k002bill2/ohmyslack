@@ -32,8 +32,22 @@ export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, o
           e.target.value = '';
         }}
       />
-      <button type="button" className="msg-action composer-attach" disabled={full} onClick={() => input.current?.click()}>
-        {ATTACHMENT_COPY.attach}
+      {/* R4 시안: 작성기 아래 줄 아이콘 버튼(접근 이름·툴팁 = 기존 「이미지 첨부」). */}
+      <button
+        type="button"
+        className="composer-tool composer-attach"
+        aria-label={ATTACHMENT_COPY.attach}
+        title={ATTACHMENT_COPY.attach}
+        disabled={full}
+        onClick={() => input.current?.click()}
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+          <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="2.5" width="12" height="11" rx="2" />
+            <circle cx="6" cy="6.5" r="1.25" />
+            <path d="m14 11-3.5-3.5L4 14" />
+          </g>
+        </svg>
       </button>
       {chips.length > 0 && (
         <ul className="composer-chips" aria-busy={uploading}>

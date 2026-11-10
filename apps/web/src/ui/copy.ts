@@ -77,6 +77,8 @@ export const COMPOSER_COPY = {
   limit: '4,000자까지 입력할 수 있습니다',
   /** 작성기 도움말(결정 3): wide·medium에서 작성기 아래 작게, compact는 렌더하지 않는다. */
   hint: 'Enter 전송 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter는 무시',
+  /** R4 시안 작성기 아래 줄 `@` 아이콘 버튼 접근 이름 — 커서 위치에 `@`를 넣어 멘션 후보를 연다. */
+  mentionButton: '멘션 추가',
 } as const;
 
 /** 본문 작성기 placeholder(결정 3): 채널 「#이름에 남기기」, DM 「상대 이름에게 남기기」. `name`에는 `#`이 없다. */
@@ -229,6 +231,32 @@ export const MESSAGE_ACTION_COPY = {
   delete: DELETE_MESSAGE_COPY.confirm,
   edited: '(수정됨)',
   deleted: '삭제된 메시지입니다',
+} as const;
+
+/**
+ * R4 시안 메시지 툴바·메뉴(Floating-Menus A·B). 메뉴는 「더보기」 버튼·우클릭·Shift+F10으로 연다.
+ * 수정·삭제는 내 메시지에만, 삭제는 확인 Dialog(DELETE_MESSAGE_COPY)를 거친다.
+ */
+export const MESSAGE_MENU_COPY = {
+  menu: '메시지 메뉴',
+  more: '더보기',
+  reply: '답글',
+  replyInThread: '스레드로 답글',
+  copyText: '텍스트 복사',
+  copyLink: '메시지 링크 복사',
+  edit: '메시지 수정',
+  delete: '메시지 삭제…',
+  copiedText: '텍스트를 복사했습니다',
+  copiedLink: '링크를 복사했습니다',
+  copyFailed: '복사하지 못했습니다',
+} as const;
+
+/** R4 시안 대화 헤더 더보기 메뉴(Floating-Menus D). 「멤버 보기」는 채널 멤버 화면이 없어 아직 렌더하지 않는다. */
+export const HEADER_MENU_COPY = {
+  more: '대화 더보기',
+  menu: '대화 메뉴',
+  shortcuts: '키보드 단축키',
+  leave: '채널 나가기…',
 } as const;
 
 /**

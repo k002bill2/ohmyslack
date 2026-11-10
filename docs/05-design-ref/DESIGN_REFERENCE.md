@@ -124,6 +124,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | `--accent-bg` | accent 3 | 자기 멘션 하이라이트 배경 |
 | `--success-text` | green 11 | "저장됨"(표시할 때만) |
 | `--warning-bg` / `--warning-text` | amber 3 / 11 | 재연결 중 배너 |
+| `--danger-bg` | red 3 | 「여기부터 새 메시지」 라벨 배경 |
 | `--danger-text` / `--danger-solid` | red 11 / 9 | 전송 실패·연결 끊김·삭제 확인 |
 | `--focus-ring` | accent 8 | 2px 포커스 링(WCAG 2.4.7) |
 
@@ -162,8 +163,10 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 :root {
   --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
   --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem;
-  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px; --radius-xl: 16px; --radius-2xl: 20px;
   --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.12);
+  --shadow-float: 0 8px 24px rgb(0 0 0 / 0.10);    /* 떠 있는 작성기·메시지 툴바(R4) */
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 0.14); /* 다이얼로그·스레드 시트·메뉴(R4) */
   --motion-fast: 120ms; --motion-base: 200ms;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -265,6 +268,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 - 토큰: `--sidebar-w: 260px`, `--sidebar-w-collapsed: 72px`, `--thread-w: clamp(320px, 32vw, 380px)`, `--body-min: 480px`.
 - **폭 규칙(R3 확정):** 스레드가 열린 상태에서 `width < 1120px`이면 사이드바를 **접힘(72px)으로 자동 전환합니다(필수).** 1120px 이상에서는 펼침 유지, 사용자가 수동으로 접을 수도 있습니다. 검산: 1024px → 72 + 624 + 328 = 1024, 본문 ≥ 480 ✓ / 1119px → 72 + 689 + 358 ✓ / 1120px → 260 + 502 + 358 ✓ / 1280px → 260 + 640 + 380 ✓. 1024–1119px에서 스레드가 닫히면 사이드바는 다시 펼쳐집니다. 접힘 상태의 사이드바는 아이콘+배지만 보이고 이름은 툴팁·`aria-label`로 제공합니다.
 - 선택된 공간은 **왼쪽 3px 액센트 선 + bg-active**로 표시(면 전체 유채색 금지).
+- **R4 분할선(wide 전용):** 패널 사이 12px 여백 자리에 `role="separator"` 분할선 2개(내비|본문, 본문|스레드). 끌기·`←/→`(16px)·`Enter`(내비 접기 / 스레드 닫기)·더블클릭(기본 폭). 내비 200–360px, 160px 아래로 끌면 72px 레일. 스레드 320–560px. 본문은 480px 아래로 줄지 않도록 상한을 줄인다. 위 자동 접힘 규칙이 사용자 폭보다 우선한다. 폭은 메모리에만 두고 저장하지 않는다(새로고침 = 기본 폭). 수치 정본은 `apps/web/src/ui/tokens.ts` `splitLimits`.
 
 ### 5-3. 2단 (medium, 640px < width < 1024px)
 
@@ -377,7 +381,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 2.1.1 / 2.1.2 Keyboard, No Trap | 모든 기능 키보드 조작, 트랩 없음 | §7-3 키맵, 오버레이·다이얼로그는 항상 Esc 탈출(초안 보존) |
 | 2.4.3 Focus Order | 논리 순서 | DOM 순서 = 시각 순서. 사이드바 → 헤더 → 목록 → 작성기 → 스레드 |
 | 2.4.7 / 2.4.11 Focus Visible / Not Obscured | 가시 포커스, 가려지지 않음 | 2px 링 + 2px 오프셋. 고정 배너·작성기가 포커스 요소를 가리면 `scroll-margin` |
-| 2.5.8 Target Size (Minimum) | **24×24 CSS px** 이상 | 모든 터치 목표 **44×44px**(Apple HIG 권장값으로 기억, 원문 미확인 → 추정). 최소 24px는 하드 룰 |
+| 2.5.8 Target Size (Minimum) | **24×24 CSS px** 이상 | 터치(`pointer: coarse`)·compact 목표 **44×44px**(Apple HIG 권장값으로 기억, 원문 미확인 → 추정). **R4:** 정밀 포인터(`pointer: fine`) 데스크톱의 밀집 목록·툴바는 시안 밀도(공간 행 32px, 툴바 버튼 32px)를 쓴다. 최소 24px는 하드 룰 |
 | 4.1.3 Status Messages | 상태 변화는 포커스 이동 없이 전달 | StatusRegion(`aria-live="polite"`), 실패는 `role="alert"`, 저장 여부 확인 중은 `role="status"` |
 
 ### 7-2. ARIA 구조
@@ -405,6 +409,8 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | `Tab` / `Shift+Tab` | 영역 간 이동. 메시지 목록 안에서는 **메시지 단위**(roving tabindex) | — |
 | 메시지에서 `R` / `E` / `Delete` | 답글 / 수정(내 것) / 삭제(내 것, 확인 다이얼로그) | 스레드 작성기 / 편집기 / 다이얼로그 |
 | `Ctrl/⌘+/` | 키보드 단축키 안내 다이얼로그 | 다이얼로그 |
+| 메시지에서 `Shift+F10` / `ContextMenu` 키, 또는 우클릭 (R4) | 메시지 메뉴(스레드로 답글 · 텍스트 복사 · 메시지 링크 복사 · 메시지 수정 · 메시지 삭제…). 메뉴 안 `↑/↓`·`Home/End` 이동, `Esc`·`Tab` 닫기 | 첫 항목 → 닫으면 연 요소(더보기 버튼 또는 메시지) |
+| 분할선에서 `←/→` · `Enter` · 더블클릭 (R4, wide) | 폭 16px 조절 · 내비 접기/스레드 닫기 · 기본 폭 | 분할선 유지 |
 
 - 단축키는 **입력 중이 아닐 때만**(작성기 포커스 시 단일 글자 단축키 비활성). `Alt+↑/↓` 단독은 macOS 텍스트 입력의 Option+화살표(문단 이동)와 겹쳐 **쓰지 않습니다**(R1에서 변경). `⌃⌥` 조합이 브라우저·OS 기본 동작과 겹치지 않는다는 판단은 추정이며 QA-FR-CLIENT-01에서 macOS Safari·Chrome으로 확인합니다.
 - **초안 규칙:** 작성기 초안은 대상(대화 또는 스레드 root)별 메모리 맵에 보존하고, 화면 전환·오버레이 닫기·탭 전환에 유지됩니다. 로그아웃·401·페이지 종료 시 폐기(지속 저장 없음 — FR-CLIENT-04).

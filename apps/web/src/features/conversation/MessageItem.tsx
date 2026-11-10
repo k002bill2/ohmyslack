@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { ActionResult } from '../../data/index.js';
 import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
-import { MESSAGE_ACTION_COPY } from '../../ui/copy.js';
+import { MESSAGE_ACTION_COPY, MESSAGE_MENU_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 import { MessageBody } from './MessageBody.js';
 import { AttachmentList } from './attachments/index.js';
@@ -11,6 +11,7 @@ import { DeleteMessageDialog } from './MessageItemDelete.js';
 import { MessageEditor } from './MessageItemEditor.js';
 import { canModify } from './MessageItemRules.js';
 import { ThreadSummary } from './MessageItemThreadSummary.js';
+import { MessageItemToolbar, useMessageMenu } from './MessageItemToolbar.js';
 import { MessageStatus } from './MessageStatus.js';
 import { messageKeyAction, useRovingInner } from './message-keys.js';
 import type { PendingMessage } from './send-status.js';
@@ -47,6 +48,8 @@ export interface MessageItemProps {
   readonly onOpenThread?: (id: string) => void;
   readonly threadUnread?: boolean;
   readonly threadHolding?: boolean;
+  /** 이 메시지가 지금 열린 스레드의 루트인가(시안 01 칩 강조). 판정은 호출자가 한다. */
+  readonly threadActive?: boolean;
   /** 보이는 시각 위치(UI_STATES §3 타임스탬프 행): compact = 본문 아래(`below`), medium·wide = 작성자 옆(`inline`, 기본). */
   readonly timePlacement?: 'inline' | 'below';
   /** 나를 멘션한 메시지면 강조 블록 + 「나를 멘션」 라벨(시안 01). 판정은 호출자(목록)가 한다. */
@@ -63,7 +66,23 @@ export interface MessageItemProps {
    * `false` = 정류장 아님(안의 조작도 Tab에서 뺀다). 없으면(스레드 패널 등) 기존처럼 tabIndex -1.
    */
   readonly rovingActive?: boolean;
+  /** 이 메시지로 바로 가는 주소(R4 메뉴 「메시지 링크 복사」). 없으면 그 항목을 렌더하지 않는다. */
+  readonly messageLink?: (id: string) => string;
 }
+
+/** 클립보드 쓰기(없거나 거부되면 false). */
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard === undefined) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 복사 결과 안내를 잠깐 보였다가 지운다(role=status, 포커스 이동 없음 — D §7-1 4.1.3). */
+const COPY_NOTE_MS = 1600;
 
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
 
@@ -132,9 +151,21 @@ function MessageItemView(props: MessageItemProps) {
   const canEdit = actionable && !isEditing && onEdit !== undefined;
   const canDelete = actionable && !isEditing && onDelete !== undefined;
   useRovingInner(item, props.rovingActive);
+  const menuEnabled = !sheetMode && message.deleted !== true && pending === undefined && !isEditing;
+  const menu = useMessageMenu(item, menuEnabled);
+  const [copyNote, setCopyNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (copyNote === null) return;
+    const t = setTimeout(() => setCopyNote(null), COPY_NOTE_MS);
+    return () => clearTimeout(t);
+  }, [copyNote]);
+  const copy = (text: string, done: string) => {
+    void writeClipboard(text).then((ok) => setCopyNote(ok ? done : MESSAGE_MENU_COPY.copyFailed));
+  };
+  const { messageLink } = props;
   /** D §7-3 메시지 단축키 — compact는 키맵 대신 보이는 버튼(액션 시트)이라 끈다. */
   const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
-    if (sheetMode) return;
+    if (sheetMode || menu.onItemKey(e)) return;
     const action = messageKeyAction(e, { reply: showReply && onReply !== undefined, edit: canEdit, delete: canDelete });
     if (action === null) return;
     e.preventDefault();
@@ -175,6 +206,7 @@ function MessageItemView(props: MessageItemProps) {
       onKeyDown={onKeyDown}
       data-message-id={message.id}
       aria-label={messageLabel(message.author, message.createdAt, message.authorKind === 'bot')}
+      onContextMenu={menu.onContextMenu}
       {...longPress}
     >
       {/* 배지는 작성자 span 안 — msg-item은 flex-wrap이라 형제로 두면 좁은 폭에서 배지만 다음 줄로 갈 수 있다. */}
@@ -205,6 +237,7 @@ function MessageItemView(props: MessageItemProps) {
             count={message.replyCount ?? 0}
             unread={props.threadUnread === true}
             holding={props.threadHolding === true}
+            active={props.threadActive === true}
             onOpen={onOpenThread}
           />
         </div>
@@ -243,29 +276,25 @@ function MessageItemView(props: MessageItemProps) {
           }}
         />
       )}
-      {!sheetMode && hasActions && (
-        <div className="msg-toolbar">
-          {/* 삭제 자리표시자 액션은 「스레드 열기만」(UI_STATES §2-5) — 「답글」 없음, CMP-14는 유지. */}
-          {showReply && (
-            <button type="button" className="msg-action" data-reply-for={message.id} onClick={() => onReply?.(message.id)}>
-              답글
-            </button>
-          )}
-          {actionable && !isEditing && (
-            <div className="msg-actions">
-              {onEdit !== undefined && (
-                <button type="button" className="msg-action" onClick={() => setEditing(true)}>
-                  {MESSAGE_ACTION_COPY.edit}
-                </button>
-              )}
-              {onDelete !== undefined && (
-                <button type="button" className="msg-action" onClick={() => setConfirming(true)}>
-                  {MESSAGE_ACTION_COPY.delete}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+      {/* R4 시안 툴바(Floating-Menus A·B): 「답글」 글자 + 수정·더보기 아이콘, 더보기·우클릭·Shift+F10 → 메시지 메뉴. */}
+      {!sheetMode && (
+        <MessageItemToolbar
+          messageId={message.id}
+          caps={{ reply: showReply, edit: canEdit, delete: canDelete, menu: menuEnabled }}
+          actions={{
+            onReply: () => onReply?.(message.id),
+            onEdit: () => setEditing(true),
+            onDelete: () => setConfirming(true),
+            onCopyText: () => copy(message.body, MESSAGE_MENU_COPY.copiedText),
+            ...(messageLink === undefined ? {} : { onCopyLink: () => copy(messageLink(message.id), MESSAGE_MENU_COPY.copiedLink) }),
+          }}
+          menu={menu}
+        />
+      )}
+      {copyNote !== null && (
+        <span className="msg-copy-note" role="status">
+          {copyNote}
+        </span>
       )}
       {confirming && onDelete !== undefined && (
         <DeleteMessageDialog

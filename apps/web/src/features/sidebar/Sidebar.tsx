@@ -4,7 +4,7 @@ import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { SIDEBAR_SHELL_COPY } from './copy.js';
-import { AppMark } from './icons.js';
+import { AppMark, HashIcon, LogOutIcon, MessageSquareIcon, PanelLeftIcon, PlusIcon, SearchIcon, UsersIcon } from './icons.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 
 export interface SidebarProps {
@@ -25,6 +25,10 @@ export interface SidebarProps {
   readonly onStartDm?: () => void;
   /** owner 전용 「채널 만들기」 Dialog 열기. */
   readonly onCreateChannel?: () => void;
+  /** R4 「이동…」 버튼 → 공간 전환기(D §7-3 Ctrl/⌘+K). 없으면(compact) 렌더하지 않는다. */
+  readonly onOpenSwitcher?: () => void;
+  /** R4 내비게이션 접기/펼치기(wide, §5-2 자동 접힘 중이 아닐 때만). */
+  readonly onToggleCollapse?: () => void;
   /** 오류 상태 「다시 시도」. */
   readonly onRetryList?: () => void;
   /** owner 전용 하단 「멤버 관리」(`/settings/members`). role이 owner가 아니면 렌더하지 않는다. */
@@ -68,6 +72,7 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
         aria-current={selected ? 'page' : undefined}
         aria-label={collapsed ? collapsedLabel(space) : undefined}
         title={collapsed ? space.name : undefined}
+        {...(collapsed ? { 'data-initial': Array.from(space.name)[0] ?? '' } : {})}
         onClick={() => onSelect(space.id)}
       >
         <span className="space-status" aria-hidden="true" />
@@ -137,8 +142,17 @@ function SpaceSection(props: SidebarProps & { readonly title: string }) {
   );
 }
 
+/** 아이콘 단독 버튼: 접근 이름·툴팁 = 기존 문구(§3-4 「아이콘 단독 버튼이면 aria-label」). */
+function IconAction({ label, onClick, children }: { readonly label: string; readonly onClick: () => void; readonly children: ReactNode }) {
+  return (
+    <button type="button" className="icon-button sidebar-icon-action" aria-label={label} title={label} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
 /** 하단 계정 카드(시안 01): 이니셜 원형 + 표시 이름 + 역할. */
-function AccountCard({ account }: { readonly account: Account }) {
+function AccountCard({ account, children }: { readonly account: Account; readonly children?: ReactNode }) {
   return (
     <div className="account-card">
       {/* 이니셜은 CSS `attr()`로 그린다 — 장식이라 텍스트 노드로 두면 표시 이름 텍스트 질의가 중복된다. */}
@@ -149,6 +163,7 @@ function AccountCard({ account }: { readonly account: Account }) {
         </span>
         <span className="account-role">{MEMBER_ADMIN_COPY.roles[account.role]}</span>
       </span>
+      {children}
     </div>
   );
 }
@@ -172,39 +187,60 @@ export function Sidebar(props: SidebarProps) {
         ) : (
           <span className={collapsed ? 'visually-hidden' : 'sidebar-app-name'}>{APP_NAME}</span>
         )}
+        {props.onToggleCollapse && !collapsed && (
+          <IconAction label={SIDEBAR_SHELL_COPY.collapseNav} onClick={props.onToggleCollapse}>
+            <PanelLeftIcon />
+          </IconAction>
+        )}
       </header>
+      {/* R4 시안: 「이동…」(전환기) + 공간 작업은 아이콘 버튼(접근 이름 = 기존 문구, 툴팁 같은 값). */}
       <div className="sidebar-actions">
-        {props.onBrowseChannels && (
-          <button type="button" className="btn btn-secondary" onClick={props.onBrowseChannels}>
-            {SIDEBAR_COPY.browseChannels}
+        {props.onOpenSwitcher && !collapsed && (
+          <button type="button" className="sidebar-jump" aria-label={SIDEBAR_SHELL_COPY.jumpLabel} onClick={props.onOpenSwitcher}>
+            <SearchIcon />
+            <span className="sidebar-jump-text">{SIDEBAR_SHELL_COPY.jump}</span>
+            <kbd className="sidebar-jump-keys">{SIDEBAR_SHELL_COPY.jumpKeys}</kbd>
           </button>
+        )}
+        {props.onBrowseChannels && (
+          <IconAction label={SIDEBAR_COPY.browseChannels} onClick={props.onBrowseChannels}>
+            <HashIcon />
+          </IconAction>
         )}
         {props.onStartDm && (
-          <button type="button" className="btn btn-secondary" onClick={props.onStartDm}>
-            {SIDEBAR_COPY.startDm}
-          </button>
+          <IconAction label={SIDEBAR_COPY.startDm} onClick={props.onStartDm}>
+            <MessageSquareIcon />
+          </IconAction>
         )}
         {account?.role === 'owner' && props.onCreateChannel && (
-          <button type="button" className="btn btn-secondary" onClick={props.onCreateChannel}>
-            {SIDEBAR_COPY.createChannel}
-          </button>
+          <IconAction label={SIDEBAR_COPY.createChannel} onClick={props.onCreateChannel}>
+            <PlusIcon />
+          </IconAction>
         )}
       </div>
       <SpaceListBody {...props} />
+      {props.onToggleCollapse && collapsed && (
+        <div className="sidebar-expand">
+          <IconAction label={SIDEBAR_SHELL_COPY.expandNav} onClick={props.onToggleCollapse}>
+            <PanelLeftIcon />
+          </IconAction>
+        </div>
+      )}
       {account !== undefined && (
         <div className="sidebar-account">
-          <AccountCard account={account} />
-          {props.pushSettings}
-          {account.role === 'owner' && props.onManageMembers && (
-            <button type="button" className="btn btn-secondary" onClick={props.onManageMembers}>
-              {MEMBER_ADMIN_COPY.title}
-            </button>
-          )}
-          {props.onLogout && (
-            <button type="button" className="btn btn-secondary" onClick={props.onLogout}>
-              {SIDEBAR_COPY.logout}
-            </button>
-          )}
+          <AccountCard account={account}>
+            {account.role === 'owner' && props.onManageMembers && (
+              <IconAction label={MEMBER_ADMIN_COPY.title} onClick={props.onManageMembers}>
+                <UsersIcon />
+              </IconAction>
+            )}
+            {props.onLogout && (
+              <IconAction label={SIDEBAR_COPY.logout} onClick={props.onLogout}>
+                <LogOutIcon />
+              </IconAction>
+            )}
+          </AccountCard>
+          {!collapsed && props.pushSettings}
         </div>
       )}
     </nav>

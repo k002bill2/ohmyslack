@@ -15,7 +15,7 @@ describe('CMP-10 DateSeparator(UI_STATES §2-4)', () => {
     expect(dateSeparatorText(new Date('2026-11-07T23:00:00'), now)).toBe('어제');
     expect(dateSeparatorText(new Date('2026-10-30T10:00:00'), now)).toBe('2026-10-30');
   });
-  it('구분선 역할 + 요일 보조', () => {
+  it('구분선 역할 + 보조(R4: 오늘·어제는 「11월 8일 일요일」)', () => {
     render(
       <ul>
         <DateSeparator at="2026-11-08T01:00:00" now={now} />
@@ -23,7 +23,17 @@ describe('CMP-10 DateSeparator(UI_STATES §2-4)', () => {
     );
     const sep = screen.getByRole('separator');
     expect(sep.querySelector('.date-separator-day')?.textContent).toBe('오늘');
-    expect(sep.querySelector('.date-separator-weekday')?.textContent).toBe('일요일');
+    expect(sep.querySelector('.date-separator-weekday')?.textContent).toBe('11월 8일 일요일');
+  });
+  it('YYYY-MM-DD 라벨에는 요일만 보조로 붙는다', () => {
+    render(
+      <ul>
+        <DateSeparator at="2026-10-30T10:00:00" now={now} />
+      </ul>,
+    );
+    const sep = screen.getByRole('separator');
+    expect(sep.querySelector('.date-separator-day')?.textContent).toBe('2026-10-30');
+    expect(sep.querySelector('.date-separator-weekday')?.textContent).toBe('금요일');
   });
 });
 
@@ -56,15 +66,15 @@ describe('MessageItem 시안 01·11', () => {
     expect(screen.queryByText('나를 멘션')).toBeNull();
   });
 
-  it('답글·수정·삭제는 한 툴바 안에 있고 답글이 먼저다', () => {
+  it('R4 툴바: 답글(글자)·수정·더보기(아이콘) 순서, 삭제는 더보기 메뉴 안', () => {
     const { container } = render(
       <ul>
         <MessageItem message={msg} selfId="u2" onReply={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />
       </ul>,
     );
     const toolbar = container.querySelector('.msg-toolbar');
-    const names = Array.from(toolbar?.querySelectorAll('button') ?? []).map((b) => b.textContent);
-    expect(names).toEqual(['답글', '수정', '삭제']);
+    const names = Array.from(toolbar?.querySelectorAll('button') ?? []).map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(names).toEqual(['답글', '수정', '더보기']);
   });
 });
 

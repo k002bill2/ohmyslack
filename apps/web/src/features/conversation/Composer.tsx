@@ -123,6 +123,20 @@ export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = f
     setPicker(null);
   };
 
+  /** R4 `@` 버튼: 커서 자리에 `@`를 넣고 입력란으로 돌아가 후보를 연다(타이핑과 같은 onInput 경로). */
+  const insertAt = () => {
+    const el = area.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    const before = text.slice(0, start);
+    const lead = before === '' || /\s$/u.test(before) ? '@' : ' @';
+    const next = `${before}${lead}${text.slice(end)}`;
+    const caret = start + lead.length;
+    caretAfter.current = caret;
+    onInput(next, caret);
+    el?.focus();
+  };
+
   const onPickerKey = (key: MentionKey) => {
     if (key === 'Escape') setPicker(null);
     else if (key === 'ArrowDown') setActive((i) => (options.length === 0 ? 0 : (i + 1) % options.length));
@@ -253,6 +267,26 @@ export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = f
           </p>
         </div>
       )}
+      {mentions !== undefined && (
+        <button type="button" className="composer-tool" aria-label={COMPOSER_COPY.mentionButton} title={COMPOSER_COPY.mentionButton} onClick={insertAt}>
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+            <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="8" r="2.75" />
+              <path d="M10.75 5.5v3.25a2 2 0 0 0 4 0V8a6.75 6.75 0 1 0-2.7 5.4" />
+            </g>
+          </svg>
+        </button>
+      )}
+      {onUpload !== undefined && (
+        <ComposerAttachments
+          chips={files.chips}
+          full={files.full}
+          uploading={files.uploading}
+          onAdd={files.add}
+          onRemove={files.remove}
+          onRetry={files.retry}
+        />
+      )}
       {showHint && (
         <p className="composer-hint" id={hintId}>
           {COMPOSER_COPY.hint}
@@ -268,16 +302,6 @@ export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = f
         {counterAnnouncement(length, MESSAGE_BODY_MAX_CODE_POINTS)}
       </p>
       {/* 시안 01·05: 원형 아이콘 전송 버튼. 보이는 글자는 시각적으로 숨기고 접근 이름 「전송」 유지. */}
-      {onUpload !== undefined && (
-        <ComposerAttachments
-          chips={files.chips}
-          full={files.full}
-          uploading={files.uploading}
-          onAdd={files.add}
-          onRemove={files.remove}
-          onRetry={files.retry}
-        />
-      )}
       <button
         type="button"
         className="btn btn-primary composer-send"
