@@ -10,7 +10,7 @@ import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '..
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
-import { LeftChannelNotice, RejoinButton, useMentionCandidates } from '../conversation-membership';
+import { BotChannelControl, canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useMentionCandidates, type BotChannelControlProps } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
@@ -112,6 +112,8 @@ function ConversationPane(props: {
   readonly itemActions?: ItemActions;
   /** W-10j: 채널 나가기·다시 참여·멘션 후보(없으면 렌더하지 않음). */
   readonly membership?: MembershipProps;
+  /** FR-BOT-11: 채널 헤더 봇 추가·제거(owner·채널·참여 중일 때만 호출자가 넘긴다). */
+  readonly botControl?: BotChannelControlProps;
   /** FR-SYNC-03: 목록이 맨 아래(마지막 원문이 보임)일 때 그 seq를 알린다. */
   readonly onSeen?: (seq: number) => void;
   /** wide에서 스레드가 열려 있으면 헤더 오른쪽 패널 토글(시안 01)로 닫는다. */
@@ -170,6 +172,7 @@ function ConversationPane(props: {
             {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
           </span>
         </div>
+        {props.botControl !== undefined && <BotChannelControl {...props.botControl} />}
         <HeaderMenu
           {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
           {...(membership?.onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave: membership.onLeave } : {})}
@@ -433,7 +436,29 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     () => (spaceId === undefined || state.threadRootId === null ? undefined : messageLinkIn(spaceId, state.threadRootId)),
     [spaceId, state.threadRootId],
   );
-  const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true);
+  // FR-BOT-11: 봇 추가·제거 성공 → 멤버 재조회(멤버 수·멘션 후보·컨트롤 상태가 같은 목록을 쓴다).
+  const [memberRevision, bumpMembers] = useReducer((n: number) => n + 1, 0);
+  const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true, memberRevision);
+  const manageBots = canManageChannelBots(snap.account, space) && dataSource.addBotToChannel !== undefined && dataSource.removeBotFromChannel !== undefined;
+  const activeBots = useActiveBots(dataSource, manageBots);
+  const memberIds = useMemo(() => new Set((mentionCandidates ?? []).map((c) => c.id)), [mentionCandidates]);
+  const botControl: BotChannelControlProps | undefined =
+    !manageBots || space === undefined || mentionCandidates === undefined
+      ? undefined
+      : {
+          bots: activeBots,
+          memberIds,
+          onAdd: async (botId) => {
+            const res = (await dataSource.addBotToChannel?.(space.id, botId)) ?? { ok: false, status: 403 };
+            if (res.ok) bumpMembers();
+            return res;
+          },
+          onRemove: async (botId) => {
+            const res = (await dataSource.removeBotFromChannel?.(space.id, botId)) ?? { ok: false, status: 403 };
+            if (res.ok) bumpMembers();
+            return res;
+          },
+        };
   // 로딩 중 훅이 매번 새 []를 돌려줘도 같은 undefined가 되게 — memo(MessageItem)·MessageBody useMemo를 깨지 않는다.
   const mentionNames = useMemo(
     () => (mentionCandidates === undefined || mentionCandidates.length === 0 ? undefined : mentionCandidates.map((c) => c.displayName)),
@@ -528,6 +553,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         ...(mainLink === undefined ? {} : { messageLink: mainLink }),
       }}
       {...(membership === undefined ? {} : { membership })}
+      {...(botControl === undefined ? {} : { botControl })}
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
       {...(threadOpen && state.threadRootId !== null ? { openThreadRootId: state.threadRootId } : {})}
