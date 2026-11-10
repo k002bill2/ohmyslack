@@ -48,6 +48,8 @@ export interface MessageItemProps {
   readonly onOpenThread?: (id: string) => void;
   readonly threadUnread?: boolean;
   readonly threadHolding?: boolean;
+  /** 이 메시지가 지금 열린 스레드의 루트인가(시안 01 칩 강조). 판정은 호출자가 한다. */
+  readonly threadActive?: boolean;
   /** 보이는 시각 위치(UI_STATES §3 타임스탬프 행): compact = 본문 아래(`below`), medium·wide = 작성자 옆(`inline`, 기본). */
   readonly timePlacement?: 'inline' | 'below';
   /** 나를 멘션한 메시지면 강조 블록 + 「나를 멘션」 라벨(시안 01). 판정은 호출자(목록)가 한다. */
@@ -235,6 +237,7 @@ function MessageItemView(props: MessageItemProps) {
             count={message.replyCount ?? 0}
             unread={props.threadUnread === true}
             holding={props.threadHolding === true}
+            active={props.threadActive === true}
             onOpen={onOpenThread}
           />
         </div>
