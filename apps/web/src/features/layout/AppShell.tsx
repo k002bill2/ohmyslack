@@ -116,6 +116,8 @@ function ConversationPane(props: {
   readonly onSeen?: (seq: number) => void;
   /** wide에서 스레드가 열려 있으면 헤더 오른쪽 패널 토글(시안 01)로 닫는다. */
   readonly onCloseThread?: () => void;
+  /** 지금 열린 스레드의 루트 ID(시안 01 칩 강조). 닫혀 있으면 없음. */
+  readonly openThreadRootId?: string;
   /** catch-up 중 — 「여기부터 새 메시지」 위치 계산 보류(UI_STATES §2-4). */
   readonly holding: boolean;
   /** 이 대화의 이력 조회가 끝났는가 — 끝난 뒤에 구분선 위치를 고정한다(Codex r2 P2). */
@@ -209,6 +211,7 @@ function ConversationPane(props: {
                 onDiscard={props.onDiscard}
                 {...props.itemActions}
                 threadUnread={space.unreadThreadRoots?.includes(m.id) === true}
+                threadActive={m.id === props.openThreadRootId}
                 timePlacement={breakpoint === 'compact' ? 'below' : 'inline'}
                 mentionsSelf={mentionsSelf(m)}
                 {...(mentionNames === undefined ? {} : { mentionNames })}
@@ -527,6 +530,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(membership === undefined ? {} : { membership })}
       onSeen={(seq) => dataSource.markRead?.(space.id, null, seq)}
       {...(bp === 'wide' && threadOpen ? { onCloseThread: closeThread } : {})}
+      {...(threadOpen && state.threadRootId !== null ? { openThreadRootId: state.threadRootId } : {})}
       holding={snap.connection === 'catching-up'}
       historyReady={historyReady}
       {...(bp === 'compact' ? {} : { onShortcuts: () => setOverlay('shortcuts') })}

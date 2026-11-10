@@ -124,6 +124,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | `--accent-bg` | accent 3 | 자기 멘션 하이라이트 배경 |
 | `--success-text` | green 11 | "저장됨"(표시할 때만) |
 | `--warning-bg` / `--warning-text` | amber 3 / 11 | 재연결 중 배너 |
+| `--danger-bg` | red 3 | 「여기부터 새 메시지」 라벨 배경 |
 | `--danger-text` / `--danger-solid` | red 11 / 9 | 전송 실패·연결 끊김·삭제 확인 |
 | `--focus-ring` | accent 8 | 2px 포커스 링(WCAG 2.4.7) |
 
