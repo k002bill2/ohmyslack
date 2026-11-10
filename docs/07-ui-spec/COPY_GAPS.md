@@ -480,9 +480,63 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 - G-16 `/install` macOS 분기 문장
 - G-18 최종 배포 이름
 - G-38 클라이언트 측 heartbeat 감지
+- G-43 봇 추가 버튼 라벨
+- G-44 봇 제거 확인 Dialog 제목
+- G-45 봇 제거 확인 Dialog 본문
+- G-46 봇 제거 확인 Dialog 확인 버튼
+- G-47 봇 추가 실패 문구
 
 ## 9. 금지 확인
 
 - 상표 문자열·고유 문구: CLEANROOM §5 기계 검증과, 이 파일에 대한 상표명 grep 결과를 `dev/active/p1-copy-gaps/REPORT.md`에 인용한다.
 - 이모지: ★(권장 표기) 외에는 쓰지 않는다.
 - 비난조: 확정안에 「잘못」·「실수」·「틀렸」 같은 표현이 없다. 이 결과도 REPORT에 인용한다.
+
+## 10. 봇 채널 참여 컨트롤 (BOT_CHANNEL_SPEC §10-1 Q8, FR-BOT-11)
+
+- 상태: **결정 필요**(2026-11-10 등록, Jarvis L0 레인). 확정안 값은 비워 둔다.
+
+### G-43 봇 추가 버튼 라벨 (결정 필요)
+- 위치: 채널 헤더 봇 컨트롤의 추가 버튼(owner·채널일 때만 보임, 「채널 나가기」 옆 — `apps/web/src/features/layout/AppShell.tsx` 채널 헤더). BOT_CHANNEL_SPEC §3-1, FR-BOT-11.
+- 확정안: 미정
+- 근거:
+  - `docs/09-specs/BOT_CHANNEL_SPEC.md` §10-1 Q8 ★(2026-11-10 영환님 결정): COPY_GAPS에 항목을 올린 뒤 문구를 정한다.
+  - 문구는 정본에서만 정한다(`docs/04-dev-design/DEV_DESIGN.md` §8 9번). 이 등록은 값을 만들지 않는다.
+- 대안: 없음(초안 미작성 — 값은 결정 시 채운다).
+- ★: 없음. 영환님 결정 필요.
+
+### G-44 봇 제거 확인 Dialog 제목 (결정 필요)
+- 위치: CMP-18 Dialog(채널에서 봇 제거 확인). BOT_CHANNEL_SPEC §3-4 1번, FR-BOT-11.
+- 확정안: 미정
+- 근거:
+  - `docs/09-specs/BOT_CHANNEL_SPEC.md` §10-1 Q8 ★(2026-11-10 영환님 결정): COPY_GAPS에 항목을 올린 뒤 문구를 정한다.
+  - 문구는 정본에서만 정한다(`docs/04-dev-design/DEV_DESIGN.md` §8 9번). 이 등록은 값을 만들지 않는다.
+- 대안: 없음(초안 미작성 — 값은 결정 시 채운다).
+- ★: 없음. 영환님 결정 필요.
+
+### G-45 봇 제거 확인 Dialog 본문 (결정 필요)
+- 위치: G-44와 같은 Dialog의 본문. BOT_CHANNEL_SPEC §3-4 1번, FR-BOT-11.
+- 확정안: 미정
+- 근거:
+  - `docs/09-specs/BOT_CHANNEL_SPEC.md` §10-1 Q8 ★(2026-11-10 영환님 결정): COPY_GAPS에 항목을 올린 뒤 문구를 정한다.
+  - 문구는 정본에서만 정한다(`docs/04-dev-design/DEV_DESIGN.md` §8 9번). 이 등록은 값을 만들지 않는다.
+- 대안: 없음(초안 미작성 — 값은 결정 시 채운다).
+- ★: 없음. 영환님 결정 필요.
+
+### G-46 봇 제거 확인 Dialog 확인 버튼 (결정 필요)
+- 위치: G-44와 같은 Dialog의 주 동작 버튼(취소 버튼은 기존 「취소」). BOT_CHANNEL_SPEC §3-4 1번, FR-BOT-11.
+- 확정안: 미정
+- 근거:
+  - `docs/09-specs/BOT_CHANNEL_SPEC.md` §10-1 Q8 ★(2026-11-10 영환님 결정): COPY_GAPS에 항목을 올린 뒤 문구를 정한다.
+  - 문구는 정본에서만 정한다(`docs/04-dev-design/DEV_DESIGN.md` §8 9번). 이 등록은 값을 만들지 않는다.
+- 대안: 없음(초안 미작성 — 값은 결정 시 채운다).
+- ★: 없음. 영환님 결정 필요.
+
+### G-47 봇 추가 실패 문구 (결정 필요)
+- 위치: 봇 추가 요청(`POST /api/conversations/{id}/bots`) 실패 시 기존 오류 표시(`ErrorState`)에 들어갈 문구. BOT_CHANNEL_SPEC §3-1·§7-2 FR-BOT-11 수용 기준.
+- 확정안: 미정
+- 근거:
+  - `docs/09-specs/BOT_CHANNEL_SPEC.md` §10-1 Q8 ★(2026-11-10 영환님 결정): COPY_GAPS에 항목을 올린 뒤 문구를 정한다.
+  - 문구는 정본에서만 정한다(`docs/04-dev-design/DEV_DESIGN.md` §8 9번). 이 등록은 값을 만들지 않는다.
+- 대안: 없음(초안 미작성 — 값은 결정 시 채운다).
+- ★: 없음. 영환님 결정 필요.

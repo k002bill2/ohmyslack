@@ -1,6 +1,6 @@
 # BOT_CHANNEL_SPEC — Jarvis 봇 채널 참여 (우선순위 P1 FR 후보)
 
-- 상태: **제안(초안)** — 영환님 결정 전. 정본(PRD·TRD·ADR·DEV_DESIGN)은 이 문서로 바뀌지 않는다. 바꿀 문장은 §9 표로만 제안한다.
+- 상태: **확정** — 2026-11-10 영환님이 §10-1 Q1–Q8을 모두 ★ 추천안으로 결정했다. §9-2 표의 문서 행은 L0 레인(`p1-l0-bot-channel-docs`)이 정본(PRD v1.4·TRD R3.4·ADR-001·DEV_DESIGN R3.4·THREAT_MODEL·런북·COPY_GAPS)에 반영했고, 코드 행(테스트 주석)은 L1 몫이다. 정본과 이 문서가 다르면 정본이 우선한다.
 - 작성: Jarvis(p1-bot-channel-spec 레인), 2026-11-10
 - 기준 커밋: `92382b7`
 - 근거 수준: **사실** = `파일:행`으로 확인, **추정** = 코드·문서에서 유추, **확인 필요** = 근거 못 찾음.
@@ -150,9 +150,9 @@
 
 ### 4-3. 이벤트 — 멤버십 변화 통지
 
-현재 봇은 `/api/bot/v1/me`의 `conversation_ids`를 연결 시에만 읽는다(§1-1 #12·#13). 추가 이벤트가 없으므로 통지 방식을 새로 정해야 한다(§10 Q4).
+현재 봇은 `/api/bot/v1/me`의 `conversation_ids`를 연결 시에만 읽는다(§1-1 #12·#13). 추가 이벤트가 없으므로 통지 방식을 새로 정한다 — §10 Q4 결정(★ N1)에 따라 `membership.changed`를 쓴다.
 
-**★ 안 N1 — 새 WS 서버 프레임 `membership.changed`**
+**★ N1(채택, §10 Q4) — 새 WS 서버 프레임 `membership.changed`**
 - 모양(제안): `{ type: 'membership.changed', conversation_id, state: 'joined' | 'left' }`. `wsServerFrameSchema`(`packages/shared/src/realtime.ts`)에 추가.
 - 전달 대상: **영향받는 사용자(봇)의 모든 연결**에만. 대화 구독자 팬아웃이 아니다.
 - `ConversationEvents`(`apps/server/src/modules/conversations/events.ts:4-7`)에 `membershipStarted`를 더하고, hub가 `joined`를 보낸다. `left`는 기존 `membershipEnded` 처리(`error not_found` + 구독 삭제) 뒤에 같은 대상에 보낸다.
@@ -172,7 +172,7 @@
 ### 4-5. 봇 읽기 범위 (§10 Q2)
 
 사실: 이력·답글·snapshot·sync·WS replay는 `joined_seq`로 자르지 않는다(§1-1 #8). 봇을 채널에 추가하면 봇 토큰으로 **참여 전 전체 이력**을 읽을 수 있다.
-- ★ 안 — **봇 행위자에 한해** 가시성 규칙 하나로 판정한다: 메시지 M은 `M.seq > joined_seq` **이고** (M이 최상위이거나 M의 루트 `seq > joined_seq`)일 때만 봇에게 보인다. 즉 **참여 전에 시작된 스레드는 통째로(루트·참여 후 답글 모두) 보이지 않는다.** 사람은 바뀌지 않는다.
+- ★ 채택(§10 Q2) — **봇 행위자에 한해** 가시성 규칙 하나로 판정한다: 메시지 M은 `M.seq > joined_seq` **이고** (M이 최상위이거나 M의 루트 `seq > joined_seq`)일 때만 봇에게 보인다. 즉 **참여 전에 시작된 스레드는 통째로(루트·참여 후 답글 모두) 보이지 않는다.** 사람은 바뀌지 않는다.
 - 적용 경로(전부 봇 행위자일 때만): ① 이력 ② 답글 조회 — 루트가 안 보이면 404(현행 `repliesResponseSchema`가 `root`를 필수로 요구하므로 숨김 루트 표현을 새로 만들지 않는다, `packages/shared/src/messages.ts`) ③ snapshot ④ sync ⑤ WS replay ⑥ **WS 실시간 팬아웃** — `message.created`·`message.updated`(답글 생성·삭제 때 루트 projection을 다시 보내는 `emitRoot` 포함, `apps/server/src/modules/messages/service.ts:59-61,78,97`)·`message.deleted` ⑦ 첨부 다운로드(`attachment` 메타 → 첨부의 메시지에 같은 규칙).
 - 근거(사실): 팬아웃의 `deliverable`은 세션과 `canRead`(멤버십)만 본다(`apps/server/src/modules/realtime/hub.ts:197-202`). 위 ⑥을 빼면 참여 후 답글 하나로 참여 전 루트 본문이 실시간으로 나간다(Codex 리뷰 P2).
 - 결과: owner가 참여 전 스레드에서 봇을 멘션해도 봇은 받지 못한다 → 새 최상위 메시지로 불러야 한다(§3-3에 안내 필요, 문구는 Q8).
@@ -184,7 +184,7 @@
 - 봇 멤버십은 기존 `conversation_members`(`conversation_id, user_id, joined_at, joined_seq, left_at`) 행으로 표현된다(`apps/server/migrations/0001_initial_schema.sql:80-89`).
 - 멘션은 기존 `message_mentions`(`apps/server/migrations/0001_initial_schema.sql:187-195`), 봇 구분은 기존 `users.kind`(`apps/server/migrations/0002_bots.sql:5-9`).
 - 역할은 기존 `workspace_members.role`(`apps/server/migrations/0001_initial_schema.sql:25-29`).
-- §10 Q1에서 "수치 상한"을 채택하면 상수 모듈 값 1개가 늘 뿐 스키마는 같다.
+- 수치 멤버십 상한은 두지 않는다(§10 Q6 결정). 상수 추가도 없다.
 
 ### 4-7. sync·change log
 - 봇 멤버십 추가·제거는 `conversation_changes`를 쓰지 않는다(봇 owner DM 생성과 같음, `apps/server/src/modules/bots/repo.ts:54-57` 주석). 사람 기기의 sync 계약은 바뀌지 않는다(추정 — 구현 레인이 `verify-formal-sync` 대상 파일을 건드리면 그 스킬로 재검사).
@@ -231,7 +231,7 @@
 - 백로그 안내(`_flush_backlog`, `integrations/hermes-plugin/ohmyslack/adapter.py:423-435`)는 대화 최상위에 글을 쓴다 → **채널에는 쓰지 않고** 홈 채널(DM)에 대화 구분과 함께 1회 보낸다(Jarvis 결정(★), 안내 문구 자체는 기존 `BACKLOG_NOTICE` `:44` 재사용, 대화 구분 표기는 구현 레인이 기존 문구 뒤에 대화 ID만 붙임 — 새 문구 필요 시 §10 Q8).
 
 ### 5-8. 멤버십 변화 처리
-- §4-3 N1 채택 시: `_consume`(`integrations/hermes-plugin/ohmyslack/adapter.py:272-289`)에 `membership.changed` 처리를 더한다. `joined` → `/me` 재조회·맵 갱신·그 대화 구독. `left` → 맵·구독 목록에서 제거.
+- §4-3 N1(채택): `_consume`(`integrations/hermes-plugin/ohmyslack/adapter.py:272-289`)에 `membership.changed` 처리를 더한다. `joined` → `/me` 재조회·맵 갱신·그 대화 구독. `left` → 맵·구독 목록에서 제거.
 - `error{code:'not_found', conversation_id}`도 같은 제거 처리(현재는 처리 없음).
 - `sync.required` 뒤 재구독은 캐시된 목록을 쓰므로(`integrations/hermes-plugin/ohmyslack/adapter.py:281-287`) 그 전에 `/me`를 다시 읽는다(Jarvis 결정(★), 경쟁 조건으로 남은 구독 방지).
 
@@ -255,7 +255,7 @@
 | S1 | owner 외 작성자 메시지는 **채널에서도** 세션 생성·지시 처리·응답 0. 봇을 멘션해도 같다 | 어댑터 `_is_owner_instruction`이 게이팅보다 먼저(§5-2) | `docs/decisions/ADR-001-hermes-agent-integration.md:73`, TM-BOT-04 `docs/08-security/THREAT_MODEL.md:213` |
 | S2 | 승인 명령은 owner·같은 스레드만. 채널에서도 FR-BOT-06 규칙 그대로 | 어댑터 | TM-BOT-06 `docs/08-security/THREAT_MODEL.md:215` |
 | S3 | 봇은 owner가 명시적으로 추가한 공개 채널에만 들어간다. 봇 토큰으로 참여·추가 경로 0 | 서버 `manage_bots`(owner 역할) + 봇 리스너 라우트 미등록 | `docs/03-trd/TRD.md:201-202`, `apps/server/src/modules/bots/routes.ts:130-133` |
-| S4 | 봇이 읽는 범위: ★ 참여 시점 `joined_seq` **이후** 메시지, 참여 전 시작된 스레드는 통째로 제외(§4-5, §10 Q2). REST·snapshot·sync·WS replay·**WS 실시간 팬아웃(루트 재전송 포함)**·첨부 모두 적용. 채택 전 현재 상태는 "참여 전 전체 이력 읽기 가능"(사실, §1-1 #8) | 서버 봇 읽기·전달 경로 7곳(§4-5) | 최소 권한. 토큰 탈취(TM-BOT-01, `docs/08-security/THREAT_MODEL.md:210`) 시 노출 범위 축소 |
+| S4 | 봇이 읽는 범위: ★ 참여 시점 `joined_seq` **이후** 메시지, 참여 전 시작된 스레드는 통째로 제외(§4-5, §10 Q2). REST·snapshot·sync·WS replay·**WS 실시간 팬아웃(루트 재전송 포함)**·첨부 모두 적용. 구현 전 현재 상태는 "참여 전 전체 이력 읽기 가능"(사실, §1-1 #8) | 서버 봇 읽기·전달 경로 7곳(§4-5) | 최소 권한. 토큰 탈취(TM-BOT-01, `docs/08-security/THREAT_MODEL.md:210`) 시 노출 범위 축소 |
 | S5 | 제거 후 접근 즉시 차단: REST는 매 요청 `assertAccess`(404), WS는 `membershipEnded` → 구독 삭제 + 팬아웃마다 `canRead` 재확인 | 서버(기존 경로 재사용) | `apps/server/src/modules/conversations/service.ts:52-61`, `apps/server/src/modules/realtime/hub.ts:197-206` |
 | S6 | 수치 판정 "5초 안에 구독 중단"은 FR-CONV-02와 같은 기준을 쓴다(새 수치 없음) | 서버 테스트 | `docs/02-prd/PRD.md:70` |
 | S7 | `author_kind`·`author_id`·`mention_user_ids`는 서버 결정값. 어댑터는 본문으로 작성자·멘션을 판정하지 않는다 | 서버 projection·어댑터 | `docs/03-trd/TRD.md:204`, `apps/server/src/modules/messages/repo.ts:35-37` |
@@ -273,7 +273,7 @@
 ### 7-1. 체커 제약 (사실, `tools/check-fr-coverage.ts`)
 - PRD FR 표는 5칸 행·첫 칸 `^FR-[A-Z]+-\d+$`이고 **`P0`만** 수집한다(`tools/check-fr-coverage.ts:14,67-79`).
 - DEV_DESIGN `### 6-2.` 첫 표의 머리는 `FR | 지정 테스트 이름 | 계층·파일 | 실행 | 필수 보조 증거 | 수동`과 정확히 같아야 하고, 행은 6칸·이름 칸 첫 백틱이 지정 테스트 제목이다(`tools/check-fr-coverage.ts:8,81-91,94-111`).
-- PRD P0 집합과 6-2 FR 집합은 양방향으로 같아야 한다(`tools/check-fr-coverage.ts:277-283`). → **P1 FR 행을 6-2에 넣으면 "6-2에만 있음"으로 실패한다.** 아래 7-3 표는 6-2 밖(이 스펙, 채택 시 DEV_DESIGN 새 절)에 둔다.
+- PRD P0 집합과 6-2 FR 집합은 양방향으로 같아야 한다(`tools/check-fr-coverage.ts:277-283`). → **P1 FR 행을 6-2에 넣으면 "6-2에만 있음"으로 실패한다.** 아래 7-3 표는 6-2 밖(이 스펙, 반영 후 DEV_DESIGN 6-6 절)에 둔다.
 - 지정 테스트는 `apps/server/test`·`apps/web/test`·`e2e`·`perf`·`tools/test`에서만 찾고 제목이 **완전 일치**해야 한다(`tools/check-fr-coverage.ts:12,190-205,248,274`). `integrations/hermes-plugin/tests/*.py`는 지정 테스트가 될 수 없다 → 어댑터 동작은 "수동" 열 `QA-FR-BOT-xx`(필드 `실행자·일시·기기·접속 경로·절차·기대 결과·실제 결과·판정·증거`, 판정 `PASS`, `tools/check-fr-coverage.ts:13,328-336`)로 판정한다. 기존 선례: `docs/04-dev-design/DEV_DESIGN.md:81,222,313,315`.
 - 같은 이름 2곳·skip/todo/only는 실패(`tools/check-fr-coverage.ts:16,285-308`).
 
@@ -284,11 +284,11 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 |---|---|---|---|---|
 | FR-BOT-03 (개정) | 봇은 owner와의 Jarvis DM에만 참여하고, 서버 이벤트는 작성자 종류를 서버 값으로 싣는다 (채널 참여는 FR-BOT-08–11) | P0 | (현행 유지) | U, ADR-001 §3-c |
 | FR-BOT-08 | owner가 웹에서 참여 중인 공개 채널에 봇을 추가·제거한다 | P1 | owner만 성공(일반 멤버 403·DB 변화 0); 비참여 채널 404; DM 대상 400; 비활성·사람·다른 워크스페이스 사용자 대상 404; 재추가 멱등; 봇 토큰으로 추가·제거 경로 0; 제거 후 봇의 이력·쓰기 404, 기존 구독 5초 안에 중단(FR-CONV-02와 같은 기준) | U, ADR-001 §3-c, 이 스펙 §4-1·§4-2 |
-| FR-BOT-09 | 채널에 추가된 봇은 참여 이후의 메시지만 읽고, 멤버십 변화를 연결 중에 통지받는다 | P1 | 봇의 이력·답글·snapshot·sync·WS replay·WS 실시간(`message.created`·`updated`·`deleted`, 루트 재전송 포함)·첨부에 참여 전 메시지와 참여 전 시작 스레드의 메시지 0, 참여 전 루트의 답글 조회 404(§10 Q2 ★ 채택 시); 사람 읽기 범위 변화 0; 추가·제거 때 봇 연결에 `membership.changed` 1회(§10 Q4 ★ 채택 시); `/api/bot/v1/me`에 대화 종류 포함 | 이 스펙 §4-3–4-5 |
+| FR-BOT-09 | 채널에 추가된 봇은 참여 이후의 메시지만 읽고, 멤버십 변화를 연결 중에 통지받는다 | P1 | 봇의 이력·답글·snapshot·sync·WS replay·WS 실시간(`message.created`·`updated`·`deleted`, 루트 재전송 포함)·첨부에 참여 전 메시지와 참여 전 시작 스레드의 메시지 0, 참여 전 루트의 답글 조회 404(§10 Q2 ★); 사람 읽기 범위 변화 0; 추가·제거 때 봇 연결에 `membership.changed` 1회(§10 Q4 ★); `/api/bot/v1/me`에 대화 종류 포함 | 이 스펙 §4-3–4-5 |
 | FR-BOT-10 | 채널에서 봇은 owner가 멘션한 메시지에만 반응하고, 스레드=세션 규칙을 따른다 | P1 | owner 멘션 메시지의 `mention_user_ids`에 봇 ID 포함(서버); 어댑터: 비owner 0·비멘션 0·`chat_type=channel`·최상위=새 세션·답글=같은 세션·채널 최상위 송신 0·채널 백로그 안내는 DM으로 → 어댑터 pytest + 수동 증거 `QA-FR-BOT-10` | ADR-001 §3-c·§3-d, 이 스펙 §5 |
 | FR-BOT-11 | 채널 헤더에서 owner가 봇을 추가·제거하는 웹 컨트롤 | P1 | owner·채널일 때만 보임(일반 멤버·DM·나간 채널 0); 추가 후 멘션 후보에 봇 배지와 함께 표시; 실패는 기존 오류 표시(`ErrorState`) 재사용; 문구는 COPY_GAPS 결정 후 | 이 스펙 §3-1·§3-4 |
 
-### 7-3. 테스트 매핑 (6-2와 같은 6열 머리 — 채택 시 DEV_DESIGN 새 절 "6-4. P1 선택 FR"로 옮김, §10 Q7)
+### 7-3. 테스트 매핑 (6-2와 같은 6열 머리 — DEV_DESIGN 새 절 "6-6. P1 선택 FR 매핑"으로 옮김, §10 Q7. 기존 6-4·6-5 절 번호를 다른 문서가 참조하므로 6-6으로 둠)
 
 | FR | 지정 테스트 이름 | 계층·파일 | 실행 | 필수 보조 증거 | 수동 |
 |---|---|---|---|---|---|
@@ -311,7 +311,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 
 | 레인 | 목적 | 쓰기 경로 | 선행 조건 | 규모 | max-turns 제안 |
 |---|---|---|---|---|---|
-| L0 문서 | §9 개정안 반영(PRD·TRD·ADR·DEV_DESIGN·THREAT_MODEL·런북), FR-BOT-08–11 행, DEV_DESIGN 6-4 절 | `docs/02-prd/PRD.md`, `docs/03-trd/TRD.md`, `docs/decisions/ADR-001-hermes-agent-integration.md`, `docs/04-dev-design/DEV_DESIGN.md`, `docs/08-security/THREAT_MODEL.md`, `docs/runbooks/HERMES_BOT.md`, `docs/07-ui-spec/COPY_GAPS.md` | §10 Q1–Q8 영환님 결정 | S | 30 |
+| L0 문서 | §9 개정안 반영(PRD·TRD·ADR·DEV_DESIGN·THREAT_MODEL·런북), FR-BOT-08–11 행, DEV_DESIGN 6-6 절(제안 당시 6-4) | `docs/02-prd/PRD.md`, `docs/03-trd/TRD.md`, `docs/decisions/ADR-001-hermes-agent-integration.md`, `docs/04-dev-design/DEV_DESIGN.md`, `docs/08-security/THREAT_MODEL.md`, `docs/runbooks/HERMES_BOT.md`, `docs/07-ui-spec/COPY_GAPS.md` | §10 Q1–Q8 영환님 결정 | S | 30 |
 | L1 서버 | `manage_bots` 판정, 봇 추가·제거 라우트, `membershipStarted` 이벤트·`membership.changed` 프레임, 봇 `/me` 확장, 봇 읽기 `joined_seq` 제한, 테스트(FR-BOT-08·09·10 + 접근 매트릭스) | `apps/server/src/modules/{conversations,bots,realtime,messages,sync}/**`, `packages/shared/src/{realtime,bots}.ts`, `apps/server/test/{bots,conversations}/**` | L0 머지 | L | 120 |
 | L2 어댑터 | 대화 종류 맵·`chat_type`, 멘션 게이팅·토큰 제거, 멤버십 프레임·`not_found` 처리, 채널 송신·백로그 규칙, pytest `test_channel.py` | `integrations/hermes-plugin/**` | L1 계약 확정(착수), L1 머지(머지). 배포·게이트웨이 재시작은 영환님(`docs/04-dev-design/DEV_DESIGN.md:81`) | M | 80 |
 | L3 웹 | DataSource `addBotToChannel`·`removeBotFromChannel`, 채널 헤더 봇 컨트롤·확인 Dialog, 컴포넌트 테스트(FR-BOT-11) | `apps/web/src/data/{index,http-source}.ts`, `apps/web/src/features/conversation-membership/**`, `apps/web/src/features/layout/AppShell.tsx`, `apps/web/src/ui/copy.ts`, `apps/web/test/conv-bots/**` | L1 머지 + **L2 배포 확인** + COPY_GAPS 문구 결정 | M | 60 |
@@ -322,7 +322,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 
 ---
 
-## 9. 원문 개정 제안표 (영환님 승인 후 L0이 반영)
+## 9. 원문 개정 제안표 (★ A 확정 2026-11-10 — L0 반영 완료, 코드 행 제외)
 
 ### 9-1. PRD FR-BOT-03 우선순위 정리
 
@@ -344,12 +344,12 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 | `docs/decisions/ADR-001-hermes-agent-integration.md:80` | "P1에서 owner가 채널에 봇을 추가하면 Mattermost처럼 멘션 게이팅(`mattermost/adapter.py:506-526`)" | "P1 FR FR-BOT-10: owner가 채널에 봇을 추가하면 서버 `mention_user_ids` 기반 멘션 게이팅(참고 패턴 `plugins/platforms/mattermost/adapter.py:506-526`, 실제 경로 정정)" |
 | `docs/decisions/ADR-001-hermes-agent-integration.md:176` | "멤버십 상한 + allowlist 이중 통제, 채널 참여는 P1" | "owner 명시 추가만 허용하는 멤버십 범위 + owner allowlist + 채널 멘션 게이팅, 채널 참여는 P1 FR(FR-BOT-08–11)" |
 | `docs/03-trd/TRD.md:95` | "공개 채널 참여·나가기. 나간 뒤 구독 즉시 해제" | 행 유지 + 새 행 "`POST /api/conversations/{id}/bots`, `DELETE /api/conversations/{id}/bots/{bot_user_id}` \| owner가 참여 중인 공개 채널에 봇 추가·제거(access `conversation`, action `manage_bots`). 제거 뒤 봇 구독 즉시 해제" |
-| `docs/03-trd/TRD.md:201` | "② owner가 웹에서 명시적으로 봇을 추가한 채널(P1)에만 참여합니다." | "② owner가 웹에서 명시적으로 봇을 추가한 공개 채널(P1 FR FR-BOT-08)에만 참여합니다. 수치 상한은 두지 않습니다(§10 Q6 결과에 따름). 채널에서 봇이 읽는 메시지는 참여 시점 `joined_seq` 이후입니다(§10 Q2 결과에 따름)." |
+| `docs/03-trd/TRD.md:201` | "② owner가 웹에서 명시적으로 봇을 추가한 채널(P1)에만 참여합니다." | "② owner가 웹에서 명시적으로 봇을 추가한 공개 채널(P1 FR FR-BOT-08)에만 참여합니다. 수치 상한은 두지 않습니다(§10 Q6 결정). 채널에서 봇이 읽는 메시지는 참여 시점 `joined_seq` 이후입니다(§10 Q2 결정)." |
 | `docs/03-trd/TRD.md:202` | "… `GET /api/bot/v1/me`, … 채널 join·멤버 추가 라우트는 없습니다." | "`GET /api/bot/v1/me`(`conversations[{id,kind}]`·`display_name` 추가) … 봇 토큰용 채널 join·멤버 추가 라우트는 없습니다." |
-| `docs/03-trd/TRD.md` §4 이벤트 표 | (없음) | `membership.changed {conversation_id, state}` — 영향받는 봇 연결에만(§10 Q4 결과에 따름) |
+| `docs/03-trd/TRD.md` §4 이벤트 표 | (없음) | `membership.changed {conversation_id, state}` — 영향받는 봇 연결에만(§10 Q4 결정) |
 | `docs/04-dev-design/DEV_DESIGN.md:133` | "P1 FR(기기 세션 목록·비공개 채널·일반 파일(FR-OPS-09)·검색·presence) 중 영환님이 고른 것" | "P1 FR(기기 세션 목록·비공개 채널·일반 파일(FR-OPS-09)·검색·presence·봇 채널 참여(FR-BOT-08–11)) 중 영환님이 고른 것" |
 | `docs/04-dev-design/DEV_DESIGN.md:117` | `conversation` 메타 예시 라우트 목록 | 예시에 `POST`·`DELETE /api/conversations/{id}/bots…` 추가 |
-| `docs/04-dev-design/DEV_DESIGN.md` §6 | (없음) | 새 절 "6-4. P1 선택 FR 매핑"(§7-3 표, 6-2와 같은 6열 머리) — §10 Q7 결과에 따름 |
+| `docs/04-dev-design/DEV_DESIGN.md` §6 | (없음) | 새 절 "6-4. P1 선택 FR 매핑"(§7-3 표, 6-2와 같은 6열 머리) — §10 Q7 결정. 반영 시 6-6으로 둠(기존 6-4·6-5 번호 보존) |
 | `docs/08-security/THREAT_MODEL.md:213` | "① 서버: 봇 멤버십은 owner와의 DM 1개(+owner가 지정한 채널)로 제한" | "① 서버: 봇 멤버십은 owner와의 DM 1개 + owner가 웹에서 명시적으로 추가한 공개 채널(P1 FR FR-BOT-08)로 제한 … ③-2 어댑터: 채널은 owner의 봇 멘션만(FR-BOT-10)" / 검증 열에 `FR-BOT-08`·`QA-FR-BOT-10` 추가 |
 | `docs/08-security/THREAT_MODEL.md:214` | "owner가 붙여넣은 외부 텍스트·링크·이미지 안의 지시(간접 인젝션)" | "… 지시(간접 인젝션). 채널에서 owner가 인용·전달한 다른 멤버 글 포함" |
 | `docs/runbooks/HERMES_BOT.md:107` | "채널이면 owner가 웹에서 봇 추가" | "채널이면 owner가 웹 채널 헤더에서 봇 추가(FR-BOT-11, 구현 후)" |
@@ -359,16 +359,16 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 
 ## 10. 결정 필요 사항
 
-### 10-1. 영환님 결정 (★ 추천 먼저)
+### 10-1. 영환님 결정 (★ 추천 먼저) — 2026-11-10 전부 ★ 채택
 
-1. **Q1 FR-BOT-03·채널 우선순위** — ★ A(§9-1): DM 전용 P0 + 채널 P1 FR 4개. 근거: 구현·테스트·ADR H1–H4 어디에도 채널이 없음(§1-2), G1 범위 변화 0.
-2. **Q2 봇 읽기 범위** — ★ 봇 행위자만 "참여 후 메시지 + 참여 후 시작된 스레드"로 제한(§4-5, 경로 7곳: REST 2·snapshot·sync·WS replay·WS 실시간·첨부). 대안: 사람과 같게 전체 이력. 근거: 최소 권한, 토큰 탈취 시 노출 축소(TM-BOT-01). 비용: 읽기·전달 경로 7곳 수정(L1 규모 L의 주원인), owner는 참여 전 스레드에서 봇을 부를 수 없음.
-3. **Q3 권한 판정 위치** — ★ `conversation` 메타 + `AccessAction 'manage_bots'`를 `assertAccess` 안에서 판정(역할 owner + 활성 멤버 + 채널). 대안: `admin` 메타 가드 + `assertAccess(…,'read')` 두 번 검사. 근거: B2 "assertAccess 하나로만"(`docs/04-dev-design/DEV_DESIGN.md:90`).
-4. **Q4 멤버십 추가 통지** — ★ N1 새 프레임 `membership.changed`(영향받는 봇 연결에만). 대안 N2 `sync.required` 재사용, N3 봇 WS 재연결. 근거: 의미가 명확하고 재연결 비용 0, 프레임 1종 추가(공유 스키마 변경).
-5. **Q5 채널 스레드 답글의 멘션** — ★ 채널에서는 **모든 메시지(답글 포함)에 멘션 필수**. 대안: 봇이 답한 스레드는 멘션 없이 이어짐(어댑터가 세션 루트 집합을 cursor 파일에 저장해야 함). 근거: 상태 없음·재시작 안전·다른 멤버와의 대화 중 오작동 0. 비용: owner가 답글마다 `@Jarvis`를 붙여야 함.
-6. **Q6 수치 멤버십 상한** — ★ 수치 상한 없음(owner 명시 추가만). 대안: 봇 채널 수 상한 N(새 상수 → 값 결정 필요). 근거: owner 1명·봇 1개, 정본에 수치 없음(`docs/03-trd/TRD.md:201`), 새 수치는 정본에서 정해야 함(`docs/04-dev-design/DEV_DESIGN.md:396`).
-7. **Q7 P1 FR 판정 방법** — ★ 단계 P2 v1에서 고른 P1 FR은 DEV_DESIGN 새 절 6-4(6-2와 같은 머리)에 두고, `check:fr-coverage`가 6-4를 "선택된 P1 FR" 집합으로 읽도록 확장(L0·L1 중 하나가 체커+자체 테스트 수정). 대안: 채택 시 P0로 승격해 6-2에 넣음. 근거: G2 "선택한 P1 FR의 테스트 매핑 추가·통과"(`docs/04-dev-design/DEV_DESIGN.md:133`)를 지금 체커는 판정하지 못함(P0만 수집).
-8. **Q8 웹 문구** — ★ COPY_GAPS에 항목 추가 후 결정(봇 추가 버튼, 제거 확인 Dialog 제목·본문·확인 버튼, 추가 실패). 대안: 기존 「채널 나가기」 Dialog 문구 구조를 따라 Jarvis가 초안. 근거: 문구는 정본에서만 정함(`docs/04-dev-design/DEV_DESIGN.md:396`).
+1. **Q1 FR-BOT-03·채널 우선순위** — **결정됨(2026-11-10, ★)** — ★ A(§9-1): DM 전용 P0 + 채널 P1 FR 4개. 근거: 구현·테스트·ADR H1–H4 어디에도 채널이 없음(§1-2), G1 범위 변화 0.
+2. **Q2 봇 읽기 범위** — **결정됨(2026-11-10, ★)** — ★ 봇 행위자만 "참여 후 메시지 + 참여 후 시작된 스레드"로 제한(§4-5, 경로 7곳: REST 2·snapshot·sync·WS replay·WS 실시간·첨부). 대안: 사람과 같게 전체 이력. 근거: 최소 권한, 토큰 탈취 시 노출 축소(TM-BOT-01). 비용: 읽기·전달 경로 7곳 수정(L1 규모 L의 주원인), owner는 참여 전 스레드에서 봇을 부를 수 없음.
+3. **Q3 권한 판정 위치** — **결정됨(2026-11-10, ★)** — ★ `conversation` 메타 + `AccessAction 'manage_bots'`를 `assertAccess` 안에서 판정(역할 owner + 활성 멤버 + 채널). 대안: `admin` 메타 가드 + `assertAccess(…,'read')` 두 번 검사. 근거: B2 "assertAccess 하나로만"(`docs/04-dev-design/DEV_DESIGN.md:90`).
+4. **Q4 멤버십 추가 통지** — **결정됨(2026-11-10, ★)** — ★ N1 새 프레임 `membership.changed`(영향받는 봇 연결에만). 대안 N2 `sync.required` 재사용, N3 봇 WS 재연결. 근거: 의미가 명확하고 재연결 비용 0, 프레임 1종 추가(공유 스키마 변경).
+5. **Q5 채널 스레드 답글의 멘션** — **결정됨(2026-11-10, ★)** — ★ 채널에서는 **모든 메시지(답글 포함)에 멘션 필수**. 대안: 봇이 답한 스레드는 멘션 없이 이어짐(어댑터가 세션 루트 집합을 cursor 파일에 저장해야 함). 근거: 상태 없음·재시작 안전·다른 멤버와의 대화 중 오작동 0. 비용: owner가 답글마다 `@Jarvis`를 붙여야 함.
+6. **Q6 수치 멤버십 상한** — **결정됨(2026-11-10, ★)** — ★ 수치 상한 없음(owner 명시 추가만). 대안: 봇 채널 수 상한 N(새 상수 → 값 결정 필요). 근거: owner 1명·봇 1개, 정본에 수치 없음(`docs/03-trd/TRD.md:201`), 새 수치는 정본에서 정해야 함(`docs/04-dev-design/DEV_DESIGN.md:396`).
+7. **Q7 P1 FR 판정 방법** — **결정됨(2026-11-10, ★)** — ★ 단계 P2 v1에서 고른 P1 FR은 DEV_DESIGN 새 절 6-4(6-2와 같은 머리)에 두고, `check:fr-coverage`가 6-4를 "선택된 P1 FR" 집합으로 읽도록 확장(L0·L1 중 하나가 체커+자체 테스트 수정). → 반영: 절 번호는 6-6, 체커 확장은 L1. 대안: 채택 시 P0로 승격해 6-2에 넣음. 근거: G2 "선택한 P1 FR의 테스트 매핑 추가·통과"(`docs/04-dev-design/DEV_DESIGN.md:133`)를 지금 체커는 판정하지 못함(P0만 수집).
+8. **Q8 웹 문구** — **결정됨(2026-11-10, ★)** — ★ COPY_GAPS에 항목 추가 후 결정(봇 추가 버튼, 제거 확인 Dialog 제목·본문·확인 버튼, 추가 실패). 대안: 기존 「채널 나가기」 Dialog 문구 구조를 따라 Jarvis가 초안. 근거: 문구는 정본에서만 정함(`docs/04-dev-design/DEV_DESIGN.md:396`).
 
 ### 10-2. Jarvis 결정(★) — 이 스펙에서 확정 (저위험, 이의 있으면 뒤집기 쉬움)
 1. 멘션 판정은 서버 `mention_user_ids`만, 본문 문자열 검색 없음(§5-2).
@@ -396,7 +396,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 ### 11-2. 추정
 - PRD:158 괄호는 ADR의 "P1"을 P0 행에 옮기며 생긴 표기 누락(§1-2).
 - (정정) 참여 전 루트에 참여 후 답글이 달리면 현행 서버는 답글과 함께 **루트 projection을 `message.updated`로 다시 보낸다**(사실, `apps/server/src/modules/messages/service.ts:59-61,78`). 그래서 Q2 ★는 "참여 전 시작 스레드 통째 제외"로 정했다(§4-5). 부분 공개(답글만 보이고 루트 숨김)는 답글 API 계약(`root` 필수) 변경이 필요해 택하지 않았다.
-- Q2를 채택하지 않으면, 봇이 추가된 직후 sync·WS replay(`after_cursor` = 봇 watermark)로 참여 직전 채널 변경이 들어올 수 있다. 참여 전 글에는 봇 멘션이 저장될 수 없으므로(멘션 필터가 활성 참여자만, `apps/server/src/modules/messages/repo.ts:35-37`) 게이팅으로 실행은 0이다.
+- (Q2 ★ 채택으로 해당 없음 — 기록용) Q2를 채택하지 않았다면, 봇이 추가된 직후 sync·WS replay(`after_cursor` = 봇 watermark)로 참여 직전 채널 변경이 들어올 수 있다. 참여 전 글에는 봇 멘션이 저장될 수 없으므로(멘션 필터가 활성 참여자만, `apps/server/src/modules/messages/repo.ts:35-37`) 게이팅으로 실행은 0이다.
 - 규모 S/M/L과 max-turns는 경험적 추정.
 
 ### 11-3. 확인 필요
@@ -406,4 +406,4 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 4. Hermes 런타임의 `group_sessions_per_user`·`thread_sessions_per_user` 설정값(§5-4).
 5. Hermes 에이전트 도구 중 ohmyslack 채널 이력을 직접 읽는 경로가 있는지(§6 잔여 위험).
 6. ~~`BotMe` 스키마 위치~~ → 해소(사실): `packages/shared/src/bots.ts:7-13`.
-7. ADR-001·TRD의 맨 "P1"이 단계인지 우선순위인지 — 원저자 의도(§1-2 D8). ★ A 채택 시 "P1 FR"로 통일되어 해소.
+7. ADR-001·TRD의 맨 "P1"이 단계인지 우선순위인지 — 원저자 의도(§1-2 D8). ★ A 채택(2026-11-10)으로 "P1 FR"로 통일되어 해소.

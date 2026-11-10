@@ -114,7 +114,7 @@ ohmyslack/
 | `public` | — | `POST /api/auth/login`, `POST /api/invites/accept`, `GET /api/healthz` | 응답에 대화·멤버 정보 0건. `invites/accept`는 `member` 역할만 생성(owner 생성 경로 없음 — BOOT-01) |
 | `account` | 대화 없음 또는 서버가 membership으로 필터 | `POST /api/auth/logout`, `GET /api/me`, `GET /api/sessions`, `GET /api/members`, `GET /api/conversations`, `GET /api/conversations/discover`, `POST /api/dms`, `GET /api/sync` | `/api/sync`: 비참여 대화의 변경이 payload에 0건(커서는 전진). `discover`: 미참여 공개 채널만, 메시지·멤버 정보 0건(PRD FR-CONV-04 예외는 이것뿐). `/api/conversations`: 나간·비참여 대화 0건 |
 | `admin` | — | `POST /api/invites`, `POST /api/admin/members/{user_id}/deactivate`, `POST /api/conversations` | 일반 멤버 403, DB 변화 0 |
-| `conversation` | 경로 `{id}`, 쿼리 `conversation_id`, 본문 `conversation_id` 중 선언한 위치 | `POST /api/conversations/{id}/join`·`DELETE …/membership`·`GET …/members`·`GET …/messages`·`POST …/messages`, `GET /api/sync/snapshot`, `PUT /api/read-state`, WS `conversation.subscribe` | 비참여자·나간 사용자 404·이벤트 0·데이터 변화 0, 비활성 401. `join`은 공개 채널 비참여자가 허용 대상(DM은 404) |
+| `conversation` | 경로 `{id}`, 쿼리 `conversation_id`, 본문 `conversation_id` 중 선언한 위치 | `POST /api/conversations/{id}/join`·`DELETE …/membership`·`POST …/bots`·`DELETE …/bots/{bot_user_id}`(action `manage_bots`, P1 FR FR-BOT-08)·`GET …/members`·`GET …/messages`·`POST …/messages`, `GET /api/sync/snapshot`, `PUT /api/read-state`, WS `conversation.subscribe` | 비참여자·나간 사용자 404·이벤트 0·데이터 변화 0, 비활성 401. `join`은 공개 채널 비참여자가 허용 대상(DM은 404) |
 | `message` | 메시지 ID·원문 ID → `messages.service`가 대화 해석 | `GET /api/messages/{root_id}/replies`, `PATCH /api/messages/{id}`, `DELETE /api/messages/{id}` | 비참여자 404, 참여 비작성자의 수정·삭제 403, 비활성 401 |
 | `attachment` (R3.3) | 첨부 ID → `attachments` 서비스가 첨부의 대화 해석 → `assertAccess` | `GET /api/attachments/{id}`(Range 지원, 정본: TRD §6-1). 업로드 `POST /api/attachments?conversation_id=`는 `conversation` 메타 | 비참여자 404, 비활성 401 |
 | `bot` (R3.3) | 봇 리스너 전용. Bearer 토큰 → 봇 계정, 대화 단위 동작은 같은 `assertAccess` | `/api/bot/v1/**` 전체와 WS `/api/bot/v1/ws`(목록 정본: TRD §5-2) | 봇은 참여 대화만(그 밖은 404·이벤트 0), 폐기·회전된 토큰 401, 봇 토큰으로 사람 API·사람 쿠키로 봇 API 401(FR-BOT-02·03) |
@@ -130,7 +130,7 @@ ohmyslack/
 |---|---|---|---|
 | **P0 준비** | 문서 4종 R3 채택, 저장소 골격·검사 도구, 테스트 DB 결정 | **G0(도구 smoke 게이트)**: ① PRD·TRD·개발설계서·디자인 레퍼런스 R3 최종안을 영환님이 채택 ② P0 FR ID 동결(이후 변경은 PRD 변경 이력 + 6-2 표 동시 수정, PRD §11 계약 1) ③ 빈 골격에서 `pnpm verify` 통과 — 이때 `check:fr-coverage`는 **진행 모드**라 P0 FR 전부 "미구현" 보고로 통과합니다(G0 당시 33개, R3.3 기준 42개) ④ 검사기 5종의 자체 테스트(위반·정상·실행 오류 fixture)가 Red→Green 확인 ⑤ 9절 ⚖️-1·2·3 결정 | 영환님(Jarvis 정리) |
 | **P1 MVP** | P0 FR 42개 전부(v1.3: BOT 6·MSG-10·CLIENT-05·OPS-05 추가) | **G1(완전 FR 게이트)**: ① `pnpm check:fr-coverage --mode=gate` 통과 — 42개 FR 각각 지정 테스트 1개가 발견·실행·통과, skip/todo 0, 필수 보조 증거 통과, 수동 증거 PASS(5-1) ② `BOOT-01` 운영 증거 PASS(PRD §7-7) ③ 커버리지 80% 이상(⚖️-6 범위) ④ Security 리뷰 미해결 Critical·High 0건 ⑤ FR-SYNC-01 측정 결과 기록 ⑥ FR-OPS-02 격리 복원 대조 통과 ⑦ FR-OPS-01 노출 경계 점검 통과 ⑧ PRD §9 파일럿 3개 업무일, 누출·유실·중복 0건 ⑨ Hermes 단계 H1–H3(ADR-001 §7) 테스트 증거와 `QA-FR-BOT-04`·`QA-FR-BOT-06` PASS | QA(검증) → Jarvis → 영환님 |
-| **P2 v1** | P1 FR(기기 세션 목록·비공개 채널·일반 파일(FR-OPS-09)·검색·presence) 중 영환님이 고른 것. 최소 첨부·Web Push는 R3.3에서 P1 MVP로 이동 | **G2**: 선택한 P1 FR의 테스트 매핑 추가·통과, 검색·파일은 권한 밖 결과 0건, G1 회귀 0건 | 동일 |
+| **P2 v1** | P1 FR(기기 세션 목록·비공개 채널·일반 파일(FR-OPS-09)·검색·presence·봇 채널 참여(FR-BOT-08–11)) 중 영환님이 고른 것. 최소 첨부·Web Push는 R3.3에서 P1 MVP로 이동 | **G2**: 선택한 P1 FR의 테스트 매핑 추가·통과, 검색·파일은 권한 밖 결과 0건, G1 회귀 0건 | 동일 |
 | **P3 Electron** | 웹 앱을 감싸는 데스크톱 셸 | **G3**: Electron 공식 보안 문서 기준 설정 확인 — `contextIsolation`·`sandbox` 켜짐, `nodeIntegration` 꺼짐, fuse `RunAsNode`·`EnableNodeOptionsEnvironmentVariable`·`EnableNodeCliInspectArguments` 꺼짐, `EnableEmbeddedAsarIntegrityValidation`·`OnlyLoadAppFromAsar` 켜짐. 확인은 **우리 패키지에만** REA `inspect_electron_fuses`로 합니다(CLEANROOM 6절). 우리 패키지 대상 CLEANROOM 5절 검사 0건 | 동일 + Security |
 | **P4 선택** | 공식 export 파일 1회 가져오기 | **G4**: 별도 승인(약관 확인 포함) 뒤에만 착수합니다. 실시간 브리지·Slack API는 대상이 아닙니다 | 영환님 |
 
@@ -366,6 +366,21 @@ PRD:89는 "DB 저장 → 다른 기기 **표시**"를 요구합니다. 수신 �
 - **개인정보:** 상관에 쓰는 메시지 ID는 메모리에서만 쓰고 디스크·로그·계측에 남기지 않습니다. 결과로는 구간값·p50/p95·표본 수만 남깁니다(PRD §10, PRD:171).
 - **휴대폰:** 시계가 달라 (b)를 같은 방식으로 재지 않습니다. iPhone은 (a)와 QA 체감 기록만 남기고, (a) p95 + 맥 (b)의 렌더 구간 p95를 더한 값은 **추정치**로만 표기합니다(두 p95의 합은 전체 p95의 보장값이 아님).
 
+### 6-6. P1 선택 FR 매핑 (단계 P2 v1, G2 입력)
+
+단계 P2 v1에서 고른 P1 FR의 지정 테스트 표입니다(BOT_CHANNEL_SPEC §7-3·§10-1 Q7 ★, 2026-11-10 영환님 결정). 6-2는 PRD P0 집합과 양방향으로 같아야 하므로(`tools/check-fr-coverage.ts`) P1 FR 행은 6-2에 넣지 않고 이 절에 둡니다. 기존 6-4·6-5 절 번호는 다른 문서가 참조하므로 바꾸지 않고 이 절을 6-6으로 둡니다.
+
+**표 형식 계약:** 6-2와 같은 6열(FR / 지정 테스트 이름 / 계층·파일 / 실행 / 필수 보조 증거 / 수동) 머리와 같은 셀 규칙을 씁니다. 현재 `check:fr-coverage`는 이 절을 읽지 않습니다. 이 절을 "선택된 P1 FR" 집합으로 읽는 체커 확장과 자체 테스트는 구현 레인(L1)이 같은 PR에서 합니다. 이름을 다듬으면 이 표와 테스트 제목을 같은 PR에서 맞춥니다.
+
+| FR | 지정 테스트 이름 | 계층·파일 | 실행 | 필수 보조 증거 | 수동 |
+|---|---|---|---|---|---|
+| FR-BOT-08 | `FR-BOT-08 owner만 참여 중인 공개 채널에 활성 봇을 추가·제거하고 일반 멤버·비참여자·DM·사람 대상 요청은 거부되며 제거 후 봇 이력·쓰기는 404이고 기존 구독은 끊긴다` | 통합 `apps/server/test/bots/bot-channel-membership.int.test.ts` | PR | 통합 `apps/server/test/conversations/access-matrix.int.test.ts`: 새 라우트 2개 × {owner, 일반 멤버, 비참여자, 봇 토큰} | — |
+| FR-BOT-09 | `FR-BOT-09 채널에 추가된 봇은 참여 이후 메시지만 이력·답글·snapshot·sync·WS replay·WS 실시간·첨부로 받고 참여 전 루트에 달린 새 답글과 루트 재전송도 받지 않으며 추가·제거 때 봇 연결에 멤버십 변화 프레임이 한 번 온다` | 통합 `apps/server/test/bots/bot-channel-scope.int.test.ts` | PR | 단위 `apps/server/test/bots/bots.unit.test.ts`: `/me` 대화 종류 projection | — |
+| FR-BOT-10 | `FR-BOT-10 채널에서 owner가 봇을 멘션하면 봇이 받는 message.created의 mention_user_ids에 봇 ID가 있고 멘션 없는 글과 비참여 봇에는 없다` | 통합 `apps/server/test/bots/bot-channel-mention.int.test.ts` | PR | — | `QA-FR-BOT-10`(어댑터 pytest `integrations/hermes-plugin/tests/test_channel.py` BOT_CHANNEL_SPEC §5-9 케이스 1–8 결과 첨부 + 실기 채널 멘션 왕복 1회) |
+| FR-BOT-11 | `FR-BOT-11 채널 헤더 봇 컨트롤은 owner에게만 보이고 봇을 추가하면 멘션 후보에 봇 배지와 함께 나타난다` | 컴포넌트 `apps/web/test/conv-bots/bot-channel-control.test.tsx` | PR | — | — |
+
+- FR-BOT-03 지정 테스트(6-2)는 바꾸지 않습니다.
+
 ## 7. 위험
 
 | ID | 위험 | 영향 | 대응 | 상태 |
@@ -436,6 +451,7 @@ PRD:89는 "DB 저장 → 다른 기기 **표시**"를 요구합니다. 수신 �
 | R3 최종안 | 2026-11-07 | R2 Must-fix 13건 반영(거절 0). PRD v1.2·TRD R3 기준으로 6-2 전 행 재작성, 전역 커서 흐름, 접근 메타 레지스트리, `check:cleanroom` 종료 코드 분기, `check:fr-coverage` 진행/판정 모드, `check:no-persist-cache` 정의, 필수 보조 증거 열, 독자 에셋 W-04b, BOOT-01, TR-SEC 보조 표, FR-SYNC-01 같은 시계 표시 측정 추가 |
 | R3.2 (NC-01) | 2026-11-07 | THREAT_MODEL NC-01·TRD R3.2 반영: 6-3을 `TR-SEC-01`–`12` 5열 표로 바꾸고(자체 지정 02·06·11, 나머지 `→ FR` 참조), 5-1 `check:fr-coverage` 입력에 6-3 추가 |
 | R3.3 (ADR-001) | 2026-11-08 | ADR-001 D-1–D-7 ★ 채택 반영: 모듈 bots·attachments·push, 경계 규칙 B9·B10, access 메타 `attachment`·`bot`, G1 P0 42개·Hermes 증거, 6-2 9행(FR-BOT-01–06·FR-MSG-10·FR-OPS-05·FR-CLIENT-05)·6-3 3행(TR-SEC-13–15, `check:fr-coverage` ID 집합 15), WBS W-18–W-24, R-12 |
+| R3.4 (BOT_CHANNEL_SPEC) | 2026-11-10 | 봇 채널 참여 P1 FR(영환님 결정, BOT_CHANNEL_SPEC §10-1 Q1–Q8 ★ 채택): 2-4 `conversation` 메타 예시에 봇 추가·제거 라우트, 단계 P2 v1 후보에 FR-BOT-08–11, 새 절 6-6 P1 선택 FR 매핑(4행). 6-2·6-3·P0 42개 불변 |
 
 ### R3.1 Jarvis 정합 (2026-11-07)
 - §5-1 `pnpm -r test -- --coverage` → `pnpm -r test --coverage` (pnpm 10.30.2는 `--`를 vitest에 넘겨 커버리지가 꺼짐, G0 레인 실측).
