@@ -84,7 +84,8 @@ describe('미지 작성자 이름 재조회(W-10k A)', () => {
     for (let i = 0; i < 6; i += 1) await flush();
     // 대화 멤버 실패 → /api/members 대체 1회, 그래도 없으면 멈춘다.
     expect(memberCalls(server.log) - base).toBe(2);
-    expect(ds.getSnapshot().messages.find((m) => m.id === message(1).id)?.author).toBe('');
+    // 이름 조회(`/api/users/names`, 가짜 서버 404)도 실패 → 빈 이름 대신 G-51 대체 이름.
+    expect(ds.getSnapshot().messages.find((m) => m.id === message(1).id)?.author).toBe('알 수 없는 사용자');
     // 같은 미지 ID의 메시지가 또 와도 다시 부르지 않는다.
     server.socket.push({ type: 'message.created', change_id: 2, conversation_id: CONV, message: message(2, { author_id: NEWBIE }) });
     for (let i = 0; i < 6; i += 1) await flush();

@@ -29,6 +29,8 @@ import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } 
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
 import { createRealtimeClient, type SocketLike } from './realtime.js';
 import { probeMark } from '../measure/hook.js';
+import { AUTHOR_NAME_COPY } from '../ui/copy.js';
+import { lookupUserNames } from './user-names.js';
 
 export interface HttpDataSourceDeps {
   readonly fetch: FetchLike;
@@ -217,22 +219,56 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     emit();
   };
 
-  const fetchNames = async (conversationId: string) => {
-    let members: readonly { readonly id: string; readonly display_name: string }[];
-    try {
-      members = (await api.get<ConversationMembersResponse>(`/api/conversations/${encodeURIComponent(conversationId)}/members`)).members;
-    } catch (e) {
-      if (!(e instanceof HttpStatusError)) throw e;
-      members = (await api.get<MembersResponse>('/api/members')).members;
-    }
+  /**
+   * 멤버 조회에도 없던 ID는 `GET /api/users/names`(비활성 포함)로 찾고, 그래도 없으면 「알 수 없는 사용자」로 굳힌다
+   * — 조회가 끝난 뒤 빈 이름 0(G-50·G-51). 나중에 멤버 조회로 실제 이름이 오면 덮어쓴다.
+   */
+  const settleNames = async (ids: readonly string[]) => {
+    const found = await lookupUserNames(api, ids.filter((id) => !names.has(id)));
     if (ended) return;
-    names = new Map([...names, ...members.map((m) => [m.id, m.display_name] as const)]);
-    refreshNames();
+    const rest = ids.filter((id) => !names.has(id) && !found.has(id));
+    names = new Map([...names, ...found, ...rest.map((id) => [id, AUTHOR_NAME_COPY.unknown] as const)]);
+  };
+
+  const fetchNames = async (conversationId: string, ids: readonly string[]) => {
+    try {
+      let members: readonly { readonly id: string; readonly display_name: string }[];
+      try {
+        members = (await api.get<ConversationMembersResponse>(`/api/conversations/${encodeURIComponent(conversationId)}/members`)).members;
+      } catch (e) {
+        if (!(e instanceof HttpStatusError)) throw e;
+        members = (await api.get<MembersResponse>('/api/members')).members;
+      }
+      if (ended) return;
+      names = new Map([...names, ...members.map((m) => [m.id, m.display_name] as const)]);
+    } finally {
+      if (!ended) {
+        await settleNames(ids);
+        if (!ended) refreshNames();
+      }
+    }
   };
 
   /** 처음 보는 author_id면 그 대화 멤버를 1회 in-flight로 다시 읽는다(초기 이력·sync·WS·답글 공통). */
   /** 재조회 진행 중에 발견한 다른 미지 ID(대화별). 응답 뒤에도 이름이 없으면 1회 후속 조회한다(Codex r1 P2). */
   const waitingAuthors = new Map<string, ReadonlySet<string>>();
+
+  /** 남은 ID는 한 번에 묶는다 — 후속 조회 1회가 모두를 시도한 것으로 친다. */
+  const startNameFetch = (conv: string, ids: readonly string[]) => {
+    ids.forEach((id) => triedAuthors.add(id));
+    const run = fetchNames(conv, ids)
+      .catch((e: unknown) => {
+        if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
+      })
+      .finally(() => {
+        authorFetches.delete(conv);
+        const waiting = [...(waitingAuthors.get(conv) ?? [])].filter((w) => !names.has(w) && !triedAuthors.has(w));
+        waitingAuthors.delete(conv);
+        if (waiting.length === 0 || ended) return;
+        startNameFetch(conv, waiting);
+      });
+    authorFetches.set(conv, run);
+  };
 
   const noteAuthor = (view: MessageView) => {
     const id = view.author_id;
@@ -242,22 +278,22 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       waitingAuthors.set(conv, new Set([...(waitingAuthors.get(conv) ?? []), id]));
       return;
     }
-    triedAuthors.add(id);
-    const run = fetchNames(conv)
-      .catch((e: unknown) => {
-        if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
-      })
-      .finally(() => {
-        authorFetches.delete(conv);
-        const waiting = [...(waitingAuthors.get(conv) ?? [])].filter((w) => !names.has(w) && !triedAuthors.has(w));
-        waitingAuthors.delete(conv);
-        const next = waiting[0];
-        if (next === undefined || ended) return;
-        // 남은 ID는 한 번에 묶는다 — 후속 조회 1회가 모두를 시도한 것으로 친다.
-        waiting.slice(1).forEach((w) => triedAuthors.add(w));
-        noteAuthor({ ...view, author_id: next });
-      });
-    authorFetches.set(conv, run);
+    startNameFetch(conv, [id]);
+  };
+
+  /** DM 상대가 비활성이면 멤버 조회(활성만)에 없다 — 목록을 받은 뒤 이름 없는 상대만 한 번 찾는다(G-50). */
+  const notePeers = () => {
+    const peers = summaries.flatMap((c) =>
+      c.peer_user_id !== null && c.name === null && !names.has(c.peer_user_id) && !triedAuthors.has(c.peer_user_id) ? [c.peer_user_id] : [],
+    );
+    if (peers.length === 0) return;
+    peers.forEach((id) => triedAuthors.add(id));
+    void settleNames(peers).then(
+      () => {
+        if (!ended) refreshNames();
+      },
+      () => undefined,
+    );
   };
 
   const foldView = (changeId: number, view: MessageView) => {
@@ -574,6 +610,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     summaries = all;
     spaces = withLeft(all.map((c) => toSpace(c, names, reads)));
     listState = 'ready';
+    notePeers();
     syncBackground();
     retryDeferredThreadReads();
     return all;
