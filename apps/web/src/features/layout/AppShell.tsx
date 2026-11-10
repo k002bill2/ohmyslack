@@ -10,7 +10,7 @@ import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '..
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
-import { BotChannelControl, canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useMentionCandidates, type BotChannelControlProps } from '../conversation-membership';
+import { BotChannelControl, canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useConversationMembers, type BotChannelControlProps } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
@@ -438,12 +438,14 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   );
   // FR-BOT-11: 봇 추가·제거 성공 → 멤버 재조회(멤버 수·멘션 후보·컨트롤 상태가 같은 목록을 쓴다).
   const [memberRevision, bumpMembers] = useReducer((n: number) => n + 1, 0);
-  const mentionCandidates = useMentionCandidates(dataSource, space?.id ?? null, space !== undefined && space.left !== true, memberRevision);
+  const conversationMembers = useConversationMembers(dataSource, space?.id ?? null, space !== undefined && space.left !== true, memberRevision);
+  const mentionCandidates = conversationMembers.candidates;
   const manageBots = canManageChannelBots(snap.account, space) && dataSource.addBotToChannel !== undefined && dataSource.removeBotFromChannel !== undefined;
   const activeBots = useActiveBots(dataSource, manageBots);
   const memberIds = useMemo(() => new Set((mentionCandidates ?? []).map((c) => c.id)), [mentionCandidates]);
   const botControl: BotChannelControlProps | undefined =
-    !manageBots || space === undefined || mentionCandidates === undefined
+    // 멤버 조회 실패를 「봇 미참여」로 읽지 않는다 — 2xx로 확인한 목록일 때만 보인다(Codex L3 P2).
+    !manageBots || space === undefined || !conversationMembers.confirmed
       ? undefined
       : {
           bots: activeBots,

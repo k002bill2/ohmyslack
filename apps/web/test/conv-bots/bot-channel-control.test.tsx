@@ -126,6 +126,19 @@ describe('FR-BOT-11 채널 헤더 봇 컨트롤', () => {
   });
 });
 
+describe('Codex L3 P2 회귀', () => {
+  it('멤버 조회가 실패하면 봇이 이미 있어도 「봇 추가」로 오인하지 않고 컨트롤을 숨긴다', async () => {
+    const w = fakeBotWorld('owner');
+    w.members.get('c1')?.add(BOT.id);
+    const ds = { ...w.ds, listConversationMembers: () => Promise.resolve({ ok: false, status: 503 } as const) };
+    render(<AppShell dataSource={ds} />);
+    await settle();
+    await openSpace('general');
+    expect(addButton()).toBeNull();
+    expect(removeButton()).toBeNull();
+  });
+});
+
 describe('COPY_GAPS G-43–47(★ Jarvis 초안 2026-11-10) — 정본 문구 리터럴 비교', () => {
   it('상수가 확정안과 같다', () => {
     expect(BOT_CHANNEL_COPY.add('Jarvis')).toBe('봇 추가: Jarvis');
