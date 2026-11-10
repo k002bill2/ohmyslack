@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dragNav, dragThread, navMax, threadMax } from '../../src/features/layout/split-math.js';
 import { AppShell } from '../../src/features/layout/AppShell.js';
+import { clampToRoom } from '../../src/features/layout/useSplit.js';
 import { memory } from '../helpers/fixtures.js';
 import { installViewport } from '../helpers/viewport.js';
 
@@ -104,5 +105,41 @@ describe('셸 통합', () => {
     expect(shell()?.style.getPropertyValue('--thread-w')).not.toBe('');
     fireEvent.doubleClick(sep);
     expect(shell()?.style.getPropertyValue('--thread-w')).toBe('');
+  });
+});
+
+describe('공간이 줄면 사용자 폭을 다시 제한(Codex r1 P2)', () => {
+  const base = { navW: 300, navCollapsed: false, threadW: 560 };
+
+  it('창이 1120 안쪽(1096)으로 줄면 스레드 560 → 상한(1096−24−480−300 = 292 → 하한 320), 내비도 상한으로', () => {
+    const next = clampToRoom(base, { inner: 1096, nav: 300, thread: 560 });
+    expect(next.threadW).toBe(320);
+    // 내비 상한 = min(360, 1096 − 12 − 480 − (320 + 12)) = 272
+    expect(next.navW).toBe(272);
+  });
+
+  it('공간이 충분하면 같은 객체를 돌려준다(효과 루프 없음)', () => {
+    expect(clampToRoom(base, { inner: 1600, nav: 300, thread: 560 })).toBe(base);
+  });
+
+  it('스레드가 닫혀 있으면 스레드 폭은 그대로 두고 내비만 본다', () => {
+    const next = clampToRoom(base, { inner: 1600, nav: 300, thread: null });
+    expect(next).toBe(base);
+  });
+
+  it('셸 통합: 창 resize 때 넓혀 둔 스레드 폭을 새 상한으로 줄인다', async () => {
+    await wide(true);
+    // jsdom엔 레이아웃이 없다 — 셸 안쪽 폭만 심는다(내비·스레드 실측 폭은 0).
+    let inner = 1416;
+    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
+    const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    sep.focus();
+    // ← 한 칸 16px씩 넓힌다 → 상한 min(560, 1416 − 24 − 480 − 0) = 560에 닿는다.
+    for (let i = 0; i < 20; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('560px');
+    inner = 1000;
+    fireEvent(window, new Event('resize'));
+    // 새 상한 = min(560, 1000 − 24 − 480 − 0) = 496
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('496px');
   });
 });
