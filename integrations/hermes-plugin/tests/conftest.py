@@ -20,6 +20,8 @@ BOT_ID = str(uuid.UUID(int=1))
 OWNER_ID = str(uuid.UUID(int=2))
 OTHER_ID = str(uuid.UUID(int=3))
 DM_ID = str(uuid.UUID(int=100))
+CHANNEL_ID = str(uuid.UUID(int=200))
+BOT_NAME = "Jarvis"
 
 
 @pytest.fixture(autouse=True)
@@ -44,13 +46,14 @@ def iso(epoch: float) -> str:
 
 
 def make_message(*, author: str = OWNER_ID, body: str = "hello", conv: str = DM_ID,
-                 thread_root_id: Optional[str] = None, age: float = 0.0, mid: Optional[str] = None) -> dict:
+                 thread_root_id: Optional[str] = None, age: float = 0.0, mid: Optional[str] = None,
+                 mentions: Optional[list[str]] = None) -> dict:
     import time
     return {
         "id": mid or str(uuid.uuid4()), "conversation_id": conv, "seq": 0, "author_id": author,
         "author_kind": "bot" if author == BOT_ID else "human", "client_message_id": str(uuid.uuid4()),
         "thread_root_id": thread_root_id, "body": body, "created_at": iso(time.time() - age),
-        "edited_at": None, "deleted_at": None, "mention_user_ids": [], "root_reply_count": None,
+        "edited_at": None, "deleted_at": None, "mention_user_ids": list(mentions or []), "root_reply_count": None,
         "attachments": [],
     }
 
@@ -77,6 +80,9 @@ class FakeBotServer:
         self.sockets: list[web.WebSocketResponse] = []
         self.ws_connects = 0
         self.subscribes = 0
+        self.subscribed: list[tuple[str, int]] = []  # (conversation_id, after_cursor) 구독 요청 순서대로
+        self.conversations: Optional[list[dict]] = [{"id": DM_ID, "kind": "dm"}]  # /me.conversations(BOT_CHANNEL_SPEC §4-4)
+        self.display_name = BOT_NAME
         self.uploads: list[dict] = []  # 업로드 요청 기록(content_type·conversation_id·size·status)
         self.upload_status: list[int] = []  # 다음 업로드 응답 상태를 순서대로 강제(예: [429], [413])
         self.blobs: dict[str, tuple[str, bytes]] = {}  # 다운로드용 첨부 id → (mime, bytes)
@@ -99,6 +105,12 @@ class FakeBotServer:
                 await ws.send_json({"type": "message.created", "conversation_id": conv, "change_id": cid,
                                     "message": message})
 
+    async def send_frame(self, frame: dict) -> None:
+        """서버 프레임(membership.changed·error 등)을 모든 연결에 보낸다."""
+        for ws in list(self.sockets):
+            if not ws.closed:
+                await ws.send_json(frame)
+
     async def close_all(self, code: int, reason: bytes = b"") -> None:
         for ws in list(self.sockets):
             await ws.close(code=code, message=reason)
@@ -117,7 +129,11 @@ class FakeBotServer:
         self._log(request)
         if self.me_status != 200:
             return web.json_response({"error": "unauthorized"}, status=self.me_status)
-        return web.json_response({"id": BOT_ID, "owner_user_id": OWNER_ID, "conversation_ids": [DM_ID]})
+        if self.conversations is None:  # 구 서버 모양(conversations·display_name 없음)
+            return web.json_response({"id": BOT_ID, "owner_user_id": OWNER_ID, "conversation_ids": [DM_ID]})
+        return web.json_response({"id": BOT_ID, "owner_user_id": OWNER_ID, "display_name": self.display_name,
+                                  "conversation_ids": [c["id"] for c in self.conversations],
+                                  "conversations": list(self.conversations)})
 
     async def sync(self, request):
         self._log(request)
@@ -210,6 +226,7 @@ class FakeBotServer:
             if frame.get("type") == "conversation.subscribe":
                 self.subscribes += 1
                 after = frame["after_cursor"]
+                self.subscribed.append((frame["conversation_id"], after))
                 for cid, conv, m in [c for c in self.changes if c[0] > after and c[1] == frame["conversation_id"]]:
                     await ws.send_json({"type": "message.created", "conversation_id": conv, "change_id": cid, "message": m})
                 await ws.send_json({"type": "conversation.subscribed", "conversation_id": frame["conversation_id"],
