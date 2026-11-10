@@ -57,6 +57,9 @@ function memoryMembers(auth: MemoryAuthStore): Fixture {
         auth.users.set(member.id, { ...member, kind: 'human', status: 'active', role: 'member' });
         return { ok: true };
       },
+      async findUserNames() {
+        return [];
+      },
       async listActiveMembers() {
         return [...auth.users.values()]
           .filter((u) => u.status === 'active')

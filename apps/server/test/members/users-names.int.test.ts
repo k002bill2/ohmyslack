@@ -38,14 +38,14 @@ describe('GET /api/users/names', () => {
   it('없는 ID·워크스페이스 밖 사용자는 응답에서 빠질 뿐 200이고, 중복·대소문자 차이는 한 번만 돌려준다', async () => {
     const outsider = randomUUID();
     await ctx.schema.pool.query(
-      "INSERT INTO users (id, email_norm, display_name, password_hash, status) VALUES ($1, 'outsider@example.test', 'outsider', NULL, 'active')",
+      "INSERT INTO users (id, email_norm, display_name, password_hash, status) VALUES ($1, 'outsider@example.test', 'outsider', 'x', 'active')",
       [outsider],
     );
     const otherWs = randomUUID();
     const foreign = randomUUID();
     await ctx.schema.pool.query("INSERT INTO workspaces (id, name, created_at) VALUES ($1, 'Other', now())", [otherWs]);
     await ctx.schema.pool.query(
-      "INSERT INTO users (id, email_norm, display_name, password_hash, status) VALUES ($1, 'foreign@example.test', 'foreign', NULL, 'active')",
+      "INSERT INTO users (id, email_norm, display_name, password_hash, status) VALUES ($1, 'foreign@example.test', 'foreign', 'x', 'active')",
       [foreign],
     );
     await ctx.schema.pool.query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')", [otherWs, foreign]);

@@ -34,3 +34,25 @@ export const membersResponseSchema = z.object({
 });
 
 export type MembersResponse = z.infer<typeof membersResponseSchema>;
+
+/** `GET /api/users/names?ids=` 상한(정본: TRD §3). 한 요청에 쉼표로 구분한 UUID 최대 100개. */
+export const USER_NAMES_MAX_IDS = 100;
+
+/**
+ * `GET /api/users/names` 응답: 같은 워크스페이스 사용자의 표시 이름(비활성 포함). 이메일·역할·세션 정보는 싣지 않는다.
+ * 없는 ID·범위 밖 ID는 응답에서 빠질 뿐이다(존재 여부를 응답 코드로 구분하지 않는다).
+ */
+export const userNamesResponseSchema = z.object({
+  users: z.array(
+    z
+      .object({
+        id: z.uuid(),
+        display_name: z.string(),
+        status: z.enum(['active', 'disabled']),
+        kind: z.enum(['human', 'bot']),
+      })
+      .strict(),
+  ),
+});
+
+export type UserNamesResponse = z.infer<typeof userNamesResponseSchema>;

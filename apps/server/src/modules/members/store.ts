@@ -20,6 +20,14 @@ export interface MemberSummary {
   readonly kind: 'human' | 'bot';
 }
 
+/** 이름 조회 결과(`GET /api/users/names`). 이메일·역할·세션 정보는 담지 않는다. */
+export interface UserName {
+  readonly id: string;
+  readonly displayName: string;
+  readonly status: 'active' | 'disabled';
+  readonly kind: 'human' | 'bot';
+}
+
 /** 수락 실패 사유는 응답에서 구분하지 않는다(S3·NC-20). 저장소도 실패를 하나로만 알린다. */
 export type AcceptResult = { readonly ok: true } | { readonly ok: false };
 
@@ -39,6 +47,11 @@ export interface MembersStore {
    */
   acceptInvite(tokenHash: string, now: Date, member: NewMember): Promise<AcceptResult>;
   listActiveMembers(): Promise<readonly MemberSummary[]>;
+  /**
+   * 요청자(viewerId)와 같은 워크스페이스에 속한 사용자 중 ids에 해당하는 이름(비활성 포함).
+   * 없는 ID·워크스페이스 밖 ID는 결과에서 빠진다.
+   */
+  findUserNames(viewerId: string, ids: readonly string[]): Promise<readonly UserName[]>;
   /**
    * actor(활성 owner)가 target을 비활성화한다: `users.status=disabled` + target 세션 전부 revoke(한 트랜잭션).
    * 활성 owner가 0명이 되는 변경은 `last_owner`로 거부하고 DB를 바꾸지 않는다(S10).
