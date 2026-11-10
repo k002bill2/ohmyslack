@@ -131,14 +131,27 @@ async function visibleOnly<T extends { readonly id: string }>(deps: BotRouteDeps
   return items.filter((m) => visible.has(m.id));
 }
 
+/**
+ * 숨김 원문은 항상 seq ≤ joined_seq인 앞부분이다(이력은 원문만). after_seq 방향은 숨김만 있는 페이지를 서버가 건너뛰고(Codex P2),
+ * 그 밖의 방향에서 거른 결과가 비면 더 오래된 쪽도 전부 숨김이므로 has_more=false로 끝낸다.
+ */
 async function botHistory(deps: BotRouteDeps, request: FastifyRequest): Promise<HistoryResponse> {
-  const page = await historyOf(deps.messages, pathId(request), request.query);
-  return { ...page, messages: await visibleOnly(deps, requireBot(request).botUserId, page.messages) };
+  const botId = requireBot(request).botUserId;
+  const conversationId = pathId(request);
+  let query = request.query as Record<string, unknown>;
+  for (;;) {
+    const page = await historyOf(deps.messages, conversationId, query);
+    const messages = await visibleOnly(deps, botId, page.messages);
+    const last = page.messages.at(-1);
+    if (messages.length > 0 || !page.has_more || last === undefined) return { ...page, messages };
+    if (query.after_seq === undefined) return { messages: [], has_more: false };
+    query = { ...query, after_seq: String(last.seq) };
+  }
 }
 
 /** 루트가 봇에게 보이지 않으면(참여 전 시작 스레드) 404 — 숨김 루트 표현을 새로 만들지 않는다. */
 async function botReplies(deps: BotRouteDeps, request: FastifyRequest): Promise<RepliesResponse> {
-  const rootId = pathId(request);
+  const rootId = pathId(request).toLowerCase();
   const botId = requireBot(request).botUserId;
   if (!(await deps.bots.visibleMessageIds(botId, [rootId])).has(rootId)) throw new HttpError(404, 'not_found');
   return repliesOf(deps.messages, rootId, request.query);

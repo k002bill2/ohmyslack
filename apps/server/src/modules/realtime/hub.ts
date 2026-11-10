@@ -303,6 +303,8 @@ export function createHub(deps: HubDeps): Hub {
       if (!(await replayStillValid(conn, conversationId, sub))) return false;
       const inConv = page.changes.filter((c) => c.message.conversationId === conversationId);
       const visible = deps.botScope === undefined ? undefined : await deps.botScope.visibleMessageIds(conn.userId, inConv.map((c) => c.message.id));
+      // 가시성 조회(비동기) 동안 멤버십이 끝났을 수 있다 — 전송 직전에 다시 확인한다(Codex P2).
+      if (visible !== undefined && !(await replayStillValid(conn, conversationId, sub))) return false;
       const mine = visible === undefined ? inConv : inConv.filter((c) => visible.has(c.message.id));
       for (const change of [...mine].sort((x, y) => x.changeId - y.changeId)) send(conn, replayFrame(change.changeId, change.message));
       if (page.scannedThrough <= cursor) break;

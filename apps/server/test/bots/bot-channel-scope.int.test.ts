@@ -77,7 +77,10 @@ describe('봇 채널 읽기 범위', () => {
 
     // ① 이력 ② 답글 ③ snapshot ④ sync ⑦ 첨부.
     expect(ids((await botCall(lc, 'GET', `conversations/${channel}/messages`)).json.messages)).toEqual([postRoot, sentinel]);
+    // 숨김 원문만 있는 앞 페이지는 서버가 건너뛴다(after_seq 진행, Codex P2).
+    expect(ids((await botCall(lc, 'GET', `conversations/${channel}/messages?after_seq=0&limit=1`)).json.messages)).toEqual([postRoot]);
     expect((await botCall(lc, 'GET', `messages/${preRoot}/replies`)).status).toBe(404);
+    expect((await botCall(lc, 'GET', `messages/${postRoot.toUpperCase()}/replies`)).status).toBe(200);
     expect(ids((await botCall(lc, 'GET', `messages/${postRoot}/replies`)).json.replies)).toEqual([postReply]);
     expect(new Set(ids((await botCall(lc, 'GET', `sync/snapshot?conversation_id=${channel}`)).json.messages))).toEqual(new Set(visible));
     const sync = (await botCall(lc, 'GET', 'sync?after=0')).json.changes as { conversation_id: string; message: { id: string } }[];
