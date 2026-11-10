@@ -199,6 +199,7 @@ async def test_case5_joined_subscribes_without_reconnect_then_left_ignores(serve
 async def test_case5_error_not_found_removes_conversation(server, make_adapter):
     _with_channel(server)
     adapter = await _connected(server, make_adapter)
+    server.conversations = [{"id": DM_ID, "kind": "dm"}]  # 서버에서 멤버십 종료
     await server.send_frame({"type": "error", "code": "not_found", "retryable": False,
                              "conversation_id": CHANNEL_ID})
     later = _ch(f"@{BOT_NAME} not_found 뒤")
@@ -277,3 +278,17 @@ async def test_case7_stale_channel_mention_notice_goes_to_dm_once(server, make_a
     assert posts[0]["conversation_id"] == DM_ID
     assert posts[0].get("thread_root_id") is None
     assert posts[0]["body"] == f"{BACKLOG_NOTICE.format(n=2)} ({CHANNEL_ID})"
+
+
+async def test_case5_join_racing_catch_up_does_not_drop_first_mention(server, make_adapter):
+    # Codex P2: joined 프레임 처리 전에 REST catch-up이 새 채널 변경을 실으면 /me를 다시 읽고 처리해야 한다.
+    adapter = await _connected(server, make_adapter)  # DM만
+    _with_channel(server)
+    first = _ch(f"@{BOT_NAME} 참여 직후 지시")
+    server.add(first, CHANNEL_ID)
+    await _sentinel(server, adapter)  # DM live → catch-up이 채널 변경을 싣는다
+    await wait_for(lambda: any(e.message_id == first["id"] for e in adapter.events))
+    await server.send_frame({"type": "membership.changed", "conversation_id": CHANNEL_ID, "state": "joined"})
+    await wait_for(lambda: any(cid == CHANNEL_ID for cid, _a in server.subscribed))
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events].count(first["id"]) == 1

@@ -351,6 +351,10 @@ class OhmySlackAdapter(BasePlatformAdapter):
             if through is None:
                 through = int(page["through_cursor"])
             changes = page.get("changes") or ()
+            if any(str(c.get("conversation_id") or "") not in self._kinds for c in changes):
+                # sync는 현재 활성 참여 대화만 싣는다(sync/repo.ts) → 모르는 대화가 보이면 joined 프레임보다
+                # 먼저 온 새 멤버십이다. 버리고 커서를 넘기면 첫 지시가 영구 누락되므로 /me를 먼저 다시 읽는다(Codex P2).
+                await self._refresh_me()
             # 답글 변경 시 서버는 원문 projection도 함께 싣는다(sync/repo.ts:75-78) — 그 원문은 새 지시가 아니다.
             reply_roots = {str((c.get("message") or {}).get("thread_root_id") or "") for c in changes}
             for change in changes:
