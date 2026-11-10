@@ -76,7 +76,13 @@ function AddBotButton({ bot, onAdd }: { readonly bot: ChannelBot; readonly onAdd
   };
   return (
     <>
-      <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void add()}>
+      <button
+        type="button"
+        className="btn btn-secondary"
+        title={BOT_CHANNEL_COPY.add(bot.displayName)}
+        disabled={busy}
+        onClick={() => void add()}
+      >
         {BOT_CHANNEL_COPY.add(bot.displayName)}
       </button>
       {failure !== null && <ErrorState message={`${BOT_CHANNEL_COPY.addFailed} ${failureText(failure)}`} />}
@@ -109,7 +115,7 @@ function RemoveBotButton({ bot, onRemove }: { readonly bot: ChannelBot; readonly
   const title = BOT_CHANNEL_COPY.title(bot.displayName);
   return (
     <>
-      <button type="button" className="btn btn-secondary" onClick={() => setOpen(true)}>
+      <button type="button" className="btn btn-secondary" title={title} onClick={() => setOpen(true)}>
         {title}
       </button>
       {open &&
