@@ -51,7 +51,7 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
   - 세션: 채널 최상위 = 새 세션(`…:channel:<대화>:<message.id>`), 답글 = 루트 세션
   - 송신은 **스레드 답글로만** 합니다. 루트를 모르는 채널 송신(첨부 포함)은 보내지 않고 로그만 남깁니다
   - 15분을 넘긴 채널 지시의 안내는 채널이 아니라 홈 DM에 「오프라인 동안 받은 N건은 처리하지 않았습니다 (<대화 id>)」로 1회 보냅니다
-  - 멤버십: WS `membership.changed joined` → `/me` 재조회 후 그 대화만 현재 watermark로 구독(재연결 없음). `left`·`error not_found` → 대화 맵·구독 목록에서 제거, 이후 그 대화 프레임은 무시합니다. `sync.required`는 `/me`를 다시 읽은 뒤 재구독합니다
+  - 멤버십: WS `membership.changed joined` → `/me` 재조회 후 그 대화만 현재 watermark로 구독(재연결 없음). `left`·`error not_found` → 대화 맵·구독 목록에서 제거, 이후 그 대화 프레임은 무시합니다. `sync.required`는 `/me`를 다시 읽은 뒤 재구독합니다. catch-up에 `/me`에 없는 대화가 보이면(참여 직후 경쟁) 처리 전에 `/me`를 다시 읽습니다
 - **아웃바운드**
   - `POST /conversations/{id}/messages`로 게시합니다. 답글이면 루트로 보정한 `thread_root_id`를 붙입니다
   - `client_message_id`를 고정해 멱등 재시도합니다. 429면 `Retry-After`(최대 60초)를 따르고, 5xx와 연결 오류도 재시도합니다
