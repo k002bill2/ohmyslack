@@ -96,6 +96,8 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
     scale: 'amber', step: 11, role: 'text', on: '--warning-bg',
     override: { light: { step: 12, reason: 'amber11/amber3 4.25 < 4.5 (§7-1 1.4.3)' } },
   },
+  /** 시안 01 「여기부터 새 메시지」 라벨 바탕(red 3). danger-text 11/3 대비 light 4.54·dark 7.75. */
+  '--danger-bg': { scale: 'red', step: 3, role: 'surface' },
   '--danger-text': { scale: 'red', step: 11, role: 'text', on: BG_APP },
   '--danger-solid': { scale: 'red', step: 9, role: 'nontext', on: BG_APP },
   '--focus-ring': {
