@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { WsServerFrame } from '../../src/shared.js';
 import { png, uploadedId } from '../attachments/att-harness.js';
 import { as, createChannel, req } from '../conversations/conv-int-harness.js';
-import { bot as botCall, setupBotListener, teardownBotListener, type BotListenerContext } from './bot-listener-harness.js';
+import { bot as botCall, count, setupBotListener, teardownBotListener, type BotListenerContext } from './bot-listener-harness.js';
 import { connectedBot, subscribeBot } from './bot-ws-harness.js';
 
 /** 봇 읽기 범위·멤버십 통지(정본: BOT_CHANNEL_SPEC §4-3·§4-5, DEV_DESIGN 6-6 FR-BOT-09). */
@@ -103,5 +103,40 @@ describe('봇 채널 읽기 범위', () => {
     ]);
     ws.close();
     ws2.close();
+  });
+
+  it('봇은 참여 전 시작 스레드(숨김 루트)에 답글을 쓸 수 없다 — 없는 루트와 같은 404·DB 변화 0, 보이는 루트 답글은 성공, 사람은 숨김 루트에 답글 가능', async () => {
+    const app = lc.conv.app;
+    const owner = await as(app, 'a');
+    const member = await as(app, 'b');
+    const channel = await createChannel(app, owner, 'reply-room');
+    await req(app, 'POST', `/api/conversations/${channel}/join`, member);
+    const preRoot = await post(owner, channel, '참여 전 루트');
+    expect((await req(app, 'POST', `/api/conversations/${channel}/bots`, owner, { bot_user_id: lc.bot.botUserId })).statusCode).toBe(201);
+    const postRoot = await post(owner, channel, '참여 후 루트');
+
+    const messageCount = (): Promise<number> => count(lc, 'SELECT count(*)::int AS n FROM messages WHERE conversation_id = $1', [channel]);
+    const before = await messageCount();
+    const reply = (root: string) =>
+      botCall(lc, 'POST', `conversations/${channel}/messages`, { client_message_id: randomUUID(), body: '봇 답글', thread_root_id: root });
+    const hidden = await reply(preRoot);
+    const hiddenUpper = await reply(preRoot.toUpperCase());
+    const missing = await reply(randomUUID());
+    expect(hidden.status).toBe(404);
+    expect(hiddenUpper.status).toBe(404);
+    expect(missing.status).toBe(404);
+    expect(hidden.json.error.code).toBe(missing.json.error.code);
+    expect(Object.keys(hidden.json.error)).toEqual(Object.keys(missing.json.error));
+    expect(await messageCount()).toBe(before);
+
+    // 보이는 루트(참여 후 시작)에는 답글이 저장된다.
+    const ok = await reply(postRoot);
+    expect(ok.status).toBe(201);
+    expect(ok.json.message.thread_root_id).toBe(postRoot);
+    expect(await messageCount()).toBe(before + 1);
+
+    // 사람 경로 변화 0: 같은 숨김 루트에 사람 멤버는 답글을 쓴다.
+    await post(member, channel, '사람 답글', { thread_root_id: preRoot });
+    expect(await messageCount()).toBe(before + 2);
   });
 });

@@ -145,7 +145,7 @@
 | 4 | `kind = 'channel'` | 400 (DM `leave` 400과 같은 계열) |
 
 - 현재 `ACCESS_SQL`(`apps/server/src/modules/conversations/repo.ts:37-40`)은 역할을 읽지 않는다 → `manage_bots`일 때만 `workspace_members.role`을 함께 읽는 쿼리 확장이 필요하다(구현 레인 판단, 쿼리 1개).
-- 대상 봇 검증(활성·`kind='bot'`·같은 워크스페이스)은 `bots` 서비스가 한다(B1: 다른 모듈 repo 직접 호출 금지, `docs/04-dev-design/DEV_DESIGN.md:89`).
+- 대상 봇 검증(활성·`kind='bot'`·같은 워크스페이스)은 `conversations` 저장소의 봇 추가 트랜잭션 **안에서** 단일 SQL(`BOT_TARGET_SQL`)로 한다 — 검증과 멤버십 UPSERT가 원자적이고, 다른 모듈 repo를 호출하지 않으므로 B1(`docs/04-dev-design/DEV_DESIGN.md:89`)을 지킨다(`apps/server/src/modules/conversations/repo.ts` `addBot`). 영환님 결정(★, 2026-11-10): 초안의 "`bots` 서비스가 검증" 문구를 실제 구현으로 정정.
 - 레지스트리 테스트(FR-CONV-04 접근 매트릭스)에 새 라우트 2개와 행위자 {owner, 일반 멤버, 비참여자, 봇 토큰}을 추가한다(`apps/server/test/conversations/access-matrix.int.test.ts`).
 
 ### 4-3. 이벤트 — 멤버십 변화 통지
@@ -176,6 +176,7 @@
 - 적용 경로(전부 봇 행위자일 때만): ① 이력 ② 답글 조회 — 루트가 안 보이면 404(현행 `repliesResponseSchema`가 `root`를 필수로 요구하므로 숨김 루트 표현을 새로 만들지 않는다, `packages/shared/src/messages.ts`) ③ snapshot ④ sync ⑤ WS replay ⑥ **WS 실시간 팬아웃** — `message.created`·`message.updated`(답글 생성·삭제 때 루트 projection을 다시 보내는 `emitRoot` 포함, `apps/server/src/modules/messages/service.ts:59-61,78,97`)·`message.deleted` ⑦ 첨부 다운로드(`attachment` 메타 → 첨부의 메시지에 같은 규칙).
 - 근거(사실): 팬아웃의 `deliverable`은 세션과 `canRead`(멤버십)만 본다(`apps/server/src/modules/realtime/hub.ts:197-202`). 위 ⑥을 빼면 참여 후 답글 하나로 참여 전 루트 본문이 실시간으로 나간다(Codex 리뷰 P2).
 - 결과: owner가 참여 전 스레드에서 봇을 멘션해도 봇은 받지 못한다 → 새 최상위 메시지로 불러야 한다(§3-3에 안내 필요, 문구는 Q8).
+- ★ 쓰기 차단(영환님 결정, 2026-11-10): 봇이 `thread_root_id`로 답글을 쓸 때 루트가 위 규칙으로 봇에게 보이지 않으면(참여 전 시작 스레드) **404**, 저장 0. 봇 경로에서는 숨김 루트·없는 루트·봇이 볼 수 없는 다른 대화 루트가 모두 같은 404다(존재 은폐 — 이전 봇 경로의 없는·다른 대화 루트는 400 `invalid_thread_root`). 봇에게 보이는 루트의 형식 위반(답글의 답글·보이는 다른 대화 루트)은 그대로 400. 판정은 같은 `visibleMessageIds`를 재사용한다(`apps/server/src/modules/bots/routes.ts` `threadRootGuard`). 사람은 바뀌지 않는다.
 - 재추가 시 `UPSERT_MEMBER_SQL`이 `joined_seq`를 덮어쓴다(`apps/server/src/modules/conversations/repo.ts:49-54`) → 제거 기간의 글도 보이지 않는다.
 
 ### 4-6. DB 변경

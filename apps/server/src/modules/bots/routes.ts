@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, preHandlerAsyncHookHandler } from
 import { z } from 'zod';
 import { BOT_ROUTE_PREFIX, markBotGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
-import type { BotMe, HistoryResponse, RepliesResponse, SnapshotResponse, SyncResponse } from '../../shared.js';
+import { messageCreateRequestSchema, type BotMe, type HistoryResponse, type RepliesResponse, type SnapshotResponse, type SyncResponse } from '../../shared.js';
 import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService } from '../attachments/index.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import { editAs, historyOf, repliesOf, sendAs } from '../messages/routes.js';
@@ -125,6 +125,22 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
   });
 }
 
+/**
+ * 봇 답글 쓰기 차단(BOT_CHANNEL_SPEC §4-5, 영환님 ★ 2026-11-10): `thread_root_id`가 봇에게 보이지 않으면(참여 전 시작 스레드·없는 루트)
+ * 같은 404다 — 존재 여부를 드러내지 않는다. 판정은 읽기 경로와 같은 `visibleMessageIds`. 형식 오류 본문은 `sendAs`의 400에 맡긴다.
+ */
+export async function assertReplyRootVisible(bots: Pick<BotService, 'visibleMessageIds'>, botId: string, rawBody: unknown): Promise<void> {
+  const parsed = messageCreateRequestSchema.safeParse(rawBody);
+  const rootId = parsed.success ? parsed.data.thread_root_id?.toLowerCase() : undefined;
+  if (rootId === undefined || rootId === null) return;
+  if (!(await bots.visibleMessageIds(botId, [rootId])).has(rootId)) throw new HttpError(404, 'not_found');
+}
+
+const threadRootGuard = (deps: BotRouteDeps): preHandlerAsyncHookHandler =>
+  markBotGuard(async (request: FastifyRequest): Promise<void> => {
+    await assertReplyRootVisible(deps.bots, requireBot(request).botUserId, request.body);
+  });
+
 /** 봇 가시성(BOT_CHANNEL_SPEC §4-5)으로 메시지 목록을 거른다. 페이지 커서·has_more는 원래 페이지 기준 그대로(건너뛰기만). */
 async function visibleOnly<T extends { readonly id: string }>(deps: BotRouteDeps, botId: string, items: readonly T[]): Promise<T[]> {
   const visible = await deps.bots.visibleMessageIds(botId, items.map((m) => m.id));
@@ -201,7 +217,7 @@ export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): voi
   app.get(`${p}messages/:id/replies`, { config, preHandler: guarded('message', 'read') }, (request) => botReplies(deps, request));
   app.post(
     `${p}conversations/:id/messages`,
-    { config, preHandler: [...guarded('conversation', 'write'), rateGuard(deps.limiter, 'create')] },
+    { config, preHandler: [...guarded('conversation', 'write'), threadRootGuard(deps), rateGuard(deps.limiter, 'create')] },
     (request, reply) => sendAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body, reply),
   );
   app.patch(`${p}messages/:id`, { config, preHandler: [...guarded('message', 'write'), rateGuard(deps.limiter, 'edit')] }, (request) =>
