@@ -178,6 +178,7 @@
 - 결과: owner가 참여 전 스레드에서 봇을 멘션해도 봇은 받지 못한다 → 새 최상위 메시지로 불러야 한다(§3-3에 안내 필요, 문구는 Q8).
 - ★ 쓰기 차단(영환님 결정, 2026-11-10): 봇이 `thread_root_id`로 답글을 쓸 때 루트가 위 규칙으로 봇에게 보이지 않으면(참여 전 시작 스레드) **404**, 저장 0. 봇 경로에서는 숨김 루트·없는 루트·봇이 볼 수 없는 다른 대화 루트가 모두 같은 404다(존재 은폐 — 이전 봇 경로의 없는·다른 대화 루트는 400 `invalid_thread_root`). 봇에게 보이는 루트의 형식 위반(답글의 답글·보이는 다른 대화 루트)은 그대로 400. 판정은 같은 `visibleMessageIds`를 재사용한다(`apps/server/src/modules/bots/routes.ts` `threadRootGuard`). 사람은 바뀌지 않는다.
 - 재추가 시 `UPSERT_MEMBER_SQL`이 `joined_seq`를 덮어쓴다(`apps/server/src/modules/conversations/repo.ts:49-54`) → 제거 기간의 글도 보이지 않는다.
+- 같은 가시성 판정(2026-11-10 보안 리뷰 F-1·F-5): 봇의 read-state(`thread_root_id`가 있을 때 그 루트)와 메시지 수정(`PATCH messages/:id`, 답글이면 그 루트 기준)도 같은 `visibleMessageIds`로 판정하고, 안 보이면 숨김·없음·비참여 모두 같은 `404 not_found`·저장 0이다(`apps/server/src/modules/bots/routes.ts` `assertMessageVisible`). 봇 snapshot·이력 페이지는 `joined_seq`에서 잘라 숨김 구간에서 빈 페이지·seq를 내지 않는다(F-2·F-4).
 
 ### 4-6. DB 변경
 
@@ -225,6 +226,7 @@
 
 ### 5-6. 송신 규칙
 - 채널에서는 **스레드 답글로만** 쓴다. `_thread_root`(`integrations/hermes-plugin/ohmyslack/adapter.py:436-442`)가 루트를 못 찾은 채널 송신은 보내지 않고 로그만 남긴다(Jarvis 결정(★)). DM 송신 규칙은 그대로.
+- fail-closed(2026-11-10 보안 리뷰 F-3): `/me`로 종류를 확인한 dm만 루트 없이 보낸다. 맵에 없는 대화(추가 직후 재조회 전·재조회 실패·이미 나감)는 루트가 있어도 송신·첨부를 거부하고 고정 문구 로그만 남긴다. `get_chat_info`는 모르는 대화를 `type: "unknown"`(이름은 chat_id)으로 보고한다(`adapter.py` `_refuse_channel_top_level`·`get_chat_info`).
 
 ### 5-7. 15분 stale·dedupe 유지 + 게이팅 순서
 - 순서: owner 판정 → 대화 종류·멘션 게이팅 → dedupe → 15분 상한. 게이팅에서 걸린 메시지는 dedupe에 기록만 하고(`_remember`) 백로그 개수에 넣지 않는다.

@@ -49,6 +49,8 @@ export interface BotService {
   me(botUserId: string): Promise<repo.BotMeRow>;
   /** 주어진 메시지 중 이 봇에게 보이는 것(참여 후 메시지·참여 후 시작 스레드, BOT_CHANNEL_SPEC §4-5). 단일 쿼리. */
   visibleMessageIds(botUserId: string, messageIds: readonly string[]): Promise<ReadonlySet<string>>;
+  /** 활성 멤버십의 joined_seq(없으면 undefined). 봇 이력·snapshot 페이지를 숨김 구간에서 자른다(F-2·F-4). */
+  joinedSeq(botUserId: string, conversationId: string): Promise<number | undefined>;
 }
 
 export interface BotServiceDeps {
@@ -178,5 +180,6 @@ export function createBotService(deps: BotServiceDeps): BotService {
     liveTokenIds: (tokenIds) => repo.liveTokenIdsAmong(pool, tokenIds),
     me: (botUserId) => repo.botMe(pool, botUserId),
     visibleMessageIds: (botUserId, messageIds) => repo.visibleMessageIds(pool, botUserId, messageIds),
+    joinedSeq: (botUserId, conversationId) => repo.joinedSeq(pool, botUserId, conversationId),
   };
 }
