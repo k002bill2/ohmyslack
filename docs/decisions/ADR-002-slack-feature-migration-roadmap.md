@@ -76,12 +76,17 @@ PDF, PowerPoint, Excel, Word, 한글을 Jarvis ↔ 영환님 사이에서 주고
 - 판정은 ZIP 중앙 디렉터리·OLE 디렉터리 **목록만** 읽고 압축 해제하지 않는다(zip bomb 회피). 선언 MIME·확장자는 신뢰하지 않는다(FR-OPS-05 ②와 같음).
 - 다운로드: `Content-Disposition: attachment; filename*=UTF-8''…`(RFC 6266/5987), `no-store`·`nosniff`·`sandbox` 유지. 원 파일명 컬럼 추가 필요(현재 `attachments`에 없음 — `apps/server/migrations/0003_attachments.sql:5-21`).
 
-### 4-3. 결정 필요 (1단계 착수 전, ★ = 추천)
-1. **매크로 포함 문서** — ★ 거부: `.docm/.xlsm/.pptm`, OOXML 안 `vbaProject.bin`, OLE 안 `Macros`·`_VBA_PROJECT_CUR`·`VBA` 저장소가 있으면 415.
-2. **구형 Office(.doc/.xls/.ppt)** — ★ 허용(한글 .hwp가 같은 OLE 판정기를 쓰므로 추가 비용 작음, 매크로 저장소는 1번으로 거부).
-3. **방향** — ★ 양방향(봇→사람, 사람→봇). Claude-Fable는 1차를 봇→사람만으로 좁히자고 권고(C-8). 영환님이 Slack에서 Jarvis에게 파일을 보내는 흐름이 있으면 양방향이 필요. 사람→봇은 Hermes가 받은 문서를 읽는 경로(어댑터 인바운드 문서 캐시)가 추가된다.
-4. **크기 상한** — 현재 첨부 10 MiB/파일(TRD §6-1). PPT·HWP는 이를 넘기 쉽다. ★ 문서만 25 MiB로 별도 상수(정본 TRD에서 확정). 저장은 PostgreSQL `attachment_blobs`라 백업 크기 영향 확인 필요.
-5. **보존 기한** — ★ 문서 90일(이미지와 같게), 만료 시 바이트 삭제·자리표시자 유지.
+### 4-3. 결정 (영환님 2026-11-10 「1 받는다 2 받는다 3 양방향 4 크기제한적용 5 90일」)
+1. **매크로 포함 문서 — 받는다.** (Jarvis ★안 「거부」와 다른 결정. 해석 근거: 답변 원문 「받는다」.) 조건(보안 가드, 1b 레인 수용 기준):
+   - 서버는 문서를 **실행·변환·미리보기하지 않는다**(§5-7 유지). 다운로드는 `Content-Disposition: attachment`만.
+   - 업로드 시 매크로 저장소(OOXML `vbaProject.bin`, OLE `Macros`·`_VBA_PROJECT_CUR`·`VBA`)를 **목록 판정만으로** 감지해 첨부 메타 `has_macros`로 저장하고, 웹은 첨부 행에 「매크로 포함」 경고 표지를 텍스트로 표시한다(색 외 표시, FR-CLIENT-07). 문구는 COPY_GAPS에 추가 후 결정.
+   - 확장자-형식 일치 강제: 매크로가 감지된 OOXML은 `.docm/.xlsm/.pptm` 확장자로만 저장·다운로드한다(매크로를 `.docx`로 위장해 받는 경로 차단). 불일치 시 415.
+   - Jarvis(Hermes) 인바운드: 받은 문서는 텍스트 추출만 하고 Office 앱으로 열거나 매크로를 실행하지 않는다(어댑터 문서 캐시는 기존 이미지 캐시와 같은 경계, 보존 후 삭제).
+   - 추정 위험: 매크로 문서를 연 기기(Mac Office)의 매크로 보안 설정에 의존한다 — 제품 경계 밖, 경고 표지로만 완화.
+2. **구형 Office(.doc/.xls/.ppt) — 받는다.** 한글 `.hwp`와 같은 OLE 판정기 사용.
+3. **방향 — 양방향.** 봇→사람(`send_document`) + 사람→봇(웹 업로드 → 어댑터 인바운드 문서 → Hermes 세션). Claude-Fable C-8(봇→사람만)은 채택하지 않음.
+4. **크기 상한 — 적용.** 문서 전용 상한 **25 MiB/파일**(★안 수치, 정본 TRD §6-1에서 상수로 확정). 이미지·음성 10 MiB는 유지. 업로드 라우트 body 상한·봇 리스너 상한도 같은 값으로 맞춘다. PostgreSQL `attachment_blobs` 저장이라 백업·복원 드릴(FR-OPS-02) 시간 영향을 1b 레인에서 측정한다.
+5. **보존 — 90일.** 경과 시 바이트 삭제, 메타데이터는 「만료된 첨부」 자리표시자로 유지(FR-OPS-05 ⑤와 같은 규칙). 메시지 삭제 시 즉시 바이트 삭제.
 
 ### 4-4. 확인 필요
 - iPhone 홈 화면 PWA에서 `Content-Disposition: attachment` 응답의 저장·「파일」 앱 열기 동작(실기).
@@ -105,7 +110,7 @@ PDF, PowerPoint, Excel, Word, 한글을 Jarvis ↔ 영환님 사이에서 주고
 | 관찰 창 중 | §2-4 문서 초안 | Jarvis(영환님 지시 시 레인) |
 | 11-17(화) 10:30 | 7일 종합 + 전환 판정 준비물 + 1단계 레인 구성표(미실행) 보고 | Jarvis cron |
 | 11-17 이후 | 전환 판정(H4) | 영환님 |
-| 판정·G1 후 | 1단계 레인 dispatch(1a → 1b·1c 병렬 → 1d), §4-3 결정 반영 | Jarvis → Orca |
+| 판정·G1 후 | 1단계 레인 dispatch(1a → 1b·1c 병렬 → 1d), §4-3 결정(11-10 확정) 적용 | Jarvis → Orca |
 
 ## 7. 근거 문서
 - 만장일치 동결: GPT-Sol §1, GPT-Luna 결론, Claude-Fable §1, Claude-Opus §1.
