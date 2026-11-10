@@ -132,6 +132,10 @@ export function MemberAdmin({ account, load, createInvite, deactivate, origin = 
     return (
       <>
         <div className="member-admin-actions">
+          <div className="member-admin-summary">
+            <p className="member-admin-count">{MEMBER_ADMIN_COPY.count(view.members.length)}</p>
+            <p className="member-admin-hint">{MEMBER_ADMIN_COPY.inviteRule}</p>
+          </div>
           <button type="button" className="btn btn-primary" onClick={() => void openInvite()}>
             {MEMBER_ADMIN_COPY.createInvite}
           </button>

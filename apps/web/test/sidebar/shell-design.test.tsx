@@ -3,7 +3,7 @@
  * 모양은 Jarvis 시각 확인이 판정하고, 여기서는 구조·접근 이름·문구 불변만 고정한다.
  */
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Space } from '../../src/data';
 import { Sidebar } from '../../src/features/sidebar';
 import { CONNECTION_TEXT, ConnectionBanner } from '../../src/features/sync';
@@ -44,6 +44,27 @@ describe('사이드바 셸(시안 01·04)', () => {
   it('compact는 헤더 제목 「공간」(시안 04)', () => {
     render(<Sidebar spaces={spaces} selectedId={null} collapsed={false} compact onSelect={() => {}} />);
     expect(screen.getByRole('heading', { level: 1, name: '공간' })).toBeTruthy();
+  });
+
+  it('「이동…」 버튼(시안 Main): 목록 앞에서 공간 전환기를 연다, 단축키를 aria-keyshortcuts로 알리고 아이콘·키 표시는 장식', () => {
+    const open = vi.fn();
+    const { container } = render(<Sidebar spaces={spaces} selectedId={null} collapsed={false} onSelect={() => {}} onOpenSwitcher={open} />);
+    const button = screen.getByRole('button', { name: '공간 이동 (Ctrl/⌘+K)' });
+    expect(button.getAttribute('aria-keyshortcuts')).toBe('Control+K Meta+K');
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(container.querySelector('.sidebar-jump-keys')?.getAttribute('aria-hidden')).toBe('true');
+    // 공간 목록보다 앞(Tab 순서).
+    const first = container.querySelector('[data-space-id]');
+    expect(first !== null && button.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    button.click();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('「이동…」: 접힘(72px 레일)·콜백 없음은 렌더하지 않는다 — 전환기는 Ctrl/⌘+K로 남는다', () => {
+    const { rerender } = render(<Sidebar spaces={spaces} selectedId={null} collapsed onSelect={() => {}} onOpenSwitcher={() => {}} />);
+    expect(screen.queryByRole('button', { name: '공간 이동 (Ctrl/⌘+K)' })).toBeNull();
+    rerender(<Sidebar spaces={spaces} selectedId={null} collapsed={false} onSelect={() => {}} />);
+    expect(screen.queryByRole('button', { name: '공간 이동 (Ctrl/⌘+K)' })).toBeNull();
   });
 
   it('빈 섹션은 렌더하지 않는다', () => {

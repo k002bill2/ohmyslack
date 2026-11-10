@@ -147,11 +147,15 @@ function MessageItemView(props: MessageItemProps) {
   const showReply = onReply !== undefined && message.deleted !== true;
   const mentioned = props.mentionsSelf === true && message.deleted !== true;
   const sheetMode = (props.actionMode ?? (placement === 'below' ? 'sheet' : 'toolbar')) === 'sheet';
-  const hasActions = showReply || (actionable && !isEditing);
   const canEdit = actionable && !isEditing && onEdit !== undefined;
   const canDelete = actionable && !isEditing && onDelete !== undefined;
   useRovingInner(item, props.rovingActive);
-  const menuEnabled = !sheetMode && message.deleted !== true && pending === undefined && !isEditing;
+  /** 복사(텍스트·링크) 가능 조건 — 툴바 메뉴와 compact 액션 시트가 같은 판정을 쓴다. */
+  const copyable = message.deleted !== true && pending === undefined && !isEditing;
+  const { messageLink } = props;
+  const canCopyLink = copyable && messageLink !== undefined;
+  const hasActions = showReply || (actionable && !isEditing) || copyable;
+  const menuEnabled = !sheetMode && copyable;
   const menu = useMessageMenu(item, menuEnabled);
   const [copyNote, setCopyNote] = useState<string | null>(null);
   useEffect(() => {
@@ -162,7 +166,6 @@ function MessageItemView(props: MessageItemProps) {
   const copy = (text: string, done: string) => {
     void writeClipboard(text).then((ok) => setCopyNote(ok ? done : MESSAGE_MENU_COPY.copyFailed));
   };
-  const { messageLink } = props;
   /** D §7-3 메시지 단축키 — compact는 키맵 대신 보이는 버튼(액션 시트)이라 끈다. */
   const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
     if (sheetMode || menu.onItemKey(e)) return;
@@ -178,8 +181,12 @@ function MessageItemView(props: MessageItemProps) {
     if (sheetOpen || pendingAction === null) return;
     setPendingAction(null);
     if (pendingAction === 'reply') onReply?.(message.id);
-    else if (pendingAction === 'edit') setEditing(true);
+    else if (pendingAction === 'copy-text') copy(message.body, MESSAGE_MENU_COPY.copiedText);
+    else if (pendingAction === 'copy-link') {
+      if (messageLink !== undefined) copy(messageLink(message.id), MESSAGE_MENU_COPY.copiedLink);
+    } else if (pendingAction === 'edit') setEditing(true);
     else setConfirming(true);
+    // copy·messageLink는 렌더마다 새 함수 — 시트 선택 한 번에 한 번만 적용하므로 의존성에서 뺀다.
   }, [sheetOpen, pendingAction, onReply, message.id]);
 
   const longPress = useLongPress(sheetMode && hasActions && !sheetOpen, () => {
@@ -269,6 +276,8 @@ function MessageItemView(props: MessageItemProps) {
           canReply={showReply}
           canEdit={canEdit}
           canDelete={canDelete}
+          canCopyText={copyable}
+          canCopyLink={canCopyLink}
           onClose={() => setSheetOpen(false)}
           onSelect={(action) => {
             setSheetOpen(false);
