@@ -127,4 +127,24 @@ describe('비활성 작성자 이름(G-50·G-51)', () => {
     const candidates = await ds.listConversationMembers?.(CONV);
     expect(candidates).toEqual({ ok: true, value: [{ id: ME, displayName: 'A' }] });
   });
+
+  it('세션 중 비활성화된 상대: 활성 목록에서 사라지면 resume 뒤 DM·작성자 이름을 「(비활성)」로 다시 맞춘다(Codex r1 P2)', async () => {
+    const { server, ds } = setup();
+    server.on('GET /api/conversations', () => ({
+      status: 200,
+      body: { conversations: [summary(), summary({ id: DM, kind: 'dm', name: null, peer_user_id: PEER })], next_cursor: null },
+    }));
+    server.on(`GET /api/conversations/${CONV}/messages`, () => ({ status: 200, body: { messages: [message(1)], has_more: false } }));
+    await ds.start();
+    ds.open?.(CONV);
+    for (let i = 0; i < 8; i += 1) await flush();
+    expect(ds.getSnapshot().spaces.find((s) => s.id === DM)?.name).toBe('B');
+    expect(ds.getSnapshot().messages[0]?.author).toBe('B');
+    server.on('GET /api/members', () => ({ status: 200, body: { members: [] } }));
+    server.on('GET /api/users/names', () => ({ status: 200, body: { users: [{ id: PEER, display_name: 'B', status: 'disabled', kind: 'human' }] } }));
+    await ds.resume();
+    for (let i = 0; i < 8; i += 1) await flush();
+    expect(ds.getSnapshot().spaces.find((s) => s.id === DM)?.name).toBe('B (비활성)');
+    expect(ds.getSnapshot().messages[0]?.author).toBe('B (비활성)');
+  });
 });

@@ -223,11 +223,27 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
    * 멤버 조회에도 없던 ID는 `GET /api/users/names`(비활성 포함)로 찾고, 그래도 없으면 「알 수 없는 사용자」로 굳힌다
    * — 조회가 끝난 뒤 빈 이름 0(G-50·G-51). 나중에 멤버 조회로 실제 이름이 오면 덮어쓴다.
    */
-  const settleNames = async (ids: readonly string[]) => {
-    const found = await lookupUserNames(api, ids.filter((id) => !names.has(id)));
+  const settleNames = async (ids: readonly string[], recheck = false) => {
+    const want = recheck ? ids : ids.filter((id) => !names.has(id));
+    const found = await lookupUserNames(api, want);
     if (ended) return;
-    const rest = ids.filter((id) => !names.has(id) && !found.has(id));
+    const rest = want.filter((id) => (recheck || !names.has(id)) && !found.has(id));
     names = new Map([...names, ...found, ...rest.map((id) => [id, AUTHOR_NAME_COPY.unknown] as const)]);
+  };
+
+  /** 직전 `GET /api/members`(활성만)의 ID. 세션 중 비활성화돼 목록에서 사라진 ID는 캐시된 이름을 다시 확인한다(Codex r1 P2). */
+  let activeIds: ReadonlySet<string> = new Set();
+  const noteActive = (members: MembersResponse['members']) => {
+    const next = new Set(members.map((m) => m.id));
+    const gone = [...activeIds].filter((id) => !next.has(id));
+    activeIds = next;
+    if (gone.length === 0) return;
+    void settleNames(gone, true).then(
+      () => {
+        if (!ended) refreshNames();
+      },
+      () => undefined,
+    );
   };
 
   const fetchNames = async (conversationId: string, ids: readonly string[]) => {
@@ -659,6 +675,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       const res = await api.get<MembersResponse>('/api/members');
       names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
       noteKinds(res.members);
+      noteActive(res.members);
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
     }
@@ -973,6 +990,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         const res = await api.get<MembersResponse>('/api/members');
         names = new Map([...names, ...res.members.map((m) => [m.id, m.display_name] as const)]);
         noteKinds(res.members);
+        noteActive(res.members);
         return res.members.map((m) => ({ id: m.id, displayName: m.display_name, role: m.role, kind: m.kind }));
       }),
     createInvite: () =>
