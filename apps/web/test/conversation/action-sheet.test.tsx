@@ -75,11 +75,11 @@ describe('compact 액션 시트 — 길게 누르기', () => {
     // 미리보기: 작성자 + 본문(일반 텍스트).
     expect(sheet.querySelector('.msg-sheet-author')?.textContent).toBe('나');
     expect(sheet.querySelector('.msg-sheet-body')?.textContent).toBe(own.body);
-    // 항목 순서: 답글 → 수정 → 삭제 → 취소.
+    // 항목 순서: 답글 → 텍스트 복사(링크 복사는 messageLink가 있을 때만) → 수정 → 삭제 → 취소.
     const names = within(sheet.querySelector<HTMLElement>('.msg-action-sheet') as HTMLElement)
       .getAllByRole('button')
       .map((b) => b.textContent);
-    expect(names).toEqual(['답글', MESSAGE_ACTION_COPY.edit, MESSAGE_ACTION_COPY.delete, CANCEL_LABEL]);
+    expect(names).toEqual(['답글', '텍스트 복사', MESSAGE_ACTION_COPY.edit, MESSAGE_ACTION_COPY.delete, CANCEL_LABEL]);
     fireEvent.keyDown(sheet, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(li);
@@ -237,6 +237,76 @@ describe('compact 액션 시트 — 「메시지 작업」 버튼(키보드·스
     expect(within(sheet).queryByRole('button', { name: MESSAGE_ACTION_COPY.edit })).toBeNull();
     expect(within(sheet).queryByRole('button', { name: MESSAGE_ACTION_COPY.delete })).toBeNull();
     expect(within(sheet).getByRole('button', { name: '답글' })).toBeTruthy();
+  });
+});
+
+describe('compact 액션 시트 — 복사 항목(시안 Mobile-Actions)', () => {
+  function withClipboard() {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    return writeText;
+  }
+  const link = (id: string) => `https://host/c/c1#message-${id}`;
+  function sheetNames(): (string | null)[] {
+    return within(screen.getByRole('dialog', { name: ACTIONS }).querySelector<HTMLElement>('.msg-action-sheet') as HTMLElement)
+      .getAllByRole('button')
+      .map((b) => b.textContent);
+  }
+
+  it('messageLink가 있으면 「메시지 링크 복사」도 — 답글 → 텍스트 복사 → 메시지 링크 복사 → 수정 → 삭제 → 취소', async () => {
+    const user = userEvent.setup();
+    renderItem({ messageLink: link });
+    await user.click(screen.getByRole('button', { name: ACTIONS }));
+    expect(sheetNames()).toEqual(['답글', '텍스트 복사', '메시지 링크 복사', '수정', '삭제', '취소']);
+  });
+
+  it('텍스트 복사 → 시트 닫고 본문을 복사, 결과를 role=status로 알린다', async () => {
+    const user = userEvent.setup();
+    renderItem();
+    const writeText = withClipboard();
+    await user.click(screen.getByRole('button', { name: ACTIONS }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '텍스트 복사' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(writeText).toHaveBeenCalledWith(own.body);
+    expect((await screen.findByRole('status')).textContent).toBe('텍스트를 복사했습니다');
+  });
+
+  it('메시지 링크 복사 → 그 메시지 주소를 복사', async () => {
+    const user = userEvent.setup();
+    renderItem({ messageLink: link });
+    const writeText = withClipboard();
+    await user.click(screen.getByRole('button', { name: ACTIONS }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '메시지 링크 복사' }));
+    expect(writeText).toHaveBeenCalledWith('https://host/c/c1#message-m1');
+    expect((await screen.findByRole('status')).textContent).toBe('링크를 복사했습니다');
+  });
+
+  it('복사 실패는 「복사하지 못했습니다」', async () => {
+    const user = userEvent.setup();
+    renderItem();
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+    await user.click(screen.getByRole('button', { name: ACTIONS }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '텍스트 복사' }));
+    expect((await screen.findByRole('status')).textContent).toBe('복사하지 못했습니다');
+  });
+
+  it('남의 메시지·답글 없음(스레드 등)이어도 복사할 수 있으면 「메시지 작업」 트리거가 있다', async () => {
+    const user = userEvent.setup();
+    renderItem({ selfId: 'other' }, false);
+    await user.click(screen.getByRole('button', { name: ACTIONS }));
+    expect(sheetNames()).toEqual(['텍스트 복사', '취소']);
+  });
+
+  it('삭제된 메시지·전송 대기 메시지는 복사 항목이 없다', () => {
+    const pending = { conversationId: 'c1', authorId: 'u1', clientMessageId: 'x', body: own.body, status: 'sending' as const, serverEventSeen: false };
+    const { rerender } = renderItem({ message: { ...own, deleted: true } }, false);
+    expect(screen.queryByRole('button', { name: ACTIONS })).toBeNull();
+    rerender(
+      <ul>
+        <MessageItem message={{ ...own, pending }} selfId="other" timePlacement="below" />
+      </ul>,
+    );
+    expect(screen.queryByRole('button', { name: ACTIONS })).toBeNull();
   });
 });
 

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog } from '../../ui/Dialog.js';
-import { CANCEL_LABEL, MESSAGE_ACTION_COPY } from '../../ui/copy.js';
+import { CANCEL_LABEL, MESSAGE_ACTION_COPY, MESSAGE_MENU_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 
 /** 시트 항목 — 고른 뒤 시트를 먼저 닫고(언마운트) 소유자가 동작을 적용한다(Dialog 중첩 금지). */
-export type MessageSheetAction = 'reply' | 'edit' | 'delete';
+export type MessageSheetAction = 'reply' | 'copy-text' | 'copy-link' | 'edit' | 'delete';
 
 export interface MessageActionSheetProps {
   readonly author: string;
@@ -14,6 +14,9 @@ export interface MessageActionSheetProps {
   readonly canReply: boolean;
   readonly canEdit: boolean;
   readonly canDelete: boolean;
+  /** 새 시안 Mobile-Actions: 텍스트 복사·메시지 링크 복사. 없으면 false. */
+  readonly canCopyText?: boolean;
+  readonly canCopyLink?: boolean;
   readonly onSelect: (action: MessageSheetAction) => void;
   readonly onClose: () => void;
 }
@@ -22,7 +25,7 @@ export interface MessageActionSheetProps {
  * 시안 08 / UI_STATES §3 「메시지 액션」 compact 액션 시트. 공통 Dialog(포커스 트랩·Esc·트리거 복귀)를
  * MessageItemDelete와 같은 portal로 body에 — 앱 전체가 inert가 된다. 추가 래퍼로 감싸지 않는다.
  */
-export function MessageActionSheet({ author, body, canReply, canEdit, canDelete, onSelect, onClose }: MessageActionSheetProps) {
+export function MessageActionSheet({ author, body, canReply, canEdit, canDelete, canCopyText = false, canCopyLink = false, onSelect, onClose }: MessageActionSheetProps) {
   return createPortal(
     <Dialog title={CONVERSATION_DESIGN_COPY.messageActions} onClose={onClose}>
       <div className="msg-action-sheet">
@@ -34,6 +37,16 @@ export function MessageActionSheet({ author, body, canReply, canEdit, canDelete,
           {canReply && (
             <button type="button" className="msg-sheet-item" onClick={() => onSelect('reply')}>
               답글
+            </button>
+          )}
+          {canCopyText && (
+            <button type="button" className="msg-sheet-item" onClick={() => onSelect('copy-text')}>
+              {MESSAGE_MENU_COPY.copyText}
+            </button>
+          )}
+          {canCopyLink && (
+            <button type="button" className="msg-sheet-item" onClick={() => onSelect('copy-link')}>
+              {MESSAGE_MENU_COPY.copyLink}
             </button>
           )}
           {canEdit && (

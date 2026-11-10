@@ -196,10 +196,18 @@ export function Sidebar(props: SidebarProps) {
       {/* R4 시안: 「이동…」(전환기) + 공간 작업은 아이콘 버튼(접근 이름 = 기존 문구, 툴팁 같은 값). */}
       <div className="sidebar-actions">
         {props.onOpenSwitcher && !collapsed && (
-          <button type="button" className="sidebar-jump" aria-label={SIDEBAR_SHELL_COPY.jumpLabel} onClick={props.onOpenSwitcher}>
+          <button
+            type="button"
+            className="sidebar-jump"
+            aria-label={SIDEBAR_SHELL_COPY.jumpLabel}
+            aria-keyshortcuts="Control+K Meta+K"
+            onClick={props.onOpenSwitcher}
+          >
             <SearchIcon />
             <span className="sidebar-jump-text">{SIDEBAR_SHELL_COPY.jump}</span>
-            <kbd className="sidebar-jump-keys">{SIDEBAR_SHELL_COPY.jumpKeys}</kbd>
+            <kbd className="sidebar-jump-keys" aria-hidden="true">
+              {SIDEBAR_SHELL_COPY.jumpKeys}
+            </kbd>
           </button>
         )}
         {props.onBrowseChannels && (

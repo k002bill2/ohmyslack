@@ -166,6 +166,9 @@ export const MEMBER_ADMIN_COPY = {
   deactivateBody: '이 멤버의 모든 기기가 5초 안에 로그아웃되며 다시 로그인할 수 없습니다',
   inactive: '비활성',
   roles: { owner: '관리자', member: '멤버' },
+  /** 새 시안 Admin-Members 목록 머리: 인원 + 초대 링크 규칙 안내. */
+  count: (n: number) => `멤버 ${n}명`,
+  inviteRule: '초대 링크는 한 번만 쓸 수 있고 만료 시각이 지나면 사용할 수 없습니다.',
 } as const;
 
 /**

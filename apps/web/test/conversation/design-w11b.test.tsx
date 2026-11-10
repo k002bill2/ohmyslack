@@ -76,6 +76,21 @@ describe('MessageItem 시안 01·11', () => {
     const names = Array.from(toolbar?.querySelectorAll('button') ?? []).map((b) => b.getAttribute('aria-label') ?? b.textContent);
     expect(names).toEqual(['답글', '수정', '더보기']);
   });
+
+  it('툴바 아이콘은 장식(aria-hidden)이고 버튼 title이 단축키를 알린다(답글 R · 수정 E · 더보기 Shift+F10)', () => {
+    render(
+      <ul>
+        <MessageItem message={msg} selfId="u2" onReply={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />
+      </ul>,
+    );
+    for (const name of ['답글', '수정', '더보기']) {
+      const button = screen.getByRole('button', { name });
+      expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(screen.getByRole('button', { name: '답글' }).getAttribute('title')).toBe('답글 (R)');
+    expect(screen.getByRole('button', { name: '수정' }).getAttribute('title')).toBe('수정 (E)');
+    expect(screen.getByRole('button', { name: '더보기' }).getAttribute('title')).toBe('더보기 (Shift+F10)');
+  });
 });
 
 describe('Composer 전송 아이콘 버튼(시안 01·05)', () => {

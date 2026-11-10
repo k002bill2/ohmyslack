@@ -48,6 +48,28 @@
   color: var(--danger-text);
   font-size: var(--text-sm);
 }
+/* 새 시안 Admin-Members: 왼쪽 인원·안내, 오른쪽 「초대 링크 만들기」(아래 정렬). 좁으면 줄바꿈(버튼 한 줄 전체). */
+.member-admin-actions {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3) var(--space-4);
+}
+.member-admin-summary {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+.member-admin-count {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: var(--leading-tight);
+}
+.member-admin-hint {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
 /* 초대 링크 Dialog: 입력 + 복사 한 줄, 링크는 고정폭 글꼴, 경고는 warning 면(시안 10). */
 .invite-dialog .invite-link-row {
   display: flex;

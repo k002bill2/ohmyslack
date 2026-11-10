@@ -102,6 +102,17 @@ describe('MemberAdmin 상태(UI_STATES §2-12)', () => {
     expect(within(page()).getAllByRole('listitem')).toHaveLength(1);
   });
 
+  it('목록 머리(새 시안): 인원 「멤버 n명」 + 초대 링크 규칙 안내', async () => {
+    const value = [
+      { id: ME, displayName: 'A', role: 'owner' as const },
+      { id: PEER, displayName: 'B', role: 'member' as const },
+    ];
+    render(<MemberAdmin account={{ id: ME, role: 'owner' }} load={async () => ({ ok: true, value })} createInvite={vi.fn()} deactivate={vi.fn()} origin="https://h.test" />);
+    await settle();
+    expect(within(page()).getByText('멤버 2명')).toBeTruthy();
+    expect(within(page()).getByText('초대 링크는 한 번만 쓸 수 있고 만료 시각이 지나면 사용할 수 없습니다.')).toBeTruthy();
+  });
+
   it('권한 없음(member 직접 진입): 「권한이 없습니다」, 버튼 없음', async () => {
     installViewport(1280);
     const server = adminServer('member');

@@ -105,13 +105,13 @@ export function MessageItemToolbar(props: {
       {(caps.reply || caps.edit || caps.menu) && (
         <div className="msg-toolbar" role="toolbar" aria-label={MESSAGE_MENU_COPY.menu} data-open={open ? 'true' : undefined}>
           {caps.reply && (
-            <button type="button" className="msg-action msg-action-reply" data-reply-for={props.messageId} onClick={actions.onReply}>
+            <button type="button" className="msg-action msg-action-reply" data-reply-for={props.messageId} title={`${MESSAGE_MENU_COPY.reply} (R)`} onClick={actions.onReply}>
               <ReplyIcon />
               {MESSAGE_MENU_COPY.reply}
             </button>
           )}
           {caps.edit && (
-            <button type="button" className="msg-action msg-action-icon" aria-label={MESSAGE_ACTION_COPY.edit} title={MESSAGE_ACTION_COPY.edit} onClick={actions.onEdit}>
+            <button type="button" className="msg-action msg-action-icon" aria-label={MESSAGE_ACTION_COPY.edit} title={`${MESSAGE_ACTION_COPY.edit} (E)`} onClick={actions.onEdit}>
               <PencilIcon />
             </button>
           )}
@@ -121,7 +121,7 @@ export function MessageItemToolbar(props: {
               type="button"
               className="msg-action msg-action-icon"
               aria-label={MESSAGE_MENU_COPY.more}
-              title={MESSAGE_MENU_COPY.more}
+              title={`${MESSAGE_MENU_COPY.more} (Shift+F10)`}
               aria-haspopup="menu"
               aria-expanded={open}
               onClick={() => {

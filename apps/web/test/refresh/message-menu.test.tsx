@@ -75,6 +75,42 @@ describe('더보기 메뉴', () => {
     expect(document.activeElement).toBe(more);
   });
 
+  it('Home·End는 첫·마지막 항목, Enter는 선택(메뉴를 닫고 동작)', async () => {
+    const user = userEvent.setup();
+    renderItem();
+    await user.click(screen.getByRole('button', { name: '더보기' }));
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: '메시지 삭제…' }));
+    await user.keyboard('{Home}');
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: '스레드로 답글' }));
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(writeText).toHaveBeenCalledWith('원문 본문');
+  });
+
+  it('Tab은 메뉴를 닫고 더보기 버튼으로 포커스를 돌려준다, 다시 누르면 토글로 닫힌다', async () => {
+    const user = userEvent.setup();
+    renderItem();
+    const more = screen.getByRole('button', { name: '더보기' });
+    await user.click(more);
+    await user.keyboard('{Tab}');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(more);
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    await user.click(more);
+    await user.click(more);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('항목은 role=menuitem·tabIndex -1(로빙), 단축키 표시는 aria-hidden', async () => {
+    const user = userEvent.setup();
+    renderItem();
+    await user.click(screen.getByRole('button', { name: '더보기' }));
+    for (const item of screen.getAllByRole('menuitem')) expect(item.getAttribute('tabindex')).toBe('-1');
+    const kbd = screen.getByRole('menuitem', { name: '메시지 수정' }).querySelector('kbd');
+    expect(kbd?.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('메뉴 안 키는 메시지 단축키(E·Delete)로 새지 않는다', async () => {
     const user = userEvent.setup();
     renderItem();
@@ -119,6 +155,17 @@ describe('항목에서 메뉴 열기', () => {
     li.focus();
     await user.keyboard('{Shift>}{F10}{/Shift}');
     expect(screen.getByRole('menu', { name: '메시지 메뉴' })).toBeTruthy();
+  });
+
+  it('ContextMenu 키도 메뉴를 열고, Esc로 닫으면 포커스는 메시지 항목으로', async () => {
+    const user = userEvent.setup();
+    const li = renderItem();
+    li.focus();
+    fireEvent.keyDown(li, { key: 'ContextMenu' });
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: '스레드로 답글' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(li);
   });
 
   it('삭제된 메시지·전송 대기 메시지는 우클릭해도 메뉴가 없다(브라우저 기본 메뉴 그대로)', () => {
