@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import type {
+  AddBotResult,
   ConversationKind,
   ConversationRow,
   ConversationsStore,
@@ -38,6 +39,23 @@ export const ACCESS_SQL = `SELECT c.kind,
     EXISTS (SELECT 1 FROM conversation_members m
              WHERE m.conversation_id = c.id AND m.user_id = $2 AND m.left_at IS NULL) AS active_member
   FROM conversations c WHERE c.id = $1`;
+
+/** manage_bots 전용: 같은 판정 + 요청자의 워크스페이스 역할(BOT_CHANNEL_SPEC §4-2, 쿼리 1개). */
+export const ACCESS_ROLE_SQL = `SELECT c.kind,
+    EXISTS (SELECT 1 FROM conversation_members m
+             WHERE m.conversation_id = c.id AND m.user_id = $2 AND m.left_at IS NULL) AS active_member,
+    (SELECT wm.role FROM workspace_members wm WHERE wm.workspace_id = c.workspace_id AND wm.user_id = $2) AS role
+  FROM conversations c WHERE c.id = $1`;
+
+/** 봇 추가 대상: 대화와 같은 워크스페이스의 활성 봇(BOT_CHANNEL_SPEC §4-1). */
+const BOT_TARGET_SQL = `SELECT 1 FROM users u
+  JOIN workspace_members wm ON wm.user_id = u.id
+  JOIN conversations c ON c.workspace_id = wm.workspace_id
+  WHERE u.id = $2 AND u.kind = 'bot' AND u.status = 'active' AND c.id = $1`;
+
+/** 활성 봇 멤버만 나가게 한다(사람 멤버십은 이 경로로 바뀌지 않음). */
+const REMOVE_BOT_SQL = `UPDATE conversation_members m SET left_at = $3 FROM users u
+  WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.left_at IS NULL AND u.id = m.user_id AND u.kind = 'bot'`;
 
 const WORKSPACE_OF_SQL = 'SELECT workspace_id FROM workspace_members WHERE user_id = $1';
 
@@ -135,14 +153,16 @@ async function inTransaction<T>(pool: pg.Pool, work: (client: pg.PoolClient) => 
 }
 
 /** 멤버십 생성·재참여: 대화 행을 잠가 last_seq를 읽고 joined_seq·read cursor를 그 값으로 둔다(TRD §2). */
-async function joinIn(client: pg.PoolClient, conversationId: string, userId: string, at: Date): Promise<void> {
+async function joinIn(client: pg.PoolClient, conversationId: string, userId: string, at: Date): Promise<boolean> {
   const conv = await client.query<{ last_seq: string }>('SELECT last_seq::text AS last_seq FROM conversations WHERE id = $1 FOR UPDATE', [
     conversationId,
   ]);
   const lastSeq = conv.rows[0]?.last_seq;
-  if (lastSeq === undefined) return;
+  if (lastSeq === undefined) return false;
   const member = await client.query(UPSERT_MEMBER_SQL, [conversationId, userId, at, lastSeq]);
-  if ((member.rowCount ?? 0) > 0) await client.query(UPSERT_READ_STATE_SQL, [conversationId, userId, lastSeq, at]);
+  const added = (member.rowCount ?? 0) > 0;
+  if (added) await client.query(UPSERT_READ_STATE_SQL, [conversationId, userId, lastSeq, at]);
+  return added;
 }
 
 async function workspaceOf(client: pg.PoolClient, userId: string): Promise<string | undefined> {
@@ -152,10 +172,26 @@ async function workspaceOf(client: pg.PoolClient, userId: string): Promise<strin
 
 export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
   return {
-    async findAccess(conversationId, userId) {
-      const res = await pool.query<{ kind: ConversationKind; active_member: boolean }>(ACCESS_SQL, [conversationId, userId]);
+    async findAccess(conversationId, userId, withRole = false) {
+      const res = await pool.query<{ kind: ConversationKind; active_member: boolean; role?: string | null }>(
+        withRole ? ACCESS_ROLE_SQL : ACCESS_SQL,
+        [conversationId, userId],
+      );
       const row = res.rows[0];
-      return row === undefined ? undefined : { kind: row.kind, activeMember: row.active_member };
+      if (row === undefined) return undefined;
+      const base = { kind: row.kind, activeMember: row.active_member };
+      return withRole ? { ...base, role: row.role ?? '' } : base;
+    },
+    addBot(conversationId, botUserId, at) {
+      return inTransaction<AddBotResult>(pool, async (client) => {
+        const target = await client.query(BOT_TARGET_SQL, [conversationId, botUserId]);
+        if ((target.rowCount ?? 0) === 0) return { commit: false, value: 'invalid_target' };
+        return { commit: true, value: (await joinIn(client, conversationId, botUserId, at)) ? 'added' : 'exists' };
+      });
+    },
+    async removeBot(conversationId, botUserId, at) {
+      const res = await pool.query(REMOVE_BOT_SQL, [conversationId, botUserId, at]);
+      return (res.rowCount ?? 0) > 0;
     },
     createChannel(channel) {
       return inTransaction<CreateChannelResult>(pool, async (client) => {

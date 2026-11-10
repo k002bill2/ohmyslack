@@ -140,3 +140,36 @@ describe('접근 매트릭스 — 봇 행위자(TRD §5-2 5항)', () => {
     }
   });
 });
+
+describe('접근 매트릭스 — 봇 채널 참여 라우트(BOT_CHANNEL_SPEC §4-2)', () => {
+  it('봇 추가·제거 라우트 2개는 owner만 성공하고 일반 멤버 403·비참여자 404·봇 토큰 경로 없음이다', async () => {
+    const lc = await setupBotListener();
+    try {
+      const app = lc.conv.app;
+      const owner = await as(app, 'a');
+      const channel = await createChannel(app, owner, 'bot-routes');
+      const member = await as(app, 'b');
+      await req(app, 'POST', `/api/conversations/${channel}/join`, member);
+      const outsider = await as(app, 'c');
+      const add = `/api/conversations/${channel}/bots`;
+      const remove = `${add}/${lc.bot.botUserId}`;
+      const body = { bot_user_id: lc.bot.botUserId };
+      const routes = app.accessRoutes.filter((r) => r.url.includes('/bots'));
+      expect(routes.map((r) => `${r.method} ${r.url} ${r.access}`).sort()).toEqual([
+        'DELETE /api/conversations/:id/bots/:bot_user_id conversation',
+        'POST /api/conversations/:id/bots conversation',
+      ]);
+      for (const [who, status] of [[member, 403], [outsider, 404]] as const) {
+        expect((await req(app, 'POST', add, who, body)).statusCode).toBe(status);
+        expect((await req(app, 'DELETE', remove, who)).statusCode).toBe(status);
+      }
+      expect((await botCall(lc, 'POST', `conversations/${channel}/bots`, body)).status).toBe(404);
+      expect((await botCall(lc, 'DELETE', `conversations/${channel}/bots/${lc.bot.botUserId}`)).status).toBe(404);
+      expect((lc.botApp.botAccessRoutes ?? []).some((r) => r.url.includes('/bots'))).toBe(false);
+      expect((await req(app, 'POST', add, owner, body)).statusCode).toBe(201);
+      expect((await req(app, 'DELETE', remove, owner)).statusCode).toBe(204);
+    } finally {
+      await teardownBotListener(lc);
+    }
+  });
+});

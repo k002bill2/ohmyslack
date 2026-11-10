@@ -114,6 +114,8 @@ function memoryConversations(members: Map<string, Set<string>>): ConversationsSt
     listMembers: unused,
     listForUser: unused,
     openDm: unused,
+    addBot: unused,
+    removeBot: unused,
   };
 }
 

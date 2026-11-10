@@ -7,7 +7,7 @@ import type { MessagesService } from '../../src/modules/messages/service.js';
 import type { SyncService } from '../../src/modules/sync/service.js';
 
 /** 봇 리스너 Host·헤더 가드와 rate limit 창(TRD §5-2 3·4·7항). DB 없이 inject로. */
-const meOnly = { verifyToken: async () => ({ botUserId: '00000000-0000-4000-8000-000000000001', tokenId: 't' }), me: async () => ({ ownerUserId: '00000000-0000-4000-8000-000000000002', conversationIds: [] }) } as unknown as BotService;
+const meOnly = { verifyToken: async () => ({ botUserId: '00000000-0000-4000-8000-000000000001', tokenId: 't' }), me: async () => ({ ownerUserId: '00000000-0000-4000-8000-000000000002', displayName: 'Bot', conversations: [] }) } as unknown as BotService;
 
 function app(port: number) {
   return buildBotApp({

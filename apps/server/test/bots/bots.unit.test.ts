@@ -172,3 +172,33 @@ describe('bot-admin CLI 분기(메모리 풀)', () => {
     expect(Object.isFrozen(seen[0]?.tokenIds)).toBe(true);
   });
 });
+
+describe('봇 /me projection(BOT_CHANNEL_SPEC §4-4)', () => {
+  it('conversation_ids를 유지하고 conversations에 대화 종류, display_name에 봇 표시 이름을 싣는다', async () => {
+    const { toBotMe } = await import('../../src/modules/bots/routes.js');
+    const { botMeSchema } = await import('../../src/shared.js');
+    const dm = '00000000-0000-4000-8000-0000000000d1';
+    const ch = '00000000-0000-4000-8000-0000000000c1';
+    const bot = '00000000-0000-4000-8000-0000000000b1';
+    const me = toBotMe(bot, {
+      ownerUserId: OWNER,
+      displayName: 'Jarvis',
+      conversations: [
+        { id: ch, kind: 'channel' },
+        { id: dm, kind: 'dm' },
+      ],
+    });
+    expect(me).toEqual({
+      id: bot,
+      owner_user_id: OWNER,
+      display_name: 'Jarvis',
+      conversation_ids: [ch, dm],
+      conversations: [
+        { id: ch, kind: 'channel' },
+        { id: dm, kind: 'dm' },
+      ],
+    });
+    expect(botMeSchema.parse(me)).toEqual(me);
+    expect(() => toBotMe(bot, { ownerUserId: undefined, displayName: 'Jarvis', conversations: [] })).toThrow();
+  });
+});

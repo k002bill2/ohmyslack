@@ -45,8 +45,10 @@ export interface BotService {
   verifyToken(raw: string): Promise<{ readonly botUserId: string; readonly tokenId: string } | undefined>;
   /** 주어진 토큰 ID 중 지금 유효한 것만(단일 쿼리, last_used_at 불변). 봇 WS sweep·전달 재확인용. */
   liveTokenIds(tokenIds: readonly string[]): Promise<ReadonlySet<string>>;
-  /** 봇 리스너 `GET me`: 워크스페이스 활성 owner와 활성 참여 대화 id(TRD §5-2 6항). */
-  me(botUserId: string): Promise<{ readonly ownerUserId: string | undefined; readonly conversationIds: readonly string[] }>;
+  /** 봇 리스너 `GET me`: 워크스페이스 활성 owner, 봇 표시 이름, 활성 참여 대화 id·종류(TRD §5-2 6항, BOT_CHANNEL_SPEC §4-4). */
+  me(botUserId: string): Promise<repo.BotMeRow>;
+  /** 주어진 메시지 중 이 봇에게 보이는 것(참여 후 메시지·참여 후 시작 스레드, BOT_CHANNEL_SPEC §4-5). 단일 쿼리. */
+  visibleMessageIds(botUserId: string, messageIds: readonly string[]): Promise<ReadonlySet<string>>;
 }
 
 export interface BotServiceDeps {
@@ -175,5 +177,6 @@ export function createBotService(deps: BotServiceDeps): BotService {
     },
     liveTokenIds: (tokenIds) => repo.liveTokenIdsAmong(pool, tokenIds),
     me: (botUserId) => repo.botMe(pool, botUserId),
+    visibleMessageIds: (botUserId, messageIds) => repo.visibleMessageIds(pool, botUserId, messageIds),
   };
 }

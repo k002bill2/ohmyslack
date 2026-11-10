@@ -84,6 +84,7 @@ export function registerBotRealtime(app: FastifyInstance, options: BotWsOptions)
     clock,
     sweepMs: realtime.sweepMs ?? BOT_WS_SWEEP_MS,
     endReason: BOT_WS_END_REASON,
+    botScope: { visibleMessageIds: (userId, ids) => bots.visibleMessageIds(userId, ids) },
   });
   const heartbeatMs = realtime.heartbeatMs ?? WS_HEARTBEAT_MS;
   app.addHook('onClose', async () => hub.dispose());

@@ -3,7 +3,10 @@ import { join, resolve } from 'node:path';
 import ts from 'typescript';
 import { parseFlags, type RunContext } from './lib/cli.ts';
 
-/** DEV_DESIGN §5-1 `check:fr-coverage`: PRD P0 FR ↔ 6-2 지정 테스트, TRD TR-SEC ↔ 6-3 매핑을 진행/판정 모드로 검사한다. */
+/**
+ * DEV_DESIGN §5-1 `check:fr-coverage`: PRD P0 FR ↔ 6-2 지정 테스트, TRD TR-SEC ↔ 6-3 매핑,
+ * 6-6 P1 선택 FR(PRD P1이어야 함) 지정 테스트를 진행/판정 모드로 검사한다.
+ */
 
 const EXPECTED_HEADER = ['FR', '지정 테스트 이름', '계층·파일', '실행', '필수 보조 증거', '수동'] as const;
 const SEC_HEADER = ['ID', '지정 테스트 이름', '계층·파일', '실행', '수동'] as const;
@@ -64,8 +67,15 @@ function backticks(cell: string): string[] {
   return [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1] ?? '');
 }
 
-export function parsePrd(text: string): Set<string> {
+export interface PrdFrs {
+  readonly p0: ReadonlySet<string>;
+  readonly p1: ReadonlySet<string>;
+}
+
+/** PRD FR 표(5열) 행에서 우선순위별 FR 집합을 모은다. */
+export function parsePrdFrs(text: string): PrdFrs {
   const p0 = new Set<string>();
+  const p1 = new Set<string>();
   let rows = 0;
   for (const line of text.split('\n')) {
     if (!line.trim().startsWith('|')) continue;
@@ -73,27 +83,34 @@ export function parsePrd(text: string): Set<string> {
     if (cells.length !== 5 || !FR_ID.test(cells[0] ?? '')) continue;
     rows += 1;
     if (cells[2] === 'P0') p0.add(cells[0] ?? '');
+    if (cells[2] === 'P1') p1.add(cells[0] ?? '');
   }
   if (rows === 0) throw new Error('PRD FR 표 파싱 실패: FR 행 0개');
-  return p0;
+  return { p0, p1 };
 }
 
-function toRow(line: string): DesignRow {
+export function parsePrd(text: string): Set<string> {
+  return new Set(parsePrdFrs(text).p0);
+}
+
+function toRow(line: string, section: string): DesignRow {
   const cells = splitCells(line);
   const [fr = '', nameCell = '', fileCell = '', runCell = '', auxCell = '', manualCell = ''] = cells;
   const name = backticks(nameCell)[0];
   if (cells.length !== 6 || !FR_ID.test(fr) || name === undefined) {
-    throw new Error(`6-2 행 형식 불일치: ${line.slice(0, 60)}`);
+    throw new Error(`${section} 행 형식 불일치: ${line.slice(0, 60)}`);
   }
   const aux = backticks(auxCell).filter((t) => /\.tsx?$/.test(t) && !t.startsWith('pnpm '));
   const manual = manualCell === '—' ? undefined : QA_ID.exec(manualCell)?.[0];
   return { fr, name, file: backticks(fileCell)[0] ?? '', run: runCell, aux, manual };
 }
 
+const isHeading = (section: string) => (line: string): boolean => line.startsWith(`### ${section}.`);
+
 /** `### <절>.` 절의 첫 표에서 머리를 검사하고 본문 행 줄을 돌려준다. */
 function tableLines(text: string, section: string, expected: readonly string[]): string[] {
   const lines = text.split('\n');
-  const start = lines.findIndex((l) => l.startsWith(`### ${section}.`));
+  const start = lines.findIndex(isHeading(section));
   if (start < 0) throw new Error(`DEV_DESIGN ${section} 절을 찾지 못함`);
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((l) => l.startsWith('### '));
@@ -111,7 +128,13 @@ function tableLines(text: string, section: string, expected: readonly string[]):
 }
 
 export function parseDesign(text: string): DesignRow[] {
-  return tableLines(text, '6-2', EXPECTED_HEADER).map(toRow);
+  return tableLines(text, '6-2', EXPECTED_HEADER).map((line) => toRow(line, '6-2'));
+}
+
+/** 6-6 P1 선택 FR 표. 절이 없으면 undefined(P1 검사 없음), 있으면 6-2와 같은 6열 형식으로 파싱돼야 한다. */
+export function parseP1Design(text: string): DesignRow[] | undefined {
+  if (!text.split('\n').some(isHeading('6-6'))) return undefined;
+  return tableLines(text, '6-6', EXPECTED_HEADER).map((line) => toRow(line, '6-6'));
 }
 
 /** 6-3 참조 행: 지정 테스트 칸이 `→ FR-…`이며 판정은 참조한 FR을 따른다. */
@@ -282,10 +305,15 @@ function setDiff(prd: ReadonlySet<string>, rows: readonly DesignRow[]): string[]
   return errors;
 }
 
+/** 6-6 FR은 모두 PRD P1 행이어야 한다(PRD에 없거나 P0·P2이면 실패). */
+function p1Diff(p1: ReadonlySet<string>, rows: readonly DesignRow[]): string[] {
+  return rows.filter((r) => !p1.has(r.fr)).map((r) => `6-6 FR이 PRD P1에 없음: ${r.fr}`);
+}
+
 function duplicateNames(rows: readonly DesignRow[]): string[] {
   const seen = new Set<string>();
   return rows.flatMap((r) => {
-    if (seen.has(r.name)) return [`지정 테스트 이름 중복(6-2·6-3): ${r.fr}`];
+    if (seen.has(r.name)) return [`지정 테스트 이름 중복(6-2·6-3·6-6): ${r.fr}`];
     seen.add(r.name);
     return [];
   });
@@ -361,13 +389,21 @@ function listMissing(ctx: RunContext, label: string, rows: readonly DesignRow[])
   for (const r of rows) ctx.out(`  - ${r.fr}`);
 }
 
-function report(ctx: RunContext, ev: Evaluation, total: number, sec: SecTable): void {
+function reportP1(ctx: RunContext, p1: readonly DesignRow[] | undefined, missing: readonly DesignRow[]): void {
+  if (p1 === undefined) return;
+  listMissing(ctx, 'P1 미구현 ', missing);
+  ctx.out(`P1 선택 FR ${p1.length}개 / 구현 ${p1.length - missing.length} / 미구현 ${missing.length}`);
+}
+
+function report(ctx: RunContext, ev: Evaluation, total: number, sec: SecTable, p1: readonly DesignRow[] | undefined): void {
   for (const w of ev.warnings) ctx.out(`경고: ${w}`);
   const secIds = new Set(sec.self.map((r) => r.fr));
-  const frMissing = ev.missing.filter((r) => !secIds.has(r.fr));
+  const p1Rows = new Set<DesignRow>(p1);
+  const frMissing = ev.missing.filter((r) => !secIds.has(r.fr) && !p1Rows.has(r));
   const secMissing = ev.missing.filter((r) => secIds.has(r.fr));
   listMissing(ctx, '미구현 ', frMissing);
   ctx.out(`P0 FR ${total}개 / 구현 ${total - frMissing.length} / 미구현 ${frMissing.length}`);
+  reportP1(ctx, p1, ev.missing.filter((r) => p1Rows.has(r)));
   listMissing(ctx, 'TR-SEC 미구현 ', secMissing);
   ctx.out(`TR-SEC 지정 ${sec.self.length}개 / 미구현 ${secMissing.length}개`);
   const missingFr = new Set(frMissing.map((r) => r.fr));
@@ -377,14 +413,16 @@ function report(ctx: RunContext, ev: Evaluation, total: number, sec: SecTable): 
 }
 
 function check(root: string, flags: Readonly<Record<string, string>>, gate: boolean, ctx: RunContext): number {
-  const prd = parsePrd(readFileSync(resolve(root, flags['prd'] ?? 'docs/02-prd/PRD.md'), 'utf8'));
+  const prd = parsePrdFrs(readFileSync(resolve(root, flags['prd'] ?? 'docs/02-prd/PRD.md'), 'utf8'));
   const design = readFileSync(resolve(root, flags['design'] ?? 'docs/04-dev-design/DEV_DESIGN.md'), 'utf8');
   const rows = parseDesign(design);
   const sec = parseSecurity(design, new Set(rows.map((r) => r.fr)));
-  const all = [...rows, ...sec.self];
+  const p1 = parseP1Design(design);
+  const all = [...rows, ...sec.self, ...(p1 ?? [])];
   const assertions = loadReports(resolve(root, flags['reports'] ?? 'reports'));
   const occurrences = scanSources(root, all.map((r) => r.name));
-  const ev: Evaluation = { errors: [...setDiff(prd, rows), ...duplicateNames(all)], warnings: [], missing: [], failed: new Set() };
+  const initial = [...setDiff(prd.p0, rows), ...p1Diff(prd.p1, p1 ?? []), ...duplicateNames(all)];
+  const ev: Evaluation = { errors: initial, warnings: [], missing: [], failed: new Set() };
   for (const row of all) {
     const before = ev.errors.length;
     evaluateRow(row, occurrences.get(row.name) ?? [], assertions, gate, ev);
@@ -394,7 +432,7 @@ function check(root: string, flags: Readonly<Record<string, string>>, gate: bool
   }
   ev.errors.push(...refErrors(sec.refs, ev.failed));
   if (gate) ev.errors.push(...checkQa(root, 'QA-BOOT-01'));
-  report(ctx, ev, rows.length, sec);
+  report(ctx, ev, rows.length, sec, p1);
   return ev.errors.length > 0 ? 1 : 0;
 }
 

@@ -95,7 +95,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function setup(clock: () => number = () => T0) {
+type BotScope = NonNullable<Parameters<typeof createHub>[0]['botScope']>;
+
+function setup(clock: () => number = () => T0, botScope?: BotScope) {
   const st: State = {
     sessions: new Map(),
     members: new Set(),
@@ -135,6 +137,8 @@ function setup(clock: () => number = () => T0) {
     listMembers: unused,
     listForUser: unused,
     openDm: unused,
+    addBot: unused,
+    removeBot: unused,
   };
   const syncStore: SyncStore = {
     async watermark() {
@@ -164,7 +168,7 @@ function setup(clock: () => number = () => T0) {
     readEvents: createReadEvents(),
   };
   const conversations = createConversationsService({ store: conversationStore, events: events.conversationEvents, clock });
-  hub = createHub({ auth, conversations, syncStore, clock, ...events });
+  hub = createHub({ auth, conversations, syncStore, clock, ...events, ...(botScope === undefined ? {} : { botScope }) });
   const h = hub;
 
   const connect = (userId: string, opts: { expiresAt?: number } = {}) => {
@@ -644,5 +648,40 @@ describe('발견 회귀: replay 취소·실패 뒤 구독 정리', () => {
     await flush(a.conn);
     t.conversationEvents.membershipEnded(C1, ALICE);
     expect(a.socket.sent).toEqual([{ type: 'sync.required' }]);
+  });
+});
+
+describe('봇 허브 botScope(BOT_CHANNEL_SPEC §4-3·§4-5)', () => {
+  it('replay·실시간은 보이는 메시지만 보내고 멤버십 변화는 그 사용자 연결에 membership.changed로 보낸다(사람 허브는 0)', async () => {
+    const shown = record(C1);
+    const hidden = record(C1);
+    const t = setup(() => T0, { visibleMessageIds: async (_u, ids) => new Set(ids.filter((id) => id === shown.id)) });
+    t.st.changes.push({ changeId: 5, op: 'create', message: hidden }, { changeId: 6, op: 'create', message: shown });
+    t.join(C1, ALICE);
+    const a = t.connect(ALICE);
+    t.hub.subscribe(a.conn, C1, 0);
+    await flush(a.conn);
+    expect(a.socket.sent.map((f) => ('message' in f ? f.message.id : f.type))).toEqual([shown.id, 'conversation.subscribed']);
+    a.socket.sent.length = 0;
+    t.messageEvents.created({ changeId: 11, message: hidden });
+    t.messageEvents.created({ changeId: 12, message: shown });
+    t.messageEvents.deleted({ changeId: 13, conversationId: C1, messageId: hidden.id, seq: hidden.seq, deletedAt: new Date(T0) });
+    await flush(a.conn);
+    expect(a.socket.sent.map((f) => ('message' in f ? f.message.id : f.type))).toEqual([shown.id]);
+    a.socket.sent.length = 0;
+    t.conversationEvents.membershipStarted(C2, ALICE);
+    t.conversationEvents.membershipStarted(C2, BOB);
+    t.conversationEvents.membershipEnded(C1, ALICE);
+    await flush(a.conn);
+    expect(a.socket.sent).toEqual([
+      { type: 'error', code: 'not_found', retryable: false, conversation_id: C1 },
+      { type: 'membership.changed', conversation_id: C2, state: 'joined' },
+      { type: 'membership.changed', conversation_id: C1, state: 'left' },
+    ]);
+    const human = setup();
+    const h = human.connect(ALICE);
+    human.conversationEvents.membershipStarted(C1, ALICE);
+    await flush(h.conn);
+    expect(h.socket.sent).toEqual([]);
   });
 });
