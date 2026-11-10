@@ -438,7 +438,13 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   );
   // FR-BOT-11: 봇 추가·제거 성공 → 멤버 재조회(멤버 수·멘션 후보·컨트롤 상태가 같은 목록을 쓴다).
   const [memberRevision, bumpMembers] = useReducer((n: number) => n + 1, 0);
-  const conversationMembers = useConversationMembers(dataSource, space?.id ?? null, space !== undefined && space.left !== true, memberRevision);
+  // QA D1: 세션 중 비활성화(활성 목록에서 사라짐)도 같은 대화의 멤버를 다시 읽는다 — 두 카운터 모두 단조 증가라 합이 곧 재조회 신호.
+  const conversationMembers = useConversationMembers(
+    dataSource,
+    space?.id ?? null,
+    space !== undefined && space.left !== true,
+    memberRevision + (snap.activeRevision ?? 0),
+  );
   const mentionCandidates = conversationMembers.candidates;
   const manageBots = canManageChannelBots(snap.account, space) && dataSource.addBotToChannel !== undefined && dataSource.removeBotFromChannel !== undefined;
   const activeBots = useActiveBots(dataSource, manageBots);

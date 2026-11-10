@@ -233,11 +233,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   /** 직전 `GET /api/members`(활성만)의 ID. 세션 중 비활성화돼 목록에서 사라진 ID는 캐시된 이름을 다시 확인한다(Codex r1 P2). */
   let activeIds: ReadonlySet<string> = new Set();
+  /** Snapshot.activeRevision — 활성 목록에서 사라진 ID를 알 때마다 +1(QA D1: 대화 멤버·멘션 후보 재조회 신호). */
+  let activeRevision = 0;
   const noteActive = (members: MembersResponse['members']) => {
     const next = new Set(members.map((m) => m.id));
     const gone = [...activeIds].filter((id) => !next.has(id));
     activeIds = next;
     if (gone.length === 0) return;
+    activeRevision += 1;
+    emit();
     void settleNames(gone, true).then(
       () => {
         if (!ended) refreshNames();
@@ -340,6 +344,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       listState,
       loadedHistory,
       loadedReplies: [...repliesLoaded],
+      activeRevision,
       ...(account === undefined ? {} : { account }),
     });
     listeners.forEach((l) => l());

@@ -72,6 +72,11 @@ export interface Snapshot {
   readonly loadedHistory?: string | null;
   /** 기존 답글을 끝까지 읽은 스레드 root id들. 답글 조회가 없는 구현(메모리)은 생략 — 「항상 로드됨」(W-23b 위치 복원). */
   readonly loadedReplies?: readonly string[];
+  /**
+   * 세션 중 활성 멤버 목록(`GET /api/members`)에서 사라진 ID를 알 때마다 오른다(QA D1). 바뀌면 화면이 대화 멤버
+   * (멘션 후보·멤버 수)를 다시 읽는다 — 서버가 비활성을 이미 빼서 준다. 없으면 0으로 본다(메모리 구현).
+   */
+  readonly activeRevision?: number;
 }
 
 /** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */
