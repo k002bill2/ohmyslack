@@ -540,11 +540,19 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return None
 
     def _refuse_channel_top_level(self, chat_id: str, root: Optional[str]) -> Optional[SendResult]:
-        """채널에서는 스레드 답글로만 쓴다(§5-6). 루트를 모르면 보내지 않고 로그만(본문 미기록)."""
-        if root is not None or self._kinds.get(str(chat_id)) != "channel":
+        """채널에서는 스레드 답글로만 쓴다(§5-6). 루트를 모르면 보내지 않고 로그만(본문 미기록).
+
+        fail-closed(F-3): `/me`에서 확인된 dm만 그대로 보낸다. 모르는 대화(맵에 없음·이미 나감)는 루트가 있어도 거부한다.
+        """
+        kind = self._kinds.get(str(chat_id))
+        if kind == "dm" or (kind == "channel" and root is not None):
             return None
-        logger.warning("ohmyslack: refusing top-level post to a channel (no thread root)")
-        return SendResult(success=False, error="ohmyslack: channel posts must be thread replies",
+        if kind == "channel":
+            logger.warning("ohmyslack: refusing top-level post to a channel (no thread root)")
+            return SendResult(success=False, error="ohmyslack: channel posts must be thread replies",
+                              retryable=False, error_kind="forbidden")
+        logger.warning("ohmyslack: refusing post to an unknown conversation")
+        return SendResult(success=False, error="ohmyslack: unknown conversation",
                           retryable=False, error_kind="forbidden")
 
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
@@ -688,7 +696,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return None
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
-        kind = self._kinds.get(str(chat_id), "dm")
+        kind = self._kinds.get(str(chat_id)) or "unknown"  # 모르는 대화를 dm으로 보지 않는다(F-3)
         return {"name": "Jarvis" if kind == "dm" else str(chat_id), "type": kind, "chat_id": str(chat_id)}
 
 
