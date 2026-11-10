@@ -213,3 +213,19 @@ export async function botMe(db: Db, botUserId: string): Promise<BotMeRow> {
     conversations: convs.rows.map((r) => ({ id: r.conversation_id, kind: r.kind })),
   };
 }
+
+/**
+ * 봇 가시성(BOT_CHANNEL_SPEC §4-5, §10 Q2 ★): M.seq > joined_seq 이고 (최상위이거나 루트 seq > joined_seq).
+ * 답글 seq는 항상 루트보다 크므로 `COALESCE(루트 seq, M.seq) > joined_seq` 하나로 같다. 활성 멤버십이 없으면 보이지 않는다.
+ */
+export async function visibleMessageIds(db: Db, botUserId: string, messageIds: readonly string[]): Promise<ReadonlySet<string>> {
+  if (messageIds.length === 0) return new Set();
+  const res = await db.query<{ id: string }>(
+    `SELECT m.id FROM messages m
+       LEFT JOIN messages r ON r.id = m.thread_root_id
+       JOIN conversation_members jm ON jm.conversation_id = m.conversation_id AND jm.user_id = $1 AND jm.left_at IS NULL
+      WHERE m.id = ANY($2::uuid[]) AND COALESCE(r.seq, m.seq) > jm.joined_seq`,
+    [botUserId, [...messageIds]],
+  );
+  return new Set(res.rows.map((r) => r.id));
+}

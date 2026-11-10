@@ -6,7 +6,7 @@ import { bot as botCall, count, setupBotListener, teardownBotListener, type BotL
 import { connectedBot, subscribeBot } from './bot-ws-harness.js';
 
 /**
- * 봇 참여 범위 경계(TRD §5-2 5항: owner DM + owner가 추가한 채널, Codex r1 P1·P2).
+ * 봇 참여 범위 경계(TRD §5-2 5항: CLI가 만든 owner DM + owner가 `POST /api/conversations/{id}/bots`로 추가한 채널, BOT_CHANNEL_SPEC §4-1, Codex r1 P1·P2).
  * 봇 DM은 CLI create가 만드는 owner DM만, 봇 비활성화는 CLI disable만 — 사람 API는 없는 상대와 같은 거부.
  */
 let ctx: ConvIntContext;

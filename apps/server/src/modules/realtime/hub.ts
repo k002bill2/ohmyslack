@@ -37,6 +37,11 @@ export interface HubDeps {
   readonly sweepMs?: number;
   /** 인증이 끝나 닫을 때(sweep·재확인·폐기 이벤트)의 close 사유 고정값. 생략하면 사람 WS 사유(session_ended·session_revoked). */
   readonly endReason?: string;
+  /**
+   * 봇 허브 전용(BOT_CHANNEL_SPEC §4-3·§4-5). 있으면 replay·실시간 메시지 이벤트를 이 판정으로 거르고,
+   * 멤버십 변화를 `membership.changed`로 그 사용자 연결에 보낸다. 사람 허브는 주지 않는다(동작 변화 0).
+   */
+  readonly botScope?: { visibleMessageIds(userId: string, messageIds: readonly string[]): Promise<ReadonlySet<string>> };
 }
 
 interface Subscription {
@@ -221,14 +226,25 @@ export function createHub(deps: HubDeps): Hub {
     conn.expiryTimer.unref?.();
   };
 
-  const fanoutMessage = (conversationId: string, changeId: number, frame: () => WsServerFrame): void => {
+  /** 봇 허브면 가시성 판정을 통과한 메시지만(사람 허브는 항상 true). */
+  const visibleTo = async (conn: Connection, messageId: string): Promise<boolean> =>
+    deps.botScope === undefined || (await deps.botScope.visibleMessageIds(conn.userId, [messageId])).has(messageId);
+
+  const fanoutMessage = (conversationId: string, changeId: number, messageId: string, frame: () => WsServerFrame): void => {
     for (const conn of conns) {
       if (!conn.subs.has(conversationId)) continue;
       enqueue(conn, async () => {
         const sub = conn.subs.get(conversationId);
         if (sub === undefined || changeId <= sub.through) return;
-        if (await deliverable(conn, conversationId)) send(conn, frame());
+        if ((await deliverable(conn, conversationId)) && (await visibleTo(conn, messageId))) send(conn, frame());
       });
+    }
+  };
+
+  const membershipFrame = (conversationId: string, userId: string, state: 'joined' | 'left'): void => {
+    if (deps.botScope === undefined) return;
+    for (const conn of conns) {
+      if (conn.userId === userId) enqueue(conn, async () => send(conn, { type: 'membership.changed', conversation_id: conversationId, state }));
     }
   };
 
@@ -250,12 +266,12 @@ export function createHub(deps: HubDeps): Hub {
 
   const unsubscribers = [
     deps.messageEvents.on('created', (e: MessageChange) =>
-      fanoutMessage(e.message.conversationId, e.changeId, () => messageFrame('message.created', e.changeId, e.message)),
+      fanoutMessage(e.message.conversationId, e.changeId, e.message.id, () => messageFrame('message.created', e.changeId, e.message)),
     ),
     deps.messageEvents.on('updated', (e: MessageChange) =>
-      fanoutMessage(e.message.conversationId, e.changeId, () => messageFrame('message.updated', e.changeId, e.message)),
+      fanoutMessage(e.message.conversationId, e.changeId, e.message.id, () => messageFrame('message.updated', e.changeId, e.message)),
     ),
-    deps.messageEvents.on('deleted', (e: MessageDeleted) => fanoutMessage(e.conversationId, e.changeId, () => deletedFrame(e))),
+    deps.messageEvents.on('deleted', (e: MessageDeleted) => fanoutMessage(e.conversationId, e.changeId, e.messageId, () => deletedFrame(e))),
     deps.readEvents.onUpdated(onRead),
     deps.authEvents.onSessionRevoked((ids) => {
       const revoked = new Set(ids);
@@ -263,7 +279,9 @@ export function createHub(deps: HubDeps): Hub {
     }),
     deps.conversationEvents.onMembershipEnded((conversationId, userId) => {
       for (const conn of conns) if (conn.userId === userId) endSubscription(conn, conversationId);
+      membershipFrame(conversationId, userId, 'left');
     }),
+    deps.conversationEvents.onMembershipStarted((conversationId, userId) => membershipFrame(conversationId, userId, 'joined')),
   ];
 
   /**
@@ -283,7 +301,9 @@ export function createHub(deps: HubDeps): Hub {
     while (cursor < through) {
       const page = await syncStore.scan({ userId: conn.userId, after: cursor, through, limit: SYNC_LIMIT_MAX });
       if (!(await replayStillValid(conn, conversationId, sub))) return false;
-      const mine = page.changes.filter((c) => c.message.conversationId === conversationId);
+      const inConv = page.changes.filter((c) => c.message.conversationId === conversationId);
+      const visible = deps.botScope === undefined ? undefined : await deps.botScope.visibleMessageIds(conn.userId, inConv.map((c) => c.message.id));
+      const mine = visible === undefined ? inConv : inConv.filter((c) => visible.has(c.message.id));
       for (const change of [...mine].sort((x, y) => x.changeId - y.changeId)) send(conn, replayFrame(change.changeId, change.message));
       if (page.scannedThrough <= cursor) break;
       cursor = page.scannedThrough;

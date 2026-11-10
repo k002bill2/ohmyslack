@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, preHandlerAsyncHookHandler } from
 import { z } from 'zod';
 import { BOT_ROUTE_PREFIX, markBotGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
-import type { BotMe } from '../../shared.js';
+import type { BotMe, HistoryResponse, RepliesResponse, SnapshotResponse, SyncResponse } from '../../shared.js';
 import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService } from '../attachments/index.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import { editAs, historyOf, repliesOf, sendAs } from '../messages/routes.js';
@@ -105,8 +105,13 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
   const p = BOT_ROUTE_PREFIX;
   const token = botTokenGuard(deps.bots);
   const clock = deps.clock ?? Date.now;
+  // 봇 가시성(§4-5 ⑦): 메시지에 묶인 첨부는 그 메시지 규칙, 미결합 첨부는 봇이 올린 것만.
   const attachmentAccess = markBotGuard(async (request: FastifyRequest): Promise<void> => {
-    request.attachmentAccess = await attachments.resolveAccess(requireBot(request).botUserId, attachmentPathId(request), 'read');
+    const botId = requireBot(request).botUserId;
+    const meta = await attachments.resolveAccess(botId, attachmentPathId(request), 'read');
+    const visible = meta.messageId === null ? meta.uploaderId === botId : (await deps.bots.visibleMessageIds(botId, [meta.messageId])).has(meta.messageId);
+    if (!visible) throw new HttpError(404, 'not_found');
+    request.attachmentAccess = meta;
   });
   registerUploadRoute(
     app,
@@ -118,6 +123,37 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
     if (request.attachmentAccess === undefined) throw new HttpError(404, 'not_found');
     return downloadAs(attachments, request.attachmentAccess, request, reply);
   });
+}
+
+/** 봇 가시성(BOT_CHANNEL_SPEC §4-5)으로 메시지 목록을 거른다. 페이지 커서·has_more는 원래 페이지 기준 그대로(건너뛰기만). */
+async function visibleOnly<T extends { readonly id: string }>(deps: BotRouteDeps, botId: string, items: readonly T[]): Promise<T[]> {
+  const visible = await deps.bots.visibleMessageIds(botId, items.map((m) => m.id));
+  return items.filter((m) => visible.has(m.id));
+}
+
+async function botHistory(deps: BotRouteDeps, request: FastifyRequest): Promise<HistoryResponse> {
+  const page = await historyOf(deps.messages, pathId(request), request.query);
+  return { ...page, messages: await visibleOnly(deps, requireBot(request).botUserId, page.messages) };
+}
+
+/** 루트가 봇에게 보이지 않으면(참여 전 시작 스레드) 404 — 숨김 루트 표현을 새로 만들지 않는다. */
+async function botReplies(deps: BotRouteDeps, request: FastifyRequest): Promise<RepliesResponse> {
+  const rootId = pathId(request);
+  const botId = requireBot(request).botUserId;
+  if (!(await deps.bots.visibleMessageIds(botId, [rootId])).has(rootId)) throw new HttpError(404, 'not_found');
+  return repliesOf(deps.messages, rootId, request.query);
+}
+
+async function botSnapshot(deps: BotRouteDeps, request: FastifyRequest): Promise<SnapshotResponse> {
+  const page = await snapshotOf(deps.sync, request.query);
+  return { ...page, messages: await visibleOnly(deps, requireBot(request).botUserId, page.messages) };
+}
+
+async function botSync(deps: BotRouteDeps, request: FastifyRequest): Promise<SyncResponse> {
+  const botId = requireBot(request).botUserId;
+  const page = await syncAs(deps.sync, botId, request.query);
+  const visible = await deps.bots.visibleMessageIds(botId, page.changes.map((c) => c.message.id));
+  return { ...page, changes: page.changes.filter((c) => visible.has(c.message.id)) };
 }
 
 /** `/me` projection: `conversation_ids`는 호환 유지, `conversations`(종류)·`display_name`을 더한다(BOT_CHANNEL_SPEC §4-4). */
@@ -148,12 +184,8 @@ export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): voi
   const guarded = (target: Target, action: AccessAction) => [token, accessGuard(deps, target, action)];
 
   app.get(`${p}me`, { config, preHandler: token }, (request) => me(deps, request));
-  app.get(`${p}conversations/:id/messages`, { config, preHandler: guarded('conversation', 'read') }, (request) =>
-    historyOf(deps.messages, pathId(request), request.query),
-  );
-  app.get(`${p}messages/:id/replies`, { config, preHandler: guarded('message', 'read') }, (request) =>
-    repliesOf(deps.messages, pathId(request), request.query),
-  );
+  app.get(`${p}conversations/:id/messages`, { config, preHandler: guarded('conversation', 'read') }, (request) => botHistory(deps, request));
+  app.get(`${p}messages/:id/replies`, { config, preHandler: guarded('message', 'read') }, (request) => botReplies(deps, request));
   app.post(
     `${p}conversations/:id/messages`,
     { config, preHandler: [...guarded('conversation', 'write'), rateGuard(deps.limiter, 'create')] },
@@ -162,8 +194,8 @@ export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): voi
   app.patch(`${p}messages/:id`, { config, preHandler: [...guarded('message', 'write'), rateGuard(deps.limiter, 'edit')] }, (request) =>
     editAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body),
   );
-  app.get(`${p}sync`, { config, preHandler: token }, (request) => syncAs(deps.sync, requireBot(request).botUserId, request.query));
-  app.get(`${p}sync/snapshot`, { config, preHandler: guarded('query', 'read') }, (request) => snapshotOf(deps.sync, request.query));
+  app.get(`${p}sync`, { config, preHandler: token }, (request) => botSync(deps, request));
+  app.get(`${p}sync/snapshot`, { config, preHandler: guarded('query', 'read') }, (request) => botSnapshot(deps, request));
   app.put(`${p}read-state`, { config, preHandler: guarded('body', 'read') }, (request) =>
     markReadAs(deps.sync, requireBot(request).botUserId, request.body),
   );
