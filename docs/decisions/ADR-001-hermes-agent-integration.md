@@ -68,16 +68,16 @@
 
 ### (c) 명령 권한 — ★ 서버 멤버십 상한 + 어댑터 allowlist 이중 통제
 
-- **서버측 근거**: ① 봇은 owner와의 Jarvis DM에만 참여(채널 참여는 P1, owner가 웹에서 명시적으로 추가할 때만). 봇 토큰으로는 DM 생성·채널 참여·멤버 조회 라우트가 없습니다. DM은 2인 고정이므로(TRD:64) 제3자가 Jarvis DM에 쓸 수 없습니다. ② 모든 메시지 projection에 서버가 채운 `author_kind`와 `author_id`. ③ `GET /api/bot/v1/me`가 `owner_user_id`를 돌려줌.
+- **서버측 근거**: ① 봇은 owner와의 Jarvis DM에만 참여(채널 참여는 P1 FR FR-BOT-08–11, owner가 웹에서 명시적으로 추가할 때만 — `docs/09-specs/BOT_CHANNEL_SPEC.md`). 봇 토큰으로는 DM 생성·채널 참여·멤버 조회 라우트가 없습니다. DM은 2인 고정이므로(TRD:64) 제3자가 Jarvis DM에 쓸 수 없습니다. ② 모든 메시지 projection에 서버가 채운 `author_kind`와 `author_id`. ③ `GET /api/bot/v1/me`가 `owner_user_id`를 돌려줌.
 - **어댑터·게이트웨이**: Hermes AUTHZ에 `OHMYSLACK_ALLOWED_USERS=<owner user_id>` + `allowlist_suppresses_pairing=True`(`gateway_env.py:18-23`). 어댑터 자체도 `author_id != owner_user_id`인 메시지는 `handle_message`로 넘기지 않습니다(이중). 자기(봇) 메시지는 무시.
-- **다른 멤버 메시지**: Jarvis DM에는 들어올 수 없습니다. 봇이 채널에 참여하는 P1 단계에서도 owner 외 작성자 메시지는 세션 생성·지시 처리 0, 응답도 하지 않습니다(사람이 본 내용이 지시로 흘러가는 프롬프트 인젝션 차단). owner가 남의 글을 인용·전달한 경우의 간접 인젝션은 Hermes 승인 게이트가 마지막 방어선입니다(잔여 위험, THREAT_MODEL-diff TM-BOT-05).
+- **다른 멤버 메시지**: Jarvis DM에는 들어올 수 없습니다. 봇이 채널에 참여하는 경우(P1 FR FR-BOT-10)에도 owner 외 작성자 메시지는 세션 생성·지시 처리 0, 응답도 하지 않습니다(사람이 본 내용이 지시로 흘러가는 프롬프트 인젝션 차단). owner가 남의 글을 인용·전달한 경우의 간접 인젝션은 Hermes 승인 게이트가 마지막 방어선입니다(잔여 위험, THREAT_MODEL-diff TM-BOT-05).
 
 ### (d) 대화 모델 — ★ 전용 DM 「Jarvis」 + 최상위 = 새 세션
 
 - owner가 Jarvis DM에 쓴 **최상위 메시지** → 어댑터가 `thread_id = 그 메시지 id`로 `build_source` → 새 Hermes 세션(Slack 기본 동작과 같은 모델, `slack/adapter.py:2808-2811`; Mattermost `mattermost/adapter.py:580-582`).
 - **스레드 답글** → `thread_id = thread_root_id` → 같은 세션. 봇의 진행·결과는 `thread_root_id`를 붙여 같은 스레드 답글로 게시(1단 스레드 규칙 FR-MSG-06과 일치 — 원문이 답글이면 루트로 보정).
 - **브리핑**: cron `deliver=ohmyslack`(홈 채널 = Jarvis DM id, `OHMYSLACK_HOME_CHANNEL`) → **최상위 메시지**. owner가 그 브리핑 스레드에 답하면 그 스레드가 새 세션이 됩니다(추정 — 브리핑 원 세션과 이어지는지는 Hermes cron 세션 정책에 따름, 확인 필요).
-- **채널 멘션**: H1–H3 범위 밖(★). P1에서 owner가 채널에 봇을 추가하면 Mattermost처럼 멘션 게이팅(`mattermost/adapter.py:506-526`).
+- **채널 멘션**: H1–H3 범위 밖(★). P1 FR FR-BOT-10: owner가 채널에 봇을 추가하면 서버 `mention_user_ids` 기반 멘션 게이팅(참고 패턴 `plugins/platforms/mattermost/adapter.py:506-526`, 실제 경로 정정).
 
 ### (e) 이벤트 수신 — ★ 기존 WS 프로토콜 재사용, 봇 리스너에서 Bearer handshake
 
@@ -173,7 +173,7 @@
 | 위험 | 등급(추정) | 완화 |
 |---|---|---|
 | 봇 토큰 탈취 → Jarvis 사칭 | M | 루프백 전용, 해시 저장, `omsb_` 접두 로그 마스킹, 회전·폐기 CLI |
-| 다른 멤버 글이 지시로 유입(프롬프트 인젝션) | M | 멤버십 상한 + allowlist 이중 통제, 채널 참여는 P1 |
+| 다른 멤버 글이 지시로 유입(프롬프트 인젝션) | M | owner 명시 추가만 허용하는 멤버십 범위 + owner allowlist + 채널 멘션 게이팅, 채널 참여는 P1 FR(FR-BOT-08–11) |
 | 밀린 지시 일괄 실행 | M | 15분 처리 상한 + 안내 |
 | edit 스트리밍이 change log 보존 한도 소모 | M | 기본 끔, rate limit |
 | 공용 PG 용량(첨부) | L–M | 10 MiB 상한, 보존 기한, D-4 |
