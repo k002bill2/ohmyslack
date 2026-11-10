@@ -80,13 +80,6 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
     }
   });
 
-  it('「여기부터 새 메시지」 라벨 테두리 danger-solid가 danger-bg 위에서 ≥ 3:1(§7-1 1.4.11)', () => {
-    for (const s of SCHEMES) {
-      expect(ratio(tok(s, '--danger-solid').value, tok(s, '--danger-bg').value), s)
-        .toBeGreaterThanOrEqual(checker.MIN_CONTRAST_NONTEXT);
-    }
-  });
-
   it('has no surface token in the forbidden hue zone (§2-3 3항)', () => {
     for (const s of SCHEMES) {
       const bad = Object.entries(tokens.colors[s])

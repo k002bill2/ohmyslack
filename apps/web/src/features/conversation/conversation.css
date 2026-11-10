@@ -356,7 +356,6 @@
 }
 .new-messages-label {
   padding: 2px var(--space-2);
-  border: 1px solid var(--danger-solid);
   border-radius: 999px;
   background: var(--danger-bg);
   color: var(--danger-text);
