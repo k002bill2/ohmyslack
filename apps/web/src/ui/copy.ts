@@ -302,6 +302,24 @@ export const LEFT_CHANNEL_COPY = {
 export const BOT_BADGE_TEXT = '봇';
 
 /**
+ * 채널 헤더 봇 컨트롤(FR-BOT-11, COPY_GAPS G-43–47). ★ Jarvis 초안(2026-11-10), 영환님 사후 조정 가능.
+ * 구조는 「채널 나가기」(`LEFT_CHANNEL_COPY`·`LEAVE_CHANNEL_COPY`)와 같다: 헤더 버튼 = Dialog 제목, 확인 버튼은 동사 하나.
+ * 봇이 여럿일 수 있어 버튼·제목에 봇 이름을 붙인다(조사 없이 「: 이름」).
+ */
+export const BOT_CHANNEL_COPY = {
+  /** G-43 추가 버튼. */
+  add: (bot: string) => `봇 추가: ${bot}`,
+  /** G-44 제거 버튼 겸 확인 Dialog 제목. */
+  title: (bot: string) => `봇 제거: ${bot}`,
+  /** G-45 확인 Dialog 본문. */
+  body: '제거하면 이 봇은 이 채널의 새 메시지를 받지 않고 이 채널에 글을 쓸 수 없습니다. 다시 추가할 수 있습니다.',
+  /** G-46 확인 버튼(취소는 `CANCEL_LABEL`). */
+  confirm: '제거',
+  /** G-47 추가 실패 — 뒤에 원인 1문장(`failureText`)을 붙인다. */
+  addFailed: '봇을 추가하지 못했습니다.',
+} as const;
+
+/**
  * 첨부 문구(W-22, CMP-27–29·Composer 첨부). 정본 미정(UI_STATES Q-H2·Q-H3) — Jarvis ★ 임시 결정.
  * 수치(10MB·형식)는 문구에만 쓰고 판정은 shared 상수(`ATTACHMENT_*`)와 서버 응답 코드가 한다.
  */
