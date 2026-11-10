@@ -258,7 +258,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     const next = new Set(members.map((m) => m.id));
     const gone = [...activeIds].filter((id) => !next.has(id));
     activeIds = next;
-    if (gone.length === 0) return;
+    if (gone.length > 0) noteGone(gone);
+  };
+  /** 활성에서 빠진 ID: 대화 멤버 재조회 신호를 올리고(QA D1) 캐시 이름을 「(비활성)」로 다시 확인한다. */
+  const noteGone = (gone: readonly string[]) => {
     activeRevision += 1;
     emit();
     void settleNames(gone, true).then(
@@ -1025,6 +1028,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     deactivateMember: (userId) =>
       attempt(async () => {
         await api.post<undefined>(`/api/admin/members/${encodeURIComponent(userId)}/deactivate`);
+        // 멤버 관리는 성공 뒤 목록을 다시 읽지 않는다 — 여기서 바로 활성에서 빼야 멘션 후보·이름이 맞는다(QA D1).
+        activeIds = new Set([...activeIds].filter((id) => id !== userId));
+        noteGone([userId]);
         return null;
       }),
     startDm: (userId) => attempt(async () => refreshThen((await api.post<ConversationRef>('/api/dms', { user_id: userId })).id)),
