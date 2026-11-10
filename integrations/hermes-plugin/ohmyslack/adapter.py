@@ -4,6 +4,8 @@
 TRD §5-2-8). `created_at`이 15분을 넘은 지시는 실행하지 않고 대화별 안내 1건(ADR D-7).
 세션: 최상위 → `thread_id = message.id`, 답글 → `thread_id = thread_root_id`(ADR §3-d).
 `/approve`·`/deny` 등 텍스트는 해석하지 않고 그대로 Hermes에 넘긴다(D-5).
+채널(BOT_CHANNEL_SPEC §5): `/me.conversations`의 종류로 dm/channel을 구분하고 모르는 대화는 무시한다. 채널은
+owner 글 중 서버 `mention_user_ids`에 봇이 있는 것만(답글 포함) 받고, 본문 맨 앞 `@<봇 표시 이름>` 1개를 지운다.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import json
 import logging
 import os
 import random
+import re
 import stat
 import time
 import uuid
@@ -49,6 +52,7 @@ IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 INBOUND_IMAGE_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 ATTACHMENTS_PER_MESSAGE_MAX = 4  # shared/attachments.ts
 SYNC_OPS = frozenset({"create", "edit", "delete"})  # shared/sync.ts SYNC_CHANGE_OPS
+CHAT_KINDS = frozenset({"dm", "channel"})  # shared/bots.ts botMeSchema conversations[].kind
 WS_CLOSE_TOKEN_INVALID = 1008  # 토큰 폐기·봇 비활성화·회전(token_revoked·session_ended) — 재연결하지 않는다
 
 
@@ -106,6 +110,18 @@ def read_attachment_file(path: Any, allowed: dict[str, str],
     return data, mime, name
 
 
+def strip_mention_token(body: str, display_name: str) -> str:
+    """본문 맨 앞 `@<봇 표시 이름>` 토큰 1개만 지우고 앞뒤 공백을 다듬는다(BOT_CHANNEL_SPEC §5-3).
+
+    경계는 웹 멘션 규칙과 같다: 이름 뒤가 문자·숫자·`_`이면 멘션이 아니다(`@Jarvis님`은 그대로).
+    """
+    text = (body or "").strip()
+    if not display_name:
+        return text
+    match = re.match(rf"@{re.escape(display_name)}(?!\w)", text)
+    return text[match.end():].strip() if match else text
+
+
 def _is_uuid(value: Any) -> bool:
     try:
         uuid.UUID(str(value))
@@ -153,6 +169,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._stopping = False
         self._me_id = self._owner_id = ""
         self._conversation_ids: tuple[str, ...] = ()
+        self._kinds: dict[str, str] = {}  # conversation_id → "dm" | "channel" (/me.conversations)
+        self._display_name = ""
         self._watermark = 0
         self._recent: tuple[str, ...] = ()
         self._root_of: dict[str, str] = {}
@@ -200,12 +218,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
     async def _open(self) -> aiohttp.ClientWebSocketResponse:
         """me → catch-up(410이면 snapshot) → WS 구독. 실패는 예외로 올린다."""
         assert self._client is not None
-        me = await self._client.get_me()
-        self._me_id = str(me.get("id") or me.get("bot_id") or "")
-        self._owner_id = str(me.get("owner_user_id") or "")
-        self._conversation_ids = tuple(str(c) for c in me.get("conversation_ids") or ())
-        if not self._me_id or not self._owner_id:
-            raise BotApiError(502, "/me")
+        await self._refresh_me()
         state = self._cursor.load()
         if state is not None:
             for mid in state.recent_ids:
@@ -224,6 +237,22 @@ class OhmySlackAdapter(BasePlatformAdapter):
                                 "after_cursor": self._watermark})
         await self._flush_backlog()
         return ws
+
+    async def _refresh_me(self) -> None:
+        """`GET /me` → 봇·owner id, 표시 이름, 대화 종류 맵. 대화 종류가 없는 응답(구 서버)은 거부한다(§5-1)."""
+        assert self._client is not None
+        me = await self._client.get_me()
+        me_id = str(me.get("id") or me.get("bot_id") or "")
+        owner_id = str(me.get("owner_user_id") or "")
+        conversations = me.get("conversations")
+        if not me_id or not owner_id or not isinstance(conversations, list):
+            raise BotApiError(502, "/me")
+        kinds = {str(c["id"]): str(c["kind"]) for c in conversations
+                 if isinstance(c, dict) and c.get("id") and c.get("kind") in CHAT_KINDS}
+        self._me_id, self._owner_id = me_id, owner_id
+        self._display_name = str(me.get("display_name") or "")
+        self._kinds = kinds
+        self._conversation_ids = tuple(kinds)
 
     async def _reader_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         attempt = 0
@@ -280,13 +309,37 @@ class OhmySlackAdapter(BasePlatformAdapter):
                 await self._flush_backlog()
             elif kind == "sync.required":
                 # 서버가 구독을 지웠다(hub replay 실패) → REST catch-up 후 참여 대화를 다시 구독한다(Codex r3 P1).
+                # 캐시된 목록에 이미 나간 대화가 남지 않도록 먼저 /me를 다시 읽는다(BOT_CHANNEL_SPEC §5-8).
+                await self._refresh_me()
                 await self._catch_up(self._watermark)
                 for cid in self._conversation_ids:
                     await ws.send_json({"type": "conversation.subscribe", "conversation_id": cid,
                                         "after_cursor": self._watermark})
                 await self._flush_backlog()
+            elif kind == "membership.changed":
+                await self._on_membership(ws, str(frame.get("conversation_id") or ""), frame.get("state"))
+            elif kind == "error" and frame.get("code") == "not_found" and frame.get("conversation_id"):
+                self._forget_conversation(str(frame["conversation_id"]))  # 서버가 구독을 지웠다(멤버십 종료)
             elif kind == "error" and frame.get("code") == "cursor_expired":
                 raise CursorExpired(410, "/ws")
+
+    async def _on_membership(self, ws: aiohttp.ClientWebSocketResponse, cid: str, state: Any) -> None:
+        """§5-8: joined → /me 재조회 후 그 대화만 현재 watermark로 구독. left → 맵·구독 목록에서 제거."""
+        if not cid:
+            return
+        if state == "joined":
+            await self._refresh_me()
+            if cid in self._kinds:
+                await ws.send_json({"type": "conversation.subscribe", "conversation_id": cid,
+                                    "after_cursor": self._watermark})
+        elif state == "left":
+            self._forget_conversation(cid)
+
+    def _forget_conversation(self, cid: str) -> None:
+        # 이후 그 대화의 프레임·sync 변경은 "모르는 대화"로 무시된다. 남은 백로그 안내도 버린다.
+        self._kinds = {k: v for k, v in self._kinds.items() if k != cid}
+        self._conversation_ids = tuple(self._kinds)
+        self._backlog.pop(cid, None)
 
     # ---------- catch-up ----------
     async def _catch_up(self, after: int) -> None:
@@ -298,6 +351,10 @@ class OhmySlackAdapter(BasePlatformAdapter):
             if through is None:
                 through = int(page["through_cursor"])
             changes = page.get("changes") or ()
+            if any(str(c.get("conversation_id") or "") not in self._kinds for c in changes):
+                # sync는 현재 활성 참여 대화만 싣는다(sync/repo.ts) → 모르는 대화가 보이면 joined 프레임보다
+                # 먼저 온 새 멤버십이다. 버리고 커서를 넘기면 첫 지시가 영구 누락되므로 /me를 먼저 다시 읽는다(Codex P2).
+                await self._refresh_me()
             # 답글 변경 시 서버는 원문 projection도 함께 싣는다(sync/repo.ts:75-78) — 그 원문은 새 지시가 아니다.
             reply_roots = {str((c.get("message") or {}).get("thread_root_id") or "") for c in changes}
             for change in changes:
@@ -337,7 +394,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
             fresh = not self._dedup.is_duplicate(mid)
             created = _epoch(m.get("created_at")) or 0.0
             oldest = min(oldest, created)
-            if prev is not None and fresh and self._is_owner_instruction(m) and created >= prev.saved_at:
+            if prev is not None and fresh and self._is_owner_instruction(m) and self._passes_gate(cid, m) \
+                    and created >= prev.saved_at:
                 self._backlog[cid] = self._backlog.get(cid, 0) + 1
         return oldest
 
@@ -347,10 +405,30 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return (bool(author) and author != self._me_id and author == self._owner_id
                 and m.get("deleted_at") is None and m.get("body") is not None)
 
+    def _mentions_me(self, m: dict) -> bool:
+        mentions = m.get("mention_user_ids")
+        return isinstance(mentions, list) and self._me_id in {str(x) for x in mentions}
+
+    def _passes_gate(self, conversation_id: str, m: dict) -> bool:
+        """대화 종류·멘션 게이팅(§5-2): DM은 통과, 채널은 수정되지 않은 봇 멘션만, 모르는 대화는 거부."""
+        kind = self._kinds.get(conversation_id)
+        if kind == "dm":
+            return True
+        return kind == "channel" and self._mentions_me(m) and m.get("edited_at") is None
+
     async def _ingest(self, conversation_id: str, m: dict, *, aux_root: bool = False,
                       op: Optional[str] = None) -> None:
+        # 순서(§5-7): owner 판정 → 대화 종류·멘션 게이팅 → dedupe → 15분 상한.
         mid = str(m.get("id") or "")
         if not mid or not conversation_id or not self._is_owner_instruction(m):
+            return
+        kind = self._kinds.get(conversation_id)
+        if kind is None:
+            return  # 모르는 대화는 기본 거부(§5-1, S8)
+        if kind == "channel" and not self._mentions_me(m):
+            # 게이팅 탈락: 실행·백로그 집계 없이 dedupe에만 기록한다.
+            if not self._dedup.is_duplicate(mid):
+                self._remember(mid)
             return
         if self._dedup.is_duplicate(mid):
             return
@@ -358,7 +436,10 @@ class OhmySlackAdapter(BasePlatformAdapter):
             # 답글 변경에 동반된 원문 projection은 실행·집계 대상이 아니다(Codex r3 P2). 원문 생성 변경과
             # 구분할 수 없으므로 같은 페이지의 원문 생성은 다음 live/catch-up에서 다시 보지 않게 된다(REPORT §6).
             return
-        if (op is not None and op != "create") or (op is None and m.get("edited_at") is not None):
+        # 채널은 op와 무관하게 수정된 글을 실행하지 않는다: sync는 현재 행을 실어 create 변경에도 수정으로 붙은
+        # 멘션이 보일 수 있다(sync/repo.ts, §5-2 4항).
+        if (op is not None and op != "create") or (op is None and m.get("edited_at") is not None) \
+                or (kind == "channel" and m.get("edited_at") is not None):
             # 수정·삭제 변경은 새 지시로 실행하지 않는다(WS message.updated와 동일). op 없는 구 서버는 edited_at로 추론.
             self._remember(mid)
             return
@@ -369,12 +450,13 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return
         thread_id = str(m.get("thread_root_id") or mid)
         self._root_of[mid] = thread_id
-        source = self.build_source(chat_id=conversation_id, chat_type="dm", user_id=str(m["author_id"]),
+        source = self.build_source(chat_id=conversation_id, chat_type=kind, user_id=str(m["author_id"]),
                                    thread_id=thread_id, message_id=mid)
+        text = strip_mention_token(str(m["body"]), self._display_name) if kind == "channel" else str(m["body"])
         try:
             # 다운로드는 dedup 해제 보호 구간 안: 취소되면 discard 후 재연결 catch-up에서 다시 받는다.
             media_urls, media_types = await self._cache_inbound_images(m)
-            event = MessageEvent(text=str(m["body"]), user_id=str(m["author_id"]), source=source, raw_message=m,
+            event = MessageEvent(text=text, user_id=str(m["author_id"]), source=source, raw_message=m,
                                  message_id=mid, media_urls=media_urls, media_types=media_types,
                                  message_type=MessageType.PHOTO if media_urls else MessageType.TEXT)
             await self.handle_message(event)
@@ -420,14 +502,30 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._watermark = max(self._watermark, int(change_id))
         self._cursor.save(CursorState(change_id=self._watermark, saved_at=self._clock(), recent_ids=self._recent))
 
+    def _home_dm(self) -> Optional[str]:
+        """홈 채널은 DM 고정(§5-5): 설정된 홈이 맵에서 dm이면 그것, 아니면 맵의 유일한 dm."""
+        home = getattr(getattr(self.config, "home_channel", None), "chat_id", None)
+        if home and self._kinds.get(str(home)) == "dm":
+            return str(home)
+        dms = [cid for cid, kind in self._kinds.items() if kind == "dm"]
+        return dms[0] if len(dms) == 1 else None
+
     async def _flush_backlog(self) -> None:
         for cid in list(self._backlog):
             n = self._backlog.pop(cid, 0)  # await 전에 꺼내 동시 flush의 중복 게시를 막는다
             if n <= 0:
                 continue
+            target, text = cid, BACKLOG_NOTICE.format(n=n)
+            if self._kinds.get(cid) != "dm":
+                # 채널 최상위에는 쓰지 않는다 → 홈 DM에 대화 ID를 붙여 1회(§5-7).
+                target, text = self._home_dm(), f"{text} ({cid})"
+                if target is None:
+                    logger.warning("ohmyslack: no home DM for a channel backlog notice; keeping it")
+                    self._backlog[cid] = self._backlog.get(cid, 0) + n
+                    continue
             posted = False
             try:
-                posted = (await self.send(cid, BACKLOG_NOTICE.format(n=n))).success
+                posted = (await self.send(target, text)).success
             finally:
                 if not posted:  # 실패·예외·취소 모두 되돌려 다음 flush(재연결·구독 ACK)에서 다시 보낸다(Codex r4 P2)
                     self._backlog[cid] = self._backlog.get(cid, 0) + n
@@ -441,11 +539,22 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return self._root_of.get(str(reply_to), str(reply_to))
         return None
 
+    def _refuse_channel_top_level(self, chat_id: str, root: Optional[str]) -> Optional[SendResult]:
+        """채널에서는 스레드 답글로만 쓴다(§5-6). 루트를 모르면 보내지 않고 로그만(본문 미기록)."""
+        if root is not None or self._kinds.get(str(chat_id)) != "channel":
+            return None
+        logger.warning("ohmyslack: refusing top-level post to a channel (no thread root)")
+        return SendResult(success=False, error="ohmyslack: channel posts must be thread replies",
+                          retryable=False, error_kind="forbidden")
+
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
                    metadata: Optional[dict[str, Any]] = None) -> SendResult:
         if self._client is None:
             return SendResult(success=False, error="ohmyslack: not connected", retryable=True, error_kind="transient")
         root = self._thread_root(reply_to, metadata)
+        refused = self._refuse_channel_top_level(chat_id, root)
+        if refused is not None:
+            return refused
         ids: list[str] = []
         chunks = self.truncate_message(content or "", self.MAX_MESSAGE_LENGTH)
         try:
@@ -516,6 +625,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         """
         if self._client is None:
             return SendResult(success=False, error="ohmyslack: not connected", retryable=True, error_kind="transient")
+        refused = self._refuse_channel_top_level(chat_id, self._thread_root(reply_to, metadata))
+        if refused is not None:
+            return refused  # 업로드 전에 막는다(대체 텍스트도 채널 최상위가 되므로 보내지 않음)
         loaded = await asyncio.to_thread(read_attachment_file, path, allowed, declared_mime)
         if loaded is None:
             return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata,
@@ -576,13 +688,17 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return None
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
-        return {"name": "Jarvis", "type": "dm", "chat_id": str(chat_id)}
+        kind = self._kinds.get(str(chat_id), "dm")
+        return {"name": "Jarvis" if kind == "dm" else str(chat_id), "type": kind, "chat_id": str(chat_id)}
 
 
 async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Optional[str] = None,
                           media_files=None, force_document: bool = False,
                           session_factory: Callable[[], aiohttp.ClientSession] = new_session) -> dict:
-    """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·첨부는 쓰지 않는다."""
+    """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·첨부는 쓰지 않는다.
+
+    홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 보내지 않는다.
+    """
     from gateway.platforms._shared import send_error
     extra = getattr(pconfig, "extra", None) or {}
     token = (getattr(pconfig, "token", None) or get_scoped_secret(TOKEN_ENV, "") or "").strip()
@@ -596,6 +712,10 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
         client = BotClient(base, token, session)
         ids = []
         try:
+            me = await client.get_me()
+            kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
+            if kinds.get(str(chat_id)) != "dm":
+                return send_error("ohmyslack standalone send: home channel must be the owner DM")
             for chunk in BasePlatformAdapter.truncate_message(message or "", OhmySlackAdapter.MAX_MESSAGE_LENGTH):
                 res = await client.post_message(str(chat_id), chunk)
                 ids.append(str((res.get("message") or {}).get("id") or ""))

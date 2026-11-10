@@ -11,8 +11,10 @@ from .adapter import (PLATFORM_NAME, PORT_ENV, TOKEN_ENV, URL_ENV, OhmySlackAdap
 HOME_CHANNEL_ENV = "OHMYSLACK_HOME_CHANNEL"
 ALLOWED_USERS_ENV = "OHMYSLACK_ALLOWED_USERS"
 PLATFORM_HINT = (
-    "You are on ohmyslack, the owner's private messenger (Jarvis DM). Messages are plain text with "
-    "markdown code fences; each top-level message starts a new thread and you reply inside it. "
+    "You are on ohmyslack, the owner's private messenger (Jarvis DM, plus channels the owner added you to). "
+    "Messages are plain text with markdown code fences; each top-level message starts a new thread and you "
+    "reply inside it. In channels you only see the owner's messages that mention you, and you always reply "
+    "in the thread. "
     "Attachments: you can send MP3 audio (send_voice) and PNG/JPEG/WebP images (max 10 MiB each); "
     "images the owner attaches arrive as image files. Other file types (documents, video, other audio "
     "formats) are not supported — they are replaced by a short text notice."
