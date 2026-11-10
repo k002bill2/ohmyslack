@@ -125,3 +125,13 @@ describe('FR-BOT-11 채널 헤더 봇 컨트롤', () => {
     expect(addButton()).toBeTruthy();
   });
 });
+
+describe('COPY_GAPS G-43–47(★ Jarvis 초안 2026-11-10) — 정본 문구 리터럴 비교', () => {
+  it('상수가 확정안과 같다', () => {
+    expect(BOT_CHANNEL_COPY.add('Jarvis')).toBe('봇 추가: Jarvis');
+    expect(BOT_CHANNEL_COPY.title('Jarvis')).toBe('봇 제거: Jarvis');
+    expect(BOT_CHANNEL_COPY.body).toBe('제거하면 이 봇은 이 채널의 새 메시지를 받지 않고 이 채널에 글을 쓸 수 없습니다. 다시 추가할 수 있습니다.');
+    expect(BOT_CHANNEL_COPY.confirm).toBe('제거');
+    expect(BOT_CHANNEL_COPY.addFailed).toBe('봇을 추가하지 못했습니다.');
+  });
+});
