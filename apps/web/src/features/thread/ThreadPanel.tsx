@@ -1,6 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
-import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -71,8 +71,10 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
 export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice, composerNotice }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
+  const locked = composerNotice !== undefined;
   const actions = {
     timePlacement,
+    retryLocked: locked,
     ...(onRetry === undefined ? {} : { onRetry }),
     ...(onDiscard === undefined ? {} : { onDiscard }),
     ...(mentionNames === undefined ? {} : { mentionNames }),
@@ -95,15 +97,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
   }, [root.id]);
 
   // 열린 스레드에서 작성기가 안내로 바뀌면(403 뒤 비활성 확인) 지워진 입력란의 포커스를 닫기 버튼으로(Codex r2 P2).
-  const locked = composerNotice !== undefined;
-  const wasLocked = useRef(locked);
-  useEffect(() => {
-    const active = document.activeElement;
-    if (locked && !wasLocked.current && (active === null || active === document.body)) {
-      container.current?.querySelector<HTMLElement>('.thread-close')?.focus();
-    }
-    wasLocked.current = locked;
-  }, [locked]);
+  useFocusOnLock(locked, container, () => container.current?.querySelector<HTMLElement>('.thread-close'));
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.defaultPrevented) return;
@@ -134,7 +128,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
   };
 
   const Tag = variant === 'wide' ? 'aside' : 'section';
-  const replyCount = THREAD_SUMMARY_COPY.replies(replies.length);
+  // 헤더 수는 서버 확정 답글만(메인 칩 `replyCount`와 일치) — 대기·실패 로컬 항목은 목록에만 보인다.
+  const replyCount = THREAD_SUMMARY_COPY.replies(replies.filter((r) => r.pending === undefined).length);
   const subtitle = spaceTitle === undefined ? replyCount : `${spaceTitle} · ${replyCount}`;
   // R4 시안: wide·medium은 X 아이콘 버튼(접근 이름 「닫기」 그대로), compact는 글자 「뒤로」 유지.
   const closeButton =

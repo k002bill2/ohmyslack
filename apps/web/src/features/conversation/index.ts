@@ -6,6 +6,7 @@ export { bodyMentionsName } from './render.js';
 export { DateSeparator, NewMessagesDivider, dateSeparatorText, dayKey, type DateSeparatorProps } from './Dividers.js';
 export { Composer, type ComposerProps, type MentionKey } from './Composer.js';
 export { ComposerNotice } from './ComposerNotice.js';
+export { useFocusOnLock } from './focus-on-lock.js';
 export { MENTION_CANDIDATE_LIMIT, type MentionCandidate } from './mention.js';
 export { createDraftStore, type DraftStore } from './drafts.js';
 export { MessageStatus, type MessageStatusProps } from './MessageStatus.js';
