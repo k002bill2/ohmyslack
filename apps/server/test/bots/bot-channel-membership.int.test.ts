@@ -58,6 +58,10 @@ describe('봇 채널 참여 — 추가·제거', () => {
     expect((await req(app, 'POST', path, owner, body)).statusCode).toBe(201);
     expect((await req(app, 'POST', path, owner, body)).statusCode).toBe(200);
     expect(await botMembers(channel)).toBe(1);
+    // /me는 채널 이름을, DM은 name: null을 싣는다(channel-name-me).
+    const me = (await botCall(lc, 'GET', 'me')).json as { conversations: { id: string; kind: string; name: string | null }[] };
+    expect(me.conversations.find((c) => c.id === channel)).toEqual({ id: channel, kind: 'channel', name: 'bot-room' });
+    expect(me.conversations.find((c) => c.id === lc.bot.dmConversationId)).toEqual({ id: lc.bot.dmConversationId, kind: 'dm', name: null });
     expect((await botCall(lc, 'GET', `conversations/${channel}/messages`)).status).toBe(200);
     const ws = await connectedBot(lc.botPort, lc.token);
     expect((await subscribeBot(ws, channel)).type).toBe('conversation.subscribed');

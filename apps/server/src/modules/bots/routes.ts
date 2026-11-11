@@ -221,7 +221,7 @@ async function botSync(deps: BotRouteDeps, request: FastifyRequest): Promise<Syn
   return { ...page, changes: page.changes.filter((c) => visible.has(c.message.id)) };
 }
 
-/** `/me` projection: `conversation_ids`는 호환 유지, `conversations`(종류)·`display_name`을 더한다(BOT_CHANNEL_SPEC §4-4). */
+/** `/me` projection: `conversation_ids`는 호환 유지, `conversations`(종류·이름 — DM은 null)·`display_name`을 더한다(BOT_CHANNEL_SPEC §4-4). */
 export function toBotMe(botId: string, found: Awaited<ReturnType<BotService['me']>>): BotMe {
   if (found.ownerUserId === undefined) throw new HttpError(401, 'unauthenticated');
   return {
@@ -229,7 +229,7 @@ export function toBotMe(botId: string, found: Awaited<ReturnType<BotService['me'
     owner_user_id: found.ownerUserId,
     display_name: found.displayName,
     conversation_ids: found.conversations.map((c) => c.id),
-    conversations: found.conversations.map((c) => ({ id: c.id, kind: c.kind })),
+    conversations: found.conversations.map((c) => ({ id: c.id, kind: c.kind, name: c.name })),
   };
 }
 

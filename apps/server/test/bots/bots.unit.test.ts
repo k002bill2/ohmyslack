@@ -174,7 +174,7 @@ describe('bot-admin CLI 분기(메모리 풀)', () => {
 });
 
 describe('봇 /me projection(BOT_CHANNEL_SPEC §4-4)', () => {
-  it('conversation_ids를 유지하고 conversations에 대화 종류, display_name에 봇 표시 이름을 싣는다', async () => {
+  it('conversation_ids를 유지하고 conversations에 대화 종류·이름(DM은 null), display_name에 봇 표시 이름을 싣는다', async () => {
     const { toBotMe } = await import('../../src/modules/bots/routes.js');
     const { botMeSchema } = await import('../../src/shared.js');
     const dm = '00000000-0000-4000-8000-0000000000d1';
@@ -184,8 +184,8 @@ describe('봇 /me projection(BOT_CHANNEL_SPEC §4-4)', () => {
       ownerUserId: OWNER,
       displayName: 'Jarvis',
       conversations: [
-        { id: ch, kind: 'channel' },
-        { id: dm, kind: 'dm' },
+        { id: ch, kind: 'channel', name: 'proj-ohmyslack' },
+        { id: dm, kind: 'dm', name: null },
       ],
     });
     expect(me).toEqual({
@@ -194,11 +194,14 @@ describe('봇 /me projection(BOT_CHANNEL_SPEC §4-4)', () => {
       display_name: 'Jarvis',
       conversation_ids: [ch, dm],
       conversations: [
-        { id: ch, kind: 'channel' },
-        { id: dm, kind: 'dm' },
+        { id: ch, kind: 'channel', name: 'proj-ohmyslack' },
+        { id: dm, kind: 'dm', name: null },
       ],
     });
     expect(botMeSchema.parse(me)).toEqual(me);
+    // 구 서버 응답(name 없음)도 통과한다(channel-name-me 호환).
+    const legacy = { ...me, conversations: [{ id: ch, kind: 'channel' as const }] };
+    expect(botMeSchema.parse(legacy)).toEqual(legacy);
     expect(() => toBotMe(bot, { ownerUserId: undefined, displayName: 'Jarvis', conversations: [] })).toThrow();
   });
 });

@@ -167,6 +167,7 @@
 
 어댑터가 DM과 채널을 구분하려면 대화 종류가 필요하다. 메시지 projection에는 대화 종류가 없다(`packages/shared/src/messages.ts:72-90`).
 - 제안: `GET /api/bot/v1/me`에 `conversations: [{ id, kind }]`를 **추가**하고 `conversation_ids`는 호환을 위해 유지한다. 멘션 토큰 제거용으로 봇 표시 이름 `display_name`도 싣는다(§5-3).
+- 추가(2026-11-12, channel-name-me): `conversations[]`에 `name`(채널=채널 이름, DM=`null`)을 싣는다. 구 서버 호환을 위해 shared 스키마에서 optional. 어댑터는 채널 메시지의 `SessionSource.chat_name`으로 넘겨 Hermes project-router가 `proj-<slug>` 이름으로 프로젝트를 고른다. 이름 변경 이벤트는 구독하지 않는다(`membership.changed` joined 때 `/me` 재조회로 갱신).
 - 근거 위치: `apps/server/src/modules/bots/routes.ts:123-128`, `apps/server/src/modules/bots/repo.ts:186-204`, 공유 스키마 `packages/shared/src/bots.ts:7-13`(`botMeSchema` = `{id, owner_user_id, conversation_ids}`).
 
 ### 4-5. 봇 읽기 범위 (§10 Q2)

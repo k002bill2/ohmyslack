@@ -170,6 +170,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._me_id = self._owner_id = ""
         self._conversation_ids: tuple[str, ...] = ()
         self._kinds: dict[str, str] = {}  # conversation_id → "dm" | "channel" (/me.conversations)
+        self._names: dict[str, str] = {}  # conversation_id → 채널 이름 (/me.conversations[].name, 구 서버면 비어 있음)
         self._display_name = ""
         self._watermark = 0
         self._recent: tuple[str, ...] = ()
@@ -252,6 +253,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._me_id, self._owner_id = me_id, owner_id
         self._display_name = str(me.get("display_name") or "")
         self._kinds = kinds
+        self._names = {str(c["id"]): c["name"] for c in conversations
+                       if isinstance(c, dict) and str(c.get("id") or "") in kinds
+                       and isinstance(c.get("name"), str) and c["name"]}
         self._conversation_ids = tuple(kinds)
 
     async def _reader_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
@@ -338,6 +342,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
     def _forget_conversation(self, cid: str) -> None:
         # 이후 그 대화의 프레임·sync 변경은 "모르는 대화"로 무시된다. 남은 백로그 안내도 버린다.
         self._kinds = {k: v for k, v in self._kinds.items() if k != cid}
+        self._names = {k: v for k, v in self._names.items() if k != cid}
         self._conversation_ids = tuple(self._kinds)
         self._backlog.pop(cid, None)
 
@@ -450,8 +455,11 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return
         thread_id = str(m.get("thread_root_id") or mid)
         self._root_of[mid] = thread_id
+        # 채널 이름은 project-router가 `proj-<slug>`로 프로젝트를 고르는 데 쓴다. DM·이름 없음이면 넘기지 않는다.
+        chat_name = self._names.get(conversation_id) if kind == "channel" else None
         source = self.build_source(chat_id=conversation_id, chat_type=kind, user_id=str(m["author_id"]),
-                                   thread_id=thread_id, message_id=mid)
+                                   thread_id=thread_id, message_id=mid,
+                                   **({"chat_name": chat_name} if chat_name else {}))
         text = strip_mention_token(str(m["body"]), self._display_name) if kind == "channel" else str(m["body"])
         try:
             # 다운로드는 dedup 해제 보호 구간 안: 취소되면 discard 후 재연결 catch-up에서 다시 받는다.
@@ -697,7 +705,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         kind = self._kinds.get(str(chat_id)) or "unknown"  # 모르는 대화를 dm으로 보지 않는다(F-3)
-        return {"name": "Jarvis" if kind == "dm" else str(chat_id), "type": kind, "chat_id": str(chat_id)}
+        name = "Jarvis" if kind == "dm" else self._names.get(str(chat_id)) or str(chat_id)
+        return {"name": name, "type": kind, "chat_id": str(chat_id)}
 
 
 async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Optional[str] = None,

@@ -12,7 +12,8 @@ export const botMeSchema = z.object({
   owner_user_id: z.uuid(),
   display_name: z.string(),
   conversation_ids: z.array(z.uuid()),
-  conversations: z.array(z.object({ id: z.uuid(), kind: z.enum(['channel', 'dm']) })),
+  // name: 채널 이름, DM은 null. 구 서버 응답(name 없음) 호환을 위해 optional.
+  conversations: z.array(z.object({ id: z.uuid(), kind: z.enum(['channel', 'dm']), name: z.string().nullable().optional() })),
 });
 
 export type BotMe = z.infer<typeof botMeSchema>;
