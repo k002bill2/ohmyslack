@@ -94,6 +94,17 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
     (el?.querySelector('textarea') ?? el?.querySelector<HTMLElement>('.thread-close'))?.focus();
   }, [root.id]);
 
+  // 열린 스레드에서 작성기가 안내로 바뀌면(403 뒤 비활성 확인) 지워진 입력란의 포커스를 닫기 버튼으로(Codex r2 P2).
+  const locked = composerNotice !== undefined;
+  const wasLocked = useRef(locked);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (locked && !wasLocked.current && (active === null || active === document.body)) {
+      container.current?.querySelector<HTMLElement>('.thread-close')?.focus();
+    }
+    wasLocked.current = locked;
+  }, [locked]);
+
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.defaultPrevented) return;
     // portal(삭제 확인 Dialog 등)에서 React 트리로 전파된 키는 처리하지 않는다(Codex r1 P2).
