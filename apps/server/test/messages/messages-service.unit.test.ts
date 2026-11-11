@@ -123,12 +123,13 @@ describe('messages 서비스: send', () => {
     expect(seen.created).toHaveLength(0);
   });
 
-  it('conflict 409·bad_root 400·not_member 404, 모두 이벤트 없음', async () => {
+  it('conflict 409·bad_root 400·not_member 404·peer_inactive 403, 모두 이벤트 없음', async () => {
     const { service, fake, seen } = setup();
     const cases: [SendResult['kind'], [number, string]][] = [
       ['conflict', [409, 'idempotency_conflict']],
       ['bad_root', [400, 'invalid_thread_root']],
       ['not_member', [404, 'not_found']],
+      ['peer_inactive', [403, 'forbidden']],
     ];
     for (const [kind, expected] of cases) {
       fake.sendResult = { kind } as SendResult;

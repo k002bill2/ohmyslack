@@ -95,7 +95,7 @@ describe('repo 매핑·상수', () => {
 });
 
 describe('createPgMessagesStore: send', () => {
-  it('created: 잠금 → 멱등 조회 → 멤버 → mention → seq → INSERT → mention·스레드 대상 → change → 재조회 → COMMIT', async () => {
+  it('created: 잠금 → 멱등 조회 → 멤버 → 비활성 DM 상대 → mention → seq → INSERT → mention·스레드 대상 → change → 재조회 → COMMIT', async () => {
     const fx = fakePool(() => undefined);
     const result = await createPgMessagesStore(fx.pool).send(msg());
     expect(result).toMatchObject({ kind: 'created', changeId: 9, message: { id: 'm1', seq: 6, mentionUserIds: [U2] } });
@@ -103,6 +103,7 @@ describe('createPgMessagesStore: send', () => {
       'BEGIN',
       'SELECT id FROM',
       'SELECT id FROM',
+      'SELECT 1 FROM',
       'SELECT 1 FROM',
       'SELECT u.id FROM',
       'UPDATE conversations SET',
@@ -114,11 +115,19 @@ describe('createPgMessagesStore: send', () => {
       'SELECT m.id, m.conversation_id,',
       'COMMIT',
     ]);
-    expect(fx.params[4]).toEqual(['c1', [U2], U1]);
-    expect(fx.params[6]?.[2]).toBe('6');
-    expect(fx.params[8]).toEqual(['m1', [U1, U2], at]);
-    expect(fx.params[10]).toEqual([9, 'c1', 'm1', 'create', at]);
+    expect(fx.params[4]).toEqual(['c1', U1]);
+    expect(fx.params[5]).toEqual(['c1', [U2], U1]);
+    expect(fx.params[7]?.[2]).toBe('6');
+    expect(fx.params[9]).toEqual(['m1', [U1, U2], at]);
+    expect(fx.params[11]).toEqual([9, 'c1', 'm1', 'create', at]);
     expect(fx.released()).toBe(1);
+  });
+
+  it('peer_inactive: DM 상대가 비활성이면 쓰기 없이 ROLLBACK', async () => {
+    const fx = fakePool((sql) => (sql.startsWith('SELECT 1 FROM conversations c') ? ok([{}]) : undefined));
+    expect(await createPgMessagesStore(fx.pool).send(msg())).toEqual({ kind: 'peer_inactive' });
+    expect(fx.log.at(-1)).toBe('ROLLBACK');
+    expect(fx.log.some((l) => l.startsWith('INSERT') || l.startsWith('UPDATE'))).toBe(false);
   });
 
   it('답글 + mention 없음: 원문 검증, mention 쿼리·INSERT 생략, 스레드 대상 루트는 원문', async () => {
