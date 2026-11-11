@@ -70,7 +70,10 @@ describe('봇 컨트롤 좁은 화면(QA D-1)', () => {
     const control = rules(outsideMedia(), '.bot-channel-control');
     expect(control).toContain('flex-wrap: wrap');
     expect(control).toContain('justify-content: flex-end');
-    expect(rules(narrowBlocks().join('\n'), '.bot-channel-control')).toContain('flex-wrap: nowrap');
+    const narrow = rules(narrowBlocks().join('\n'), '.bot-channel-control');
+    expect(narrow).toContain('flex-wrap: nowrap');
+    // 가로 스크롤 컨테이너는 시작 쪽 넘침에 닿지 못한다 — 좁은 화면은 flex-start로 되돌린다.
+    expect(narrow).toContain('justify-content: flex-start');
   });
 
   it('봇 배지 QA 관찰 3: 버튼은 접히지 않고 DOM·탭 순서에 모두 남는다', () => {

@@ -716,9 +716,11 @@ body {
   .conversation-header {
     padding: var(--space-2) var(--space-3);
   }
-  /* QA D-1: 좁은 화면은 기존처럼 한 줄 + 버튼 폭 상한(말줄임 규칙은 위 공통 블록). */
+  /* QA D-1: 좁은 화면은 기존처럼 한 줄 + 버튼 폭 상한(말줄임 규칙은 위 공통 블록).
+     넘침은 끝 쪽으로만(flex-end면 시작 쪽 넘침이 스크롤로 닿지 않는다). */
   .bot-channel-control {
     flex-wrap: nowrap;
+    justify-content: flex-start;
   }
   .bot-channel-control > .btn {
     max-width: 30vw;
