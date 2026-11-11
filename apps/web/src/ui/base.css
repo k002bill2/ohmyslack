@@ -97,6 +97,10 @@ body {
   flex: none;
   white-space: nowrap;
 }
+/* 봇 배지 QA D-1: 비활성 봇 작성자의 접미 + 「봇」 배지 묶음 — 이름 본문은 줄바꿈되어도 배지만 홀로 다음 줄로 가지 않는다. */
+.name-tail {
+  white-space: nowrap;
+}
 .name-split {
   display: flex;
   align-items: baseline;

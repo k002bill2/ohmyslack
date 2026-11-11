@@ -215,10 +215,14 @@ function MessageItemView(props: MessageItemProps) {
       onContextMenu={menu.onContextMenu}
       {...longPress}
     >
-      {/* 배지는 작성자 span 안 — msg-item은 flex-wrap이라 형제로 두면 좁은 폭에서 배지만 다음 줄로 갈 수 있다. */}
+      {/* 배지는 작성자 span 안 — msg-item은 flex-wrap이라 형제로 두면 좁은 폭에서 배지만 다음 줄로 갈 수 있다.
+          비활성이면 접미 「(비활성)」과 배지를 한 nowrap 묶음으로(NameParts tail, 봇 배지 QA D-1). */}
       <span className="msg-author">
-        <NameParts label={message.author} inactiveName={message.authorInactiveName} />
-        {message.authorKind === 'bot' && <BotBadge />}
+        <NameParts
+          label={message.author}
+          inactiveName={message.authorInactiveName}
+          tail={message.authorKind === 'bot' ? <BotBadge /> : undefined}
+        />
       </span>
       {placement === 'inline' && <MessageTime message={message} placement="inline" />}
       {mentioned && <span className="msg-mention-label">{CONVERSATION_DESIGN_COPY.mentionedSelf}</span>}
