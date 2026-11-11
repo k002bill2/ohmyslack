@@ -130,6 +130,22 @@ describe('G-52 경합: 화면은 활성으로 알지만 서버가 403', () => {
     expect(posts).toHaveLength(1);
     expect(within(pane).getByText('안녕')).toBeTruthy();
     expect(within(pane).getByRole('button', { name: '전송 실패 · 다시 시도' })).toBeTruthy();
+    // 다시 확인한 결과 비활성이 아니면(응답에 없음) 이름·작성기를 건드리지 않는다.
+    expect(within(pane).getByRole('heading', { level: 1, name: 'B' })).toBeTruthy();
+    expect(within(pane).getByRole('textbox', { name: 'B에 메시지 작성' })).toBeTruthy();
+  });
+
+  it('403 뒤 이름 재확인이 실패해도 활성 상대 이름·작성기는 그대로', async () => {
+    const { user, server } = await mount(PEER);
+    server.on('GET /api/users/names', () => ({ status: 500 }));
+    await openDm(user, 'B');
+    const pane = screen.getByRole('main');
+    await user.type(within(pane).getByRole('textbox', { name: 'B에 메시지 작성' }), '안녕');
+    await user.click(within(pane).getByRole('button', { name: '전송' }));
+    await settle();
+    expect(within(pane).getByRole('button', { name: '전송 실패 · 다시 시도' })).toBeTruthy();
+    expect(within(pane).getByRole('heading', { level: 1, name: 'B' })).toBeTruthy();
+    expect(within(pane).getByRole('textbox', { name: 'B에 메시지 작성' })).toBeTruthy();
   });
 
   it('403 뒤 상대 이름을 다시 확인해 비활성이면 작성기를 잠근다(실패 항목은 그대로)', async () => {

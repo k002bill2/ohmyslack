@@ -421,13 +421,20 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     },
   });
 
-  /** G-52 경합: DM 전송이 403이면 상대가 비활성화됐을 수 있다 — 상대 이름만 다시 확인해 맞으면 작성기가 잠긴다. */
+  /**
+   * G-52 경합: DM 전송이 403이면 상대가 비활성화됐을 수 있다 — 상대를 다시 조회해 비활성으로 확인될 때만 반영(작성기 잠김).
+   * 조회 실패·응답에 없음은 무시한다(활성 상대 이름을 「알 수 없는 사용자」로 덮지 않게).
+   */
   const recheckDmPeer = (conversationId: string) => {
     const peer = summaries.find((c) => c.id === conversationId && c.name === null)?.peer_user_id;
     if (peer === null || peer === undefined || ended) return;
-    void settleNames([peer], true).then(
-      () => {
-        if (!ended) refreshNames();
+    void lookupUserNames(api, [peer]).then(
+      (found) => {
+        const hit = found.get(peer);
+        if (ended || hit?.inactiveName === undefined) return;
+        names = new Map([...names, [peer, hit.label]]);
+        inactiveNames = new Map([...inactiveNames, [peer, hit.inactiveName]]);
+        refreshNames();
       },
       () => undefined,
     );
