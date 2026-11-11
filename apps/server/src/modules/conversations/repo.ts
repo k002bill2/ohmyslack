@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { withTransaction as inTransaction } from '../../db/pool.js';
 import type {
   AddBotResult,
   ConversationKind,
@@ -131,26 +132,6 @@ const DISCOVER_SQL = `SELECT c.id, c.name FROM conversations c
                      WHERE m.conversation_id = c.id AND m.user_id = $1 AND m.left_at IS NULL)
   ORDER BY c.id LIMIT $3`;
 
-interface TxOutcome<T> {
-  readonly commit: boolean;
-  readonly value: T;
-}
-
-/** 트랜잭션 안에서는 받은 client만 쓴다(풀 고갈 시 교착 방지). */
-async function inTransaction<T>(pool: pg.Pool, work: (client: pg.PoolClient) => Promise<TxOutcome<T>>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const outcome = await work(client);
-    await client.query(outcome.commit ? 'COMMIT' : 'ROLLBACK');
-    return outcome.value;
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 /** 멤버십 생성·재참여: 대화 행을 잠가 last_seq를 읽고 joined_seq·read cursor를 그 값으로 둔다(TRD §2). */
 async function joinIn(client: pg.PoolClient, conversationId: string, userId: string, at: Date): Promise<boolean> {

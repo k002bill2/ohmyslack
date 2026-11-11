@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { withTransaction as inTransaction } from '../../db/pool.js';
 import type { AcceptResult, DeactivateResult, MemberSummary, MembersStore, UserName } from './store.js';
 
 /** members 저장소의 pg 구현. 모든 SQL은 파라미터 바인딩만 쓴다. */
@@ -20,27 +21,6 @@ interface UserNameRow {
 export const ACCEPT_INVITE_SQL = `UPDATE invites SET used_at = $2
   WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2
   RETURNING id`;
-
-/** 작업 결과의 `commit`이 false면 ROLLBACK 후 value만 돌려준다(거부 시 DB 무변경). */
-interface TxOutcome<T> {
-  readonly commit: boolean;
-  readonly value: T;
-}
-
-async function inTransaction<T>(pool: pg.Pool, work: (client: pg.PoolClient) => Promise<TxOutcome<T>>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const outcome = await work(client);
-    await client.query(outcome.commit ? 'COMMIT' : 'ROLLBACK');
-    return outcome.value;
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 async function deactivateIn(client: pg.PoolClient, actorId: string, targetId: string, at: Date): Promise<DeactivateResult> {
   // 마지막 owner 판정(409)을 actor 재확인(403)보다 먼저 한다: 두 owner가 서로를 동시에 비활성화하면 뒤 요청은 S10 409.

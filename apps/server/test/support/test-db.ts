@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { checkTestDbUrl } from '../../../../tools/assert-test-db.js';
+import { createPool } from '../../src/db/pool.js';
 
 /** 통합 테스트 DB 하네스(정본: DEV_DESIGN §5-1 "테스트 DB 안전장치"). 실행 ID별 스키마 t_<runid>만 만들고 지운다. */
 const SCHEMA_PATTERN = /^t_[a-z0-9_]+$/;
@@ -54,7 +55,8 @@ export async function createTestSchema(): Promise<TestSchema> {
   const url = testDatabaseUrl();
   const name = newSchemaName();
   await withAdmin(url, (client) => client.query(`CREATE SCHEMA "${name}"`));
-  const pool = new pg.Pool({ ...isolatedConfig(url, name), max: 4 });
+  // 운영과 같은 풀 팩토리('error' 처리기 포함)를 쓴다.
+  const pool = createPool({ ...isolatedConfig(url, name), max: 4 }, { log: () => undefined });
   const current = await pool.query<{ schema: string }>('SELECT current_schema() AS schema').catch(() => undefined);
   if (current?.rows[0]?.schema !== name) {
     await pool.end();

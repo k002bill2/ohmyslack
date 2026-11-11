@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { withTransaction as inTransaction, type TxOutcome } from '../../db/pool.js';
 import { ATTACHMENT_UNBOUND_TTL_MS } from '../../shared.js';
 import { ATTACHMENTS_PROJECTION_SQL, bindInTx, boundIdsOf, purgeMessageBlobsInTx, type AttachmentProjectionRow } from '../attachments/index.js';
 import type {
@@ -90,26 +91,6 @@ async function load(db: Queryable, id: string): Promise<MessageRecord | undefine
   return row === undefined ? undefined : toRecord(row);
 }
 
-interface TxOutcome<T> {
-  readonly commit: boolean;
-  readonly value: T;
-}
-
-/** 트랜잭션 안에서는 받은 client만 쓴다(풀 고갈 시 교착 방지). */
-async function inTransaction<T>(pool: pg.Pool, work: (client: pg.PoolClient) => Promise<TxOutcome<T>>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const outcome = await work(client);
-    await client.query(outcome.commit ? 'COMMIT' : 'ROLLBACK');
-    return outcome.value;
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 async function filterMentions(db: Queryable, conversationId: string, ids: readonly string[], authorId: string): Promise<string[]> {
   if (ids.length === 0) return [];

@@ -14,7 +14,7 @@ function fakePool(respond: Responder) {
     params.push(args);
     return respond(sql, args);
   };
-  const pool = { query, connect: async () => ({ query, release: () => (released += 1) }) } as unknown as pg.Pool;
+  const pool = { query, connect: async () => ({ query, release: () => (released += 1), on: () => undefined, removeListener: () => undefined }) } as unknown as pg.Pool;
   return { pool, log, params, released: () => released };
 }
 
