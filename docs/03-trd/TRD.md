@@ -100,6 +100,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/conversations/{id}/messages?before_seq=&after_seq=&around_seq=&limit=` | 접근 가능한 대화 이력. `roots_only=true`로 본문만, 기본 최대 100건 |
 | `GET /api/messages/{root_id}/replies?before_seq=&after_seq=&limit=` | 1단 답글 목록. root 대화 접근 검사 |
 | `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?,attachment_ids?}`; 생성 메시지(`client_message_id` 포함)·seq·global `change_id` 반환. `attachment_ids`는 최대 4개, 같은 요청자가 올리고 아직 결속되지 않은 같은 대화 첨부만(§6-1). 멱등 payload 비교에 포함 |
+| `POST /api/conversations/{id}/messages` — 비활성 상대 DM | DM 상대(보내는 사람 외 멤버, 봇 owner DM의 봇 포함)가 비활성이면 루트·답글 모두 403 `forbidden`(새 오류 코드 없음). DB·이벤트·push 변화 없음. 판정 전에 같은 멱등 키 재시도는 원결과를 반환. 편집·삭제·읽기·읽음·첨부 업로드/다운로드는 변경 없음 |
 | `PATCH /api/messages/{id}` | 작성자만 수정. 새 `change_id`, 수정된 mention ID 반환 |
 | `DELETE /api/messages/{id}` | 작성자만 tombstone 처리. 과거 본문/mention replay 방지 |
 | `GET /api/sync?after={change_id}&through={change_id?}&limit=` | 계정 전역 catch-up. 첫 페이지에서 watermark `through_cursor` 확정, 후속 페이지에 그대로 전달 |

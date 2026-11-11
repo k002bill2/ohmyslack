@@ -39,6 +39,12 @@ export const MENTION_FILTER_SQL = `SELECT u.id FROM conversation_members cm JOIN
 
 const ACTIVE_MEMBER_SQL = 'SELECT 1 FROM conversation_members WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL';
 
+/** DM 상대(보내는 사람 외 멤버)가 비활성이면 1행: 받을 수 없는 대화라 새 메시지를 만들지 않는다(봇 owner DM 포함). */
+const INACTIVE_DM_PEER_SQL = `SELECT 1 FROM conversations c
+  JOIN conversation_members m ON m.conversation_id = c.id AND m.user_id <> $2
+  JOIN users u ON u.id = m.user_id
+  WHERE c.id = $1 AND c.kind = 'dm' AND u.status <> 'active'`;
+
 export interface MessageRow {
   id: string;
   conversation_id: string;
@@ -192,6 +198,9 @@ async function sendIn(client: pg.PoolClient, msg: NewMessage): Promise<TxOutcome
   const existingId = existing.rows[0]?.id;
   if (existingId !== undefined) return { commit: false, value: await replay(client, existingId, msg) };
   if (!(await isActiveMember(client, msg.conversationId, msg.authorId))) return { commit: false, value: { kind: 'not_member' } };
+  if (((await client.query(INACTIVE_DM_PEER_SQL, [msg.conversationId, msg.authorId])).rowCount ?? 0) > 0) {
+    return { commit: false, value: { kind: 'peer_inactive' } };
+  }
   if (!(await rootIsValid(client, msg.conversationId, msg.threadRootId))) return { commit: false, value: { kind: 'bad_root' } };
   const mentions = await filterMentions(client, msg.conversationId, msg.mentionUserIds, msg.authorId);
   const seq = await client.query<{ seq: string }>('UPDATE conversations SET last_seq = last_seq + 1 WHERE id = $1 RETURNING last_seq::text AS seq', [
