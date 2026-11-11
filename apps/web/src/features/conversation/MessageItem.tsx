@@ -43,6 +43,8 @@ export interface MessageItemProps {
   /** 전송 대기 항목 「다시 시도」·「삭제」(client_message_id). 없으면 버튼이 아무 동작도 하지 않는다. */
   readonly onRetry?: (clientMessageId: string) => void;
   readonly onDiscard?: (clientMessageId: string) => void;
+  /** true면 「전송 실패」 항목에 「다시 시도」를 숨긴다(G-52 잠긴 DM, 「삭제」만). 판정은 호출자가 한다. */
+  readonly retryLocked?: boolean;
   /** 내 사용자 ID — 본인 메시지에만 수정·삭제를 노출한다(W-10i). */
   readonly selfId?: string;
   readonly onEdit?: (id: string, body: string) => Promise<ActionResult<null>>;
@@ -257,6 +259,7 @@ function MessageItemView(props: MessageItemProps) {
           item={pending}
           onRetry={() => onRetry?.(pending.clientMessageId)}
           onDiscard={() => onDiscard?.(pending.clientMessageId)}
+          failedRetry={props.retryLocked !== true}
         />
       )}
       {/* 시안 11 A·B: hover·포커스 시 메시지 오른쪽 위 툴바(정본 UI_STATES §3 「hover·포커스 시 인라인 툴바」). 대표 동작 「답글」 먼저. */}
