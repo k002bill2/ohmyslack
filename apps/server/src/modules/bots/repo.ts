@@ -190,7 +190,7 @@ export async function liveTokenIdsAmong(db: Db, tokenIds: readonly string[]): Pr
 export interface BotMeRow {
   readonly ownerUserId: string | undefined;
   readonly displayName: string;
-  readonly conversations: readonly { readonly id: string; readonly kind: 'channel' | 'dm' }[];
+  readonly conversations: readonly { readonly id: string; readonly kind: 'channel' | 'dm'; readonly name: string | null }[];
 }
 
 export async function botMe(db: Db, botUserId: string): Promise<BotMeRow> {
@@ -201,8 +201,8 @@ export async function botMe(db: Db, botUserId: string): Promise<BotMeRow> {
       WHERE bm.user_id = $1 ORDER BY wm.user_id LIMIT 1`,
     [botUserId],
   );
-  const convs = await db.query<{ conversation_id: string; kind: 'channel' | 'dm' }>(
-    `SELECT m.conversation_id, c.kind FROM conversation_members m JOIN conversations c ON c.id = m.conversation_id
+  const convs = await db.query<{ conversation_id: string; kind: 'channel' | 'dm'; name: string | null }>(
+    `SELECT m.conversation_id, c.kind, c.name FROM conversation_members m JOIN conversations c ON c.id = m.conversation_id
       WHERE m.user_id = $1 AND m.left_at IS NULL ORDER BY m.conversation_id`,
     [botUserId],
   );
@@ -210,7 +210,7 @@ export async function botMe(db: Db, botUserId: string): Promise<BotMeRow> {
   return {
     ownerUserId: owner.rows[0]?.user_id,
     displayName: self.rows[0]?.display_name ?? '',
-    conversations: convs.rows.map((r) => ({ id: r.conversation_id, kind: r.kind })),
+    conversations: convs.rows.map((r) => ({ id: r.conversation_id, kind: r.kind, name: r.kind === 'channel' ? r.name : null })),
   };
 }
 
