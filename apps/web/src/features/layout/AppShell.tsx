@@ -7,6 +7,7 @@ import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
 import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
+import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
@@ -74,6 +75,18 @@ function messageLinkIn(conversationId: string, rootId: string | null): (id: stri
 
 function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
+}
+
+/** 대화 머리 H1. 비활성 DM 상대는 이름만 말줄임하고 「(비활성)」은 항상 보인다 — 전체 이름은 title(QA D3). */
+function ConversationTitle({ space }: { readonly space: Space }) {
+  const title = spaceTitle(space);
+  const inactive = space.kind === 'dm' ? space.peerInactiveName : undefined;
+  const split = isSplitName(title, inactive);
+  return (
+    <h1 className={split ? 'conversation-title name-split' : 'conversation-title'} title={split ? title : undefined}>
+      <NameParts label={title} inactiveName={inactive} />
+    </h1>
+  );
 }
 
 /** 메시지 객체(불변)별 판정 캐시 — 렌더마다 모든 본문을 다시 파싱하지 않게(F-1). */
@@ -167,7 +180,7 @@ function ConversationPane(props: {
           </button>
         )}
         <div className="conversation-heading">
-          <h1 className="conversation-title">{spaceTitle(space)}</h1>
+          <ConversationTitle space={space} />
           <span className="conversation-meta">
             {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
           </span>
@@ -438,7 +451,13 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   );
   // FR-BOT-11: 봇 추가·제거 성공 → 멤버 재조회(멤버 수·멘션 후보·컨트롤 상태가 같은 목록을 쓴다).
   const [memberRevision, bumpMembers] = useReducer((n: number) => n + 1, 0);
-  const conversationMembers = useConversationMembers(dataSource, space?.id ?? null, space !== undefined && space.left !== true, memberRevision);
+  // QA D1: 세션 중 비활성화(활성 목록에서 사라짐)도 같은 대화의 멤버를 다시 읽는다 — 두 카운터 모두 단조 증가라 합이 곧 재조회 신호.
+  const conversationMembers = useConversationMembers(
+    dataSource,
+    space?.id ?? null,
+    space !== undefined && space.left !== true,
+    memberRevision + (snap.activeRevision ?? 0),
+  );
   const mentionCandidates = conversationMembers.candidates;
   const manageBots = canManageChannelBots(snap.account, space) && dataSource.addBotToChannel !== undefined && dataSource.removeBotFromChannel !== undefined;
   const activeBots = useActiveBots(dataSource, manageBots);

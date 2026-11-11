@@ -21,6 +21,8 @@ export interface Space {
   readonly left?: boolean;
   /** 상대가 봇(`GET /api/members` kind)인 DM — 목록 최상단 고정 + CMP-26 배지(UI_STATES §2-3 「Jarvis DM」, W-19b). */
   readonly bot?: boolean;
+  /** 비활성 상대 DM이면 접미 없는 상대 이름(`name`은 「{이름} (비활성)」 그대로). 화면이 이름·접미를 따로 그린다(QA D3). */
+  readonly peerInactiveName?: string;
 }
 
 export interface Message {
@@ -28,6 +30,8 @@ export interface Message {
   readonly conversationId: string;
   readonly rootId?: string;
   readonly author: string;
+  /** 비활성 작성자면 접미 없는 이름(`author`는 「{이름} (비활성)」 그대로 — 접근 이름용). 화면이 이름·접미를 따로 그린다(QA D2). */
+  readonly authorInactiveName?: string;
   readonly createdAt: string;
   readonly body: string;
   readonly replyCount: number;
@@ -72,6 +76,11 @@ export interface Snapshot {
   readonly loadedHistory?: string | null;
   /** 기존 답글을 끝까지 읽은 스레드 root id들. 답글 조회가 없는 구현(메모리)은 생략 — 「항상 로드됨」(W-23b 위치 복원). */
   readonly loadedReplies?: readonly string[];
+  /**
+   * 세션 중 활성 멤버 목록(`GET /api/members`)에서 사라진 ID를 알 때마다 오른다(QA D1). 바뀌면 화면이 대화 멤버
+   * (멘션 후보·멤버 수)를 다시 읽는다 — 서버가 비활성을 이미 빼서 준다. 없으면 0으로 본다(메모리 구현).
+   */
+  readonly activeRevision?: number;
 }
 
 /** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */

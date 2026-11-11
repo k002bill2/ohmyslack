@@ -1,12 +1,19 @@
 import type pg from 'pg';
 import { withTransaction as inTransaction } from '../../db/pool.js';
-import type { AcceptResult, DeactivateResult, MemberSummary, MembersStore } from './store.js';
+import type { AcceptResult, DeactivateResult, MemberSummary, MembersStore, UserName } from './store.js';
 
 /** members 저장소의 pg 구현. 모든 SQL은 파라미터 바인딩만 쓴다. */
 interface MemberRow {
   id: string;
   display_name: string;
   role: 'owner' | 'member';
+  kind: 'human' | 'bot';
+}
+
+interface UserNameRow {
+  id: string;
+  display_name: string;
+  status: 'active' | 'disabled';
   kind: 'human' | 'bot';
 }
 
@@ -96,6 +103,18 @@ export function createPgMembersStore(pool: pg.Pool): MembersStore {
          WHERE u.status = 'active' ORDER BY u.display_name, u.id`,
       );
       return res.rows.map((r): MemberSummary => ({ id: r.id, displayName: r.display_name, role: r.role, kind: r.kind }));
+    },
+    async findUserNames(viewerId, ids) {
+      const res = await pool.query<UserNameRow>(
+        `SELECT u.id, u.display_name, u.status, u.kind FROM users u
+         WHERE u.id = ANY($2::uuid[])
+           AND EXISTS (
+             SELECT 1 FROM workspace_members m JOIN workspace_members v ON v.workspace_id = m.workspace_id
+              WHERE m.user_id = u.id AND v.user_id = $1)
+         ORDER BY u.id`,
+        [viewerId, ids],
+      );
+      return res.rows.map((r): UserName => ({ id: r.id, displayName: r.display_name, status: r.status, kind: r.kind }));
     },
     deactivate(actorId, targetId, at) {
       return inTransaction<DeactivateResult>(pool, async (client) => {
