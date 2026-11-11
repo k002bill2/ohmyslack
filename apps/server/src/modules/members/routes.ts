@@ -3,7 +3,14 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { markAccountGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
-import { inviteAcceptRequestSchema, type InviteCreateResponse, type MeResponse, type MembersResponse } from '../../shared.js';
+import {
+  inviteAcceptRequestSchema,
+  USER_NAMES_MAX_IDS,
+  type InviteCreateResponse,
+  type MeResponse,
+  type MembersResponse,
+  type UserNamesResponse,
+} from '../../shared.js';
 import type { AuthEvents } from '../auth/events.js';
 import { accountGuard, adminGuards, requireAuth, SESSION_COOKIE, sessionToken } from '../auth/guards.js';
 import { checkPasswordPolicy, hashPassword, normalizeEmail } from '../auth/password.js';
@@ -29,6 +36,17 @@ interface AcceptDeps extends MemberRouteDeps {
 
 const idParams = z.object({ id: z.uuid() });
 const userParams = z.object({ user_id: z.uuid() });
+
+/**
+ * `ids`: 쉼표로 구분한 UUID 1–100개. 형식 오류·빈 값·상한 초과는 400. UUID는 대소문자 무관이라 소문자로 맞춰 중복을 없앤다.
+ */
+const userNamesQuery = z.object({
+  ids: z
+    .string()
+    .transform((raw) => raw.split(','))
+    .pipe(z.array(z.uuid()).min(1).max(USER_NAMES_MAX_IDS))
+    .transform((ids) => [...new Set(ids.map((id) => id.toLowerCase()))]),
+});
 
 function parseOr400<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
@@ -101,6 +119,13 @@ export function registerMemberRoutes(app: FastifyInstance, deps: MemberRouteDeps
   app.get('/api/members', { config: { access: 'account' }, preHandler: account }, async (): Promise<MembersResponse> => {
     const members = await deps.store.listActiveMembers();
     return { members: members.map((m) => ({ id: m.id, display_name: m.displayName, role: m.role, kind: m.kind })) };
+  });
+
+  // 비활성 멤버가 남긴 메시지 작성자 이름을 채운다(G-50·G-51). 같은 워크스페이스 사용자만, 없는 ID는 빠질 뿐 200.
+  app.get('/api/users/names', { config: { access: 'account' }, preHandler: account }, async (request): Promise<UserNamesResponse> => {
+    const { ids } = parseOr400(userNamesQuery, request.query);
+    const users = await deps.store.findUserNames(requireAuth(request).user.id, ids);
+    return { users: users.map((u) => ({ id: u.id, display_name: u.displayName, status: u.status, kind: u.kind })) };
   });
 
   app.post('/api/admin/members/:user_id/deactivate', { config: { access: 'admin' }, preHandler: admin }, (request, reply) =>

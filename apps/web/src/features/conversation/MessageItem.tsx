@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { ActionResult } from '../../data/index.js';
 import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
+import { NameParts } from '../../ui/NameParts.js';
 import { MESSAGE_ACTION_COPY, MESSAGE_MENU_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 import { MessageBody } from './MessageBody.js';
@@ -19,6 +20,8 @@ import type { PendingMessage } from './send-status.js';
 export interface MessageItemData {
   readonly id: string;
   readonly author: string;
+  /** 비활성 작성자면 접미 없는 이름 — 이름·「(비활성)」을 따로 그려 접미가 중간에서 끊기지 않게 한다(QA D2). */
+  readonly authorInactiveName?: string;
   readonly createdAt: string;
   readonly body: string;
   readonly pending?: PendingMessage;
@@ -214,7 +217,7 @@ function MessageItemView(props: MessageItemProps) {
     >
       {/* 배지는 작성자 span 안 — msg-item은 flex-wrap이라 형제로 두면 좁은 폭에서 배지만 다음 줄로 갈 수 있다. */}
       <span className="msg-author">
-        {message.author}
+        <NameParts label={message.author} inactiveName={message.authorInactiveName} />
         {message.authorKind === 'bot' && <BotBadge />}
       </span>
       {placement === 'inline' && <MessageTime message={message} placement="inline" />}

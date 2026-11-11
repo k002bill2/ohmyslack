@@ -43,6 +43,7 @@ function membersSpy(): MembersSpy {
       isInviteUsable: unused,
       acceptInvite: unused,
       listActiveMembers: async () => [],
+      findUserNames: unused,
       async deactivate(_actor, target) {
         deactivated.push(target);
         return { ok: true, revokedSessionIds: [] };

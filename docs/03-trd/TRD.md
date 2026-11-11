@@ -88,6 +88,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `POST /api/invites`, `POST /api/invites/accept` | owner 발급, 만료/1회 token 원자적 교환; 외부 메일 없음 |
 | `POST /api/invites/{id}/revoke` | owner 전용 초대 폐기(§5-1 S3) |
 | `GET /api/members` | 활성 멤버 목록(초대·DM·멘션 후보). 본인 계정 세션 필요 |
+| `GET /api/users/names?ids=` | 같은 워크스페이스 사용자 이름(비활성 포함) `{users:[{id,display_name,status,kind}]}`. UUID 1–100개(초과·형식 오류 400), 없는 ID는 빠질 뿐 200. 본인 계정 세션 필요, 봇 리스너 미노출 |
 | `POST /api/admin/members/{user_id}/deactivate` | owner 전용. `users.status=disabled`, 세션 revoke, WS close |
 | `GET /api/conversations` | 현재 접근 가능한 대화와 unread 요약. 대화별 추가 unread 호출 금지 |
 | `GET /api/conversations/discover?after=&limit=` | 아직 참여하지 않은 공개 채널 목록. join 전에는 메시지·멤버 정보를 반환하지 않음 |

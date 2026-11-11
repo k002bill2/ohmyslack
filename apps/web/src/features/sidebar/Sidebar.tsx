@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import type { Account, ListState, Space } from '../../data';
 import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
+import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { SIDEBAR_SHELL_COPY } from './copy.js';
@@ -60,6 +61,8 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
   readonly onRejoin?: (id: string) => void;
 }) {
   const left = space.left === true;
+  // QA D3: 비활성 DM 상대는 이름만 말줄임, 「(비활성)」은 항상 보이고 전체 이름은 title로.
+  const split = !collapsed && isSplitName(space.name, space.peerInactiveName);
   const classes = ['space-item', selected ? 'space-selected' : '', space.unreadCount > 0 ? 'space-unread' : '', left ? 'space-left' : '']
     .filter(Boolean)
     .join(' ');
@@ -76,7 +79,9 @@ function SpaceListItem({ space, selected, collapsed, onSelect, onRejoin }: {
         onClick={() => onSelect(space.id)}
       >
         <span className="space-status" aria-hidden="true" />
-        <span className={collapsed ? 'visually-hidden' : 'space-name'}>{space.name}</span>
+        <span className={collapsed ? 'visually-hidden' : split ? 'space-name name-split' : 'space-name'} title={split ? space.name : undefined}>
+          <NameParts label={space.name} inactiveName={space.peerInactiveName} />
+        </span>
         {space.bot === true && !collapsed && <BotBadge />}
         {space.unreadThreadCount > 0 && (
           <span className="thread-dot" role="img" aria-label={threadDotLabel(space.unreadThreadCount)}>

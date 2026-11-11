@@ -372,3 +372,15 @@ export const PUSH_SETTINGS_COPY = {
   botHint: 'Jarvis의 새 메시지를 알림으로 받을 수 있습니다.',
   dismissHint: '닫기',
 } as const;
+
+/**
+ * 작성자·DM 상대 이름 대체 표기(G-50·G-51). 비활성 멤버는 이름 뒤에 「(비활성)」, 끝내 이름을 모르면 「알 수 없는 사용자」.
+ * 화면에 빈 이름이나 UUID를 내지 않는다(W-10k A).
+ */
+const INACTIVE_SUFFIX = '(비활성)';
+export const AUTHOR_NAME_COPY = {
+  inactive: (name: string): string => `${name} ${INACTIVE_SUFFIX}`,
+  /** 화면에서 이름과 접미를 따로 그릴 때의 접미(QA D2·D3). `inactive`와 같은 정본 문구. */
+  inactiveSuffix: INACTIVE_SUFFIX,
+  unknown: '알 수 없는 사용자',
+} as const;
