@@ -73,6 +73,7 @@ export function createMessagesService(deps: MessagesServiceDeps): MessagesServic
       if (result.kind === 'bad_root') throw new HttpError(400, 'invalid_thread_root');
       if (result.kind === 'bad_attachments') throw new HttpError(400, 'invalid_attachments');
       if (result.kind === 'not_member') throw notFound();
+      if (result.kind === 'peer_inactive') throw new HttpError(403, 'forbidden');
       if (result.kind === 'created') {
         events.created({ changeId: result.changeId, message: result.message });
         emitRoot(result.changeId, result.root);

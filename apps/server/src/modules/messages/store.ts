@@ -59,6 +59,8 @@ export type SendResult =
   | { readonly kind: 'replayed'; readonly message: MessageRecord; readonly changeId: number }
   | { readonly kind: 'conflict' }
   | { readonly kind: 'not_member' }
+  /** DM 상대가 비활성(받을 수 없음). 멱등 재시도(원결과)는 이 판정보다 앞선다. */
+  | { readonly kind: 'peer_inactive' }
   | { readonly kind: 'bad_root' }
   | { readonly kind: 'bad_attachments' };
 

@@ -2,11 +2,11 @@ import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExte
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
 import type { UploadFn } from '../conversation/attachments/composer-upload.js';
-import { Composer, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useMessageRoving, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useMessageRoving, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
-import { DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
+import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
 import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
@@ -106,6 +106,11 @@ function mentionsName(m: MessageItemData, name: string, names: readonly string[]
 /** 「나를 멘션」(MessageItem `mentionsSelf`): 삭제·내가 쓴 메시지는 아니다. 본문 목록과 스레드가 같은 규칙(Codex r2 P2). */
 function mentionsSelfOf(m: MessageItemData, selfName: string | undefined, selfId: string | undefined, names: readonly string[] | undefined): boolean {
   return selfName !== undefined && m.deleted !== true && (selfId === undefined || m.authorId !== selfId) && mentionsName(m, selfName, names);
+}
+
+/** G-52: 상대가 비활성화된 DM은 본문·답글 작성기 대신 안내를 둔다(서버는 이 DM 쓰기를 403으로 거절). */
+function composerLocked(space: Space): boolean {
+  return space.kind === 'dm' && space.peerInactiveName !== undefined;
 }
 
 /** CMP-05 ConversationHeader(골격) + CMP-06 MessageList + CMP-11 Composer. */
@@ -237,7 +242,8 @@ function ConversationPane(props: {
           ))}
         </ul>
       )}
-      {!left && (
+      {!left && composerLocked(space) && <ComposerNotice text={COMPOSER_COPY.inactivePeer} />}
+      {!left && !composerLocked(space) && (
         <div data-composer="main">
           <Composer
             key={space.id}
@@ -600,6 +606,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
       spaceTitle={spaceTitle(space)}
       notice={anchorNoticeEl(true)}
+      {...(composerLocked(space) ? { composerNotice: COMPOSER_COPY.inactivePeer } : {})}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       mentionsSelf={(m) => mentionsSelfOf(m, snap.account?.displayName, snap.account?.id, mentionNames)}
     />

@@ -79,6 +79,8 @@ export const COMPOSER_COPY = {
   hint: 'Enter 전송 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter는 무시',
   /** R4 시안 작성기 아래 줄 `@` 아이콘 버튼 접근 이름 — 커서 위치에 `@`를 넣어 멘션 후보를 연다. */
   mentionButton: '멘션 추가',
+  /** G-52: 상대가 비활성화된 DM — 본문·답글 작성기 자리 안내(서버는 이 DM 쓰기를 403으로 거절). */
+  inactivePeer: '비활성화된 멤버라 메시지를 보낼 수 없습니다',
 } as const;
 
 /** 본문 작성기 placeholder(결정 3): 채널 「#이름에 남기기」, DM 「상대 이름에게 남기기」. `name`에는 `#`이 없다. */
