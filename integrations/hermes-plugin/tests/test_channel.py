@@ -292,3 +292,70 @@ async def test_case5_join_racing_catch_up_does_not_drop_first_mention(server, ma
     await wait_for(lambda: any(cid == CHANNEL_ID for cid, _a in server.subscribed))
     await _sentinel(server, adapter)
     assert [e.message_id for e in adapter.events].count(first["id"]) == 1
+
+
+# ---- 채널 이름 → SessionSource.chat_name (channel-name-me) ----
+CHANNEL_NAME = "proj-ohmyslack"
+
+
+def _with_named_channel(server) -> None:
+    server.conversations = [{"id": DM_ID, "kind": "dm", "name": None},
+                            {"id": CHANNEL_ID, "kind": "channel", "name": CHANNEL_NAME}]
+
+
+async def test_channel_ingest_sets_chat_name_from_me(server, make_adapter):
+    _with_named_channel(server)
+    adapter = await _connected(server, make_adapter)
+    m = _ch(f"@{BOT_NAME} 이름 확인")
+    await server.push_live(m, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert adapter.events[0].source.chat_name == CHANNEL_NAME
+    assert adapter.events[0].source.chat_id == CHANNEL_ID
+
+
+async def test_dm_ingest_has_no_chat_name(server, make_adapter):
+    _with_named_channel(server)
+    adapter = await _connected(server, make_adapter)
+    m = make_message(body="DM 지시")
+    await server.push_live(m)
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert adapter.events[0].source.chat_type == "dm"
+    assert adapter.events[0].source.chat_name is None
+
+
+async def test_me_without_name_keeps_previous_behavior(server, make_adapter):
+    _with_channel(server)  # 구 서버: conversations[]에 name 없음
+    adapter = await _connected(server, make_adapter)
+    m = _ch(f"@{BOT_NAME} 이름 없음")
+    await server.push_live(m, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert adapter.events[0].source.chat_type == "channel"
+    assert adapter.events[0].source.chat_name is None
+    assert (await adapter.get_chat_info(CHANNEL_ID))["name"] == CHANNEL_ID
+
+
+async def test_non_string_name_ignored(server, make_adapter):
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel", "name": 42}]
+    adapter = await _connected(server, make_adapter)
+    m = _ch(f"@{BOT_NAME} 이상한 이름")
+    await server.push_live(m, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert adapter.events[0].source.chat_name is None
+
+
+async def test_get_chat_info_uses_channel_name(server, make_adapter):
+    _with_named_channel(server)
+    adapter = await _connected(server, make_adapter)
+    assert (await adapter.get_chat_info(CHANNEL_ID))["name"] == CHANNEL_NAME
+    assert (await adapter.get_chat_info(DM_ID))["name"] == "Jarvis"
+
+
+async def test_left_channel_forgets_name(server, make_adapter):
+    _with_named_channel(server)
+    adapter = await _connected(server, make_adapter)
+    assert (await adapter.get_chat_info(CHANNEL_ID))["name"] == CHANNEL_NAME
+    server.conversations = [{"id": DM_ID, "kind": "dm", "name": None}]
+    await server.send_frame({"type": "membership.changed", "conversation_id": CHANNEL_ID, "state": "left"})
+    await _sentinel(server, adapter)
+    assert CHANNEL_ID not in adapter._conversation_ids
+    assert (await adapter.get_chat_info(CHANNEL_ID))["name"] == CHANNEL_ID
