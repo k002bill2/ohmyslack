@@ -722,6 +722,20 @@ body {
     flex-wrap: nowrap;
     justify-content: flex-start;
   }
+  /* header-390: 봇 컨트롤이 있는 머리만 두 줄 — 첫 줄 뒤로·채널명·메뉴(채널명이 남는 폭 전부), 둘째 줄 봇 버튼(한 줄 가로 스크롤).
+     채널명 기준 폭 0이라 긴 이름도 메뉴를 다음 줄로 밀지 않고 말줄임. 봇 컨트롤이 없는 머리는 그대로 한 줄. */
+  .conversation-header:has(> .bot-channel-control) {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+  .conversation-header:has(> .bot-channel-control) > .conversation-heading {
+    flex-basis: 0;
+  }
+  .conversation-header > .bot-channel-control {
+    order: 1;
+    flex: 1 0 100%;
+    max-width: 100%;
+  }
   .bot-channel-control > .btn {
     max-width: 30vw;
   }
