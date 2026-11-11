@@ -52,15 +52,43 @@ describe('봇 컨트롤 좁은 화면(QA D-1)', () => {
   it('640px 이하에서는 버튼 폭에 상한을 두고 긴 봇 이름을 말줄임한다', () => {
     const narrow = rules(narrowBlocks().join('\n'), '.bot-channel-control > .btn');
     expect(narrow).toMatch(/max-width:/);
-    expect(narrow).toContain('overflow: hidden');
-    expect(narrow).toContain('text-overflow: ellipsis');
-    expect(narrow).toContain('align-content: center');
+    // 봇 배지 QA 관찰 3: 말줄임 규칙은 모든 구간 공통 블록으로 옮겼다(넓은 화면에서도 버튼 하나가 상한보다 길 수 있음).
+    const base = rules(outsideMedia(), '.bot-channel-control > .btn');
+    expect(base).toContain('overflow: hidden');
+    expect(base).toContain('text-overflow: ellipsis');
+    expect(base).toContain('align-content: center');
+    expect(base).toContain('max-width: 100%');
   });
 
   it('모든 구간에서 봇이 여럿이거나 이름이 길어도 컨트롤 전체 폭을 헤더 기준으로 제한하고 가로 스크롤한다(Codex r1·r2 P2)', () => {
     const control = rules(outsideMedia(), '.bot-channel-control');
     expect(control).toContain('max-width: 40%');
     expect(control).toContain('overflow-x: auto');
+  });
+
+  it('봇 배지 QA 관찰 3: 640px 초과(1440 스레드 열림 등)에서는 버튼이 잘리지 않고 다음 줄로 넘어간다(flex-wrap), 640px 이하는 기존 한 줄', () => {
+    const control = rules(outsideMedia(), '.bot-channel-control');
+    expect(control).toContain('flex-wrap: wrap');
+    expect(control).toContain('justify-content: flex-end');
+    expect(rules(narrowBlocks().join('\n'), '.bot-channel-control')).toContain('flex-wrap: nowrap');
+  });
+
+  it('봇 배지 QA 관찰 3: 버튼은 접히지 않고 DOM·탭 순서에 모두 남는다', () => {
+    const ok = async () => ({ ok: true as const, value: null });
+    const html = renderToStaticMarkup(
+      <BotChannelControl
+        bots={[
+          { id: 'b1', displayName: 'QA 알림 봇 아주 긴 이름 하나' },
+          { id: 'b2', displayName: 'QA 알림 봇 아주 긴 이름 둘' },
+        ]}
+        memberIds={new Set(['b1', 'b2'])}
+        onAdd={ok}
+        onRemove={ok}
+      />,
+    );
+    const buttons = [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)];
+    expect(buttons.map((b) => b[2])).toEqual([BOT_CHANNEL_COPY.title('QA 알림 봇 아주 긴 이름 하나'), BOT_CHANNEL_COPY.title('QA 알림 봇 아주 긴 이름 둘')]);
+    for (const b of buttons) expect(b[1]).not.toMatch(/tabindex|hidden|aria-hidden|disabled/i);
   });
 
   it('버튼 title이 전체 라벨을 유지하고 라벨(접근 이름) 문구는 그대로', () => {
