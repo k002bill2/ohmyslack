@@ -203,7 +203,7 @@ function fakeDb(answer: (sql: string) => { rows: unknown[]; rowCount: number } =
     log.push({ text, params });
     return answer(text);
   });
-  return { log, client: { query, release: vi.fn() } };
+  return { log, client: { query, release: vi.fn(), on: () => undefined, removeListener: () => undefined } };
 }
 
 describe('repo(SQL 순서)', () => {
