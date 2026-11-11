@@ -22,6 +22,5 @@ export function useFocusOnLock(locked: boolean, scope: RefObject<HTMLElement | n
     if (locked && !wasLocked.current && focusedInside.current && (active === null || active === document.body)) target()?.focus();
     wasLocked.current = locked;
     // target은 렌더마다 새 함수 — 전환 시점에만 본다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locked]);
 }
