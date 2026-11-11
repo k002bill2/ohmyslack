@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FocusEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { ActionFailure, ActionResult, Account, DataSource, Space } from '../../data';
 import { BOT_CHANNEL_COPY, CANCEL_LABEL } from '../../ui/copy.js';
@@ -52,7 +52,7 @@ export interface BotChannelControlProps {
 export function BotChannelControl({ bots, memberIds, onAdd, onRemove }: BotChannelControlProps) {
   if (bots.length === 0) return null;
   return (
-    <div className="bot-channel-control">
+    <div className="bot-channel-control" onFocus={revealFocusedButton}>
       {bots.map((bot) =>
         memberIds.has(bot.id) ? (
           <RemoveBotButton key={bot.id} bot={bot} onRemove={onRemove} />
@@ -62,6 +62,16 @@ export function BotChannelControl({ bots, memberIds, onAdd, onRemove }: BotChann
       )}
     </div>
   );
+}
+
+/**
+ * header-390: 좁은 화면 컨트롤은 한 줄 가로 스크롤 — Tab·Shift+Tab으로 간 버튼이 보이는 영역 밖에 걸치지 않게 직접 끌어온다
+ * (390 재QA에서 브라우저 기본 포커스 스크롤이 `scrollLeft`를 움직이지 않았다). 직계 버튼만, 가장 가까운 위치로(이미 보이면 그대로).
+ */
+function revealFocusedButton(event: FocusEvent<HTMLDivElement>) {
+  const target = event.target;
+  if (target.parentElement !== event.currentTarget || typeof target.scrollIntoView !== 'function') return;
+  target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 function AddBotButton({ bot, onAdd }: { readonly bot: ChannelBot; readonly onAdd: BotChannelControlProps['onAdd'] }) {
