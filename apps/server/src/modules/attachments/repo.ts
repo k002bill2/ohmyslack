@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { withTransaction } from '../../db/pool.js';
 import type { AttachmentMime } from '../../shared.js';
 
 /**
@@ -135,25 +136,17 @@ export interface AttachmentsStore {
 
 /** 메타·바이트를 한 트랜잭션으로 넣는다(부분 저장 0). */
 async function insertTx(pool: pg.Pool, a: NewAttachment): Promise<AttachmentMeta> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const row = await withTransaction(pool, async (client) => {
     const res = await client.query<MetaRow>(
       `INSERT INTO attachments (id, conversation_id, uploader_id, mime, byte_size, sha256, duration_ms, width, height, created_at, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING ${META_COLUMNS}`,
       [a.id, a.conversationId, a.uploaderId, a.mime, a.byteSize, a.sha256, a.durationMs, a.width, a.height, a.createdAt, a.expiresAt],
     );
     await client.query('INSERT INTO attachment_blobs (attachment_id, bytes) VALUES ($1, $2)', [a.id, a.bytes]);
-    await client.query('COMMIT');
-    const row = res.rows[0];
-    if (row === undefined) throw new Error('첨부 행을 다시 읽지 못했습니다');
-    return toMeta(row);
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { commit: true, value: res.rows[0] };
+  });
+  if (row === undefined) throw new Error('첨부 행을 다시 읽지 못했습니다');
+  return toMeta(row);
 }
 
 /**
