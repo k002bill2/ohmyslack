@@ -1,6 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
-import { Composer, MessageItem, lastServerSeq, scrolledToBottom, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -29,6 +29,8 @@ export interface ThreadPanelProps {
   readonly mentionsSelf?: (message: MessageItemData) => boolean;
   /** 헤더 아래 안내(알림 탭 대상 없음 등, W-23b). */
   readonly notice?: ReactNode;
+  /** 있으면 답글 작성기 대신 이 안내를 둔다(G-52 비활성 상대 DM). 원문·답글 읽기는 그대로. */
+  readonly composerNotice?: string;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -67,7 +69,7 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice, composerNotice }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
   const actions = {
     timePlacement,
@@ -87,7 +89,9 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
   useEffect(reportSeen);
 
   useEffect(() => {
-    container.current?.querySelector('textarea')?.focus();
+    // 작성기가 없으면(G-52) 닫기 버튼으로 — medium 오버레이에서 포커스가 inert 본문에 남지 않게.
+    const el = container.current;
+    (el?.querySelector('textarea') ?? el?.querySelector<HTMLElement>('.thread-close'))?.focus();
   }, [root.id]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -166,14 +170,18 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
           ))}
         </ul>
       )}
-      <Composer
-        key={root.id}
-        label={COMPOSER_COPY.replyLabel}
-        placeholder={COMPOSER_COPY.replyPlaceholder}
-        showHint={variant !== 'compact'}
-        onSend={onSend}
-        {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
-      />
+      {composerNotice !== undefined ? (
+        <ComposerNotice text={composerNotice} />
+      ) : (
+        <Composer
+          key={root.id}
+          label={COMPOSER_COPY.replyLabel}
+          placeholder={COMPOSER_COPY.replyPlaceholder}
+          showHint={variant !== 'compact'}
+          onSend={onSend}
+          {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
+        />
+      )}
     </Tag>
   );
 }

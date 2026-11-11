@@ -371,6 +371,15 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-popover);
 }
+/* G-52 작성기 자리 안내(비활성 상대 DM): 작성기 카드 대신 muted 한 줄. */
+.composer-notice {
+  margin: var(--space-2) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: var(--leading-body);
+}
 [data-composer] > .composer,
 .thread-panel > .composer {
   margin-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));

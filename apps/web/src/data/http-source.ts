@@ -421,6 +421,18 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     },
   });
 
+  /** G-52 경합: DM 전송이 403이면 상대가 비활성화됐을 수 있다 — 상대 이름만 다시 확인해 맞으면 작성기가 잠긴다. */
+  const recheckDmPeer = (conversationId: string) => {
+    const peer = summaries.find((c) => c.id === conversationId && c.name === null)?.peer_user_id;
+    if (peer === null || peer === undefined || ended) return;
+    void settleNames([peer], true).then(
+      () => {
+        if (!ended) refreshNames();
+      },
+      () => undefined,
+    );
+  };
+
   const sendController = createSendController({
     me: '',
     post: async (req): Promise<PostResult> => {
@@ -438,6 +450,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         if (!ended) fold = foldView(res.change_id, res.message);
         return { ok: true, messageId: res.message.id };
       } catch (e) {
+        if (e instanceof HttpStatusError && e.status === 403) recheckDmPeer(req.conversationId);
         if (e instanceof HttpStatusError) return { ok: false, status: e.status };
         throw e;
       }
