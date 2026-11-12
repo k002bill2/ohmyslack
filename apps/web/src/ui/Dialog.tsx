@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { DIALOG_CLOSE_LABEL } from './copy.js';
 
 export interface DialogProps {
@@ -17,8 +17,26 @@ function isComposingKey(e: globalThis.KeyboardEvent): boolean {
   return e.isComposing || e.keyCode === 229 || e.key === 'Process';
 }
 
-/** 열린 Dialog 상자들 — 마운트 순서. 문서 수준 키는 마지막(가장 위) 상자만 처리한다(portal·트리 안 Dialog가 섞이면 DOM 순서 ≠ 열린 순서). */
-const openBoxes: HTMLElement[] = [];
+/**
+ * React 트리상 바깥 Dialog 수(깊이). context는 portal을 넘어 전달되므로 portal 자식 Dialog도 부모보다 깊다.
+ * 같은 커밋에 부모·자식이 함께 열리면 자식 effect가 먼저 돌아 등록 순서만으로는 부모가 위가 된다(Codex r1 P2).
+ */
+const DialogDepth = createContext(0);
+
+interface OpenBox {
+  readonly box: HTMLElement;
+  readonly depth: number;
+}
+
+/** 열린 Dialog 상자들 — 등록(마운트 effect) 순서. portal·트리 안 Dialog가 섞이면 DOM 순서 ≠ 열린 순서. */
+const openBoxes: OpenBox[] = [];
+
+/** 가장 위 상자: 깊이가 가장 큰 것, 같으면 나중에 등록된 것(형제는 나중에 연 것이 위). */
+function topBox(): HTMLElement | undefined {
+  let top: OpenBox | undefined;
+  for (const entry of openBoxes) if (top === undefined || entry.depth >= top.depth) top = entry;
+  return top?.box;
+}
 
 /**
  * Tab/Shift+Tab을 상자 안 항목으로 순환시킨다. 처리했으면(기본 동작을 막아야 하면) true.
@@ -48,10 +66,11 @@ function trapTab(box: HTMLElement, shiftKey: boolean): boolean {
  * Tab → 첫 항목, Shift+Tab → 마지막 항목, Esc → 닫기. 상자 안 키는 `onKeyDown` 몫이라 건너뛰고(중복 처리 금지),
  * 다른 레이어(나중에 열린 portal 메뉴 등)의 키는 가로채지 않는다. 포커스를 미리 끌어오지 않고 키를 누를 때만 잡는다.
  */
-function trapOutsideKeys(box: HTMLElement, background: readonly HTMLElement[], close: () => void): () => void {
-  openBoxes.push(box);
+function trapOutsideKeys(box: HTMLElement, depth: number, background: readonly HTMLElement[], close: () => void): () => void {
+  const entry: OpenBox = { box, depth };
+  openBoxes.push(entry);
   const onKeyDown = (e: globalThis.KeyboardEvent) => {
-    if (e.defaultPrevented || openBoxes.at(-1) !== box) return;
+    if (e.defaultPrevented || topBox() !== box) return;
     const target = e.target;
     if (!(target instanceof Node) || box.contains(target)) return;
     const stray = target === document.body || target === document.documentElement || background.some((el) => el.contains(target));
@@ -66,7 +85,7 @@ function trapOutsideKeys(box: HTMLElement, background: readonly HTMLElement[], c
   document.addEventListener('keydown', onKeyDown);
   return () => {
     document.removeEventListener('keydown', onKeyDown);
-    openBoxes.splice(openBoxes.indexOf(box), 1);
+    openBoxes.splice(openBoxes.indexOf(entry), 1);
   };
 }
 
@@ -109,6 +128,7 @@ function observeLostFocus(box: HTMLElement): () => void {
  */
 export function Dialog({ title, onClose, children }: DialogProps) {
   const titleId = useId();
+  const depth = useContext(DialogDepth);
   const box = useRef<HTMLDivElement>(null);
   // 마운트 effect가 한 번만 걸리므로 최신 onClose를 ref로 읽는다(문서 수준 Esc).
   const latestClose = useRef(onClose);
@@ -130,7 +150,7 @@ export function Dialog({ title, onClose, children }: DialogProps) {
     );
     siblings.forEach((el) => (el.inert = true));
     const releaseFocusGuard = box.current === null ? null : observeLostFocus(box.current);
-    const releaseKeyTrap = box.current === null ? null : trapOutsideKeys(box.current, siblings, () => latestClose.current());
+    const releaseKeyTrap = box.current === null ? null : trapOutsideKeys(box.current, depth, siblings, () => latestClose.current());
     return () => {
       releaseKeyTrap?.();
       releaseFocusGuard?.();
@@ -138,7 +158,8 @@ export function Dialog({ title, onClose, children }: DialogProps) {
       body.style.overflow = prevOverflow;
       if (trigger?.isConnected) trigger.focus();
     };
-  }, []);
+    // depth는 조상 Dialog 수라 마운트 동안 바뀌지 않는다 — 사실상 마운트 1회.
+  }, [depth]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
@@ -161,7 +182,7 @@ export function Dialog({ title, onClose, children }: DialogProps) {
             {DIALOG_CLOSE_LABEL}
           </button>
         </div>
-        {typeof children === 'function' ? children({ titleId }) : children}
+        <DialogDepth.Provider value={depth + 1}>{typeof children === 'function' ? children({ titleId }) : children}</DialogDepth.Provider>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@
  */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Dialog } from '../../src/ui/Dialog.js';
 
@@ -106,6 +107,48 @@ describe('Dialog — 포커스가 BODY일 때도 트랩', () => {
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: '안쪽' })).toBeNull();
     expect(outer()).toBeTruthy();
+  });
+
+  it('중첩 — 같은 커밋에 연 부모·portal 자식 Dialog는 자식이 위(Codex r1 P2)', () => {
+    const closed: string[] = [];
+    function ParentChild() {
+      const [child, setChild] = useState(true);
+      return (
+        <Dialog title="부모" onClose={() => closed.push('부모')}>
+          <button type="button">부모 버튼</button>
+          {child &&
+            createPortal(
+              <Dialog
+                title="자식"
+                onClose={() => {
+                  closed.push('자식');
+                  setChild(false);
+                }}
+              >
+                <button type="button">자식 버튼</button>
+              </Dialog>,
+              document.body,
+            )}
+        </Dialog>
+      );
+    }
+    render(<ParentChild />);
+    (document.activeElement as HTMLElement).blur();
+    const childDialog = screen.getByRole('dialog', { name: '자식' });
+    expect(fireEvent.keyDown(document.body, { key: 'Tab' })).toBe(false);
+    expect(document.activeElement).toBe(within(childDialog).getByRole('button', { name: '닫기' }));
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(closed).toEqual(['자식']);
+    expect(screen.queryByRole('dialog', { name: '자식' })).toBeNull();
+    // 자식이 닫히면 부모가 다시 가장 위.
+    (document.activeElement as HTMLElement).blur();
+    const parentDialog = screen.getByRole('dialog', { name: '부모', hidden: true });
+    expect(fireEvent.keyDown(document.body, { key: 'Tab' })).toBe(false);
+    expect(document.activeElement).toBe(within(parentDialog).getByRole('button', { name: '닫기' }));
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(closed).toEqual(['자식', '부모']);
   });
 
   it('상자 안 Tab은 기존 onKeyDown이 한 번만 처리(끝 → 닫기)', () => {
