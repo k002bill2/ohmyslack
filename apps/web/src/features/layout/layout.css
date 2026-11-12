@@ -612,6 +612,11 @@ body {
   font-size: var(--text-lg);
   line-height: var(--leading-tight);
 }
+/* dialog-busy-focus: 머리 텍스트 버튼(「다시 참여」)은 줄바꿈·축소 없이 한 줄 — 좁은 폭에서는 대화 이름(.conversation-title 말줄임)이 줄어든다. */
+.conversation-header > .btn {
+  flex: none;
+  white-space: nowrap;
+}
 .conversation-header > button:not(.btn) {
   min-height: 44px;
   min-width: 44px;
