@@ -454,6 +454,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     setPanel(null);
     setMembers(false);
     focusComposer.current = true;
+    // 같은 대화(다시 참여)여도 F4 effect가 돌게 — conversationId가 그대로면 deps가 바뀌지 않는다.
+    bumpFocus();
     dispatch({ type: 'select-space', conversationId });
   };
   /** W-10j 다시 참여: join 2xx → 그 대화로 이동 + 이력·구독 재개(`open`). 선택 중이면 effect가 다시 돌지 않아 직접 연다. */
@@ -525,6 +527,12 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       compact={bp === 'compact'}
       onSelect={(id) => {
         setMembers(false);
+        // compact는 선택 뒤 사이드바가 화면에서 사라진다 → F4 규칙으로 포커스를 옮긴다(BODY 유실 방지).
+        // wide·medium은 사이드바가 남으므로 키보드 탐색 중인 포커스를 빼앗지 않는다.
+        if (bp === 'compact') {
+          focusComposer.current = true;
+          bumpFocus();
+        }
         dispatch({ type: 'select-space', conversationId: id });
       }}
       {...(snap.account === undefined ? {} : { account: snap.account })}
@@ -662,7 +670,6 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
               onSelect={(id) => {
                 setOverlay(null);
                 goTo(id);
-                bumpFocus();
               }}
             />
           )}
