@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExte
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space } from '../../data';
 import type { UploadFn } from '../conversation/attachments/composer-upload.js';
-import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useFocusOnLock, useMessageRoving, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useFocusOnLock, useMessageRoving, withDiscardFocus, MAIN_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
@@ -162,6 +162,8 @@ function ConversationPane(props: {
   const pane = useRef<HTMLElement>(null);
   // G-52 경합: 작성기가 안내로 바뀌면 사라진 입력란의 포커스를 안내로(스레드와 같은 규칙).
   useFocusOnLock(locked, pane, () => pane.current?.querySelector<HTMLElement>('.composer-notice'));
+  // a11y-focus-order: 실패 항목을 지우면 포커스를 본문 작성기(없으면 안내)로 — body로 떨어지지 않게.
+  const onDiscard = withDiscardFocus(pane, props.onDiscard, MAIN_DISCARD_FOCUS);
   const onPinScroll = usePinBottom(list, space.id);
   // UI_STATES §4-1 메시지 단위 roving tabindex(compact는 보이는 버튼이라 끈다).
   const roving = useMessageRoving(list, roots.map((m) => m.id));
@@ -234,7 +236,7 @@ function ConversationPane(props: {
                 message={m}
                 onReply={props.onReply}
                 onRetry={props.onRetry}
-                onDiscard={props.onDiscard}
+                onDiscard={onDiscard}
                 retryLocked={locked}
                 {...props.itemActions}
                 threadUnread={space.unreadThreadRoots?.includes(m.id) === true}

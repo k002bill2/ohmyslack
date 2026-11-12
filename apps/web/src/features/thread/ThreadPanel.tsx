@@ -1,6 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
-import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, withDiscardFocus, THREAD_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -72,16 +72,18 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice, composerNotice }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
   const locked = composerNotice !== undefined;
+  const container = useRef<HTMLElement>(null);
+  // a11y-focus-order: 실패 답글을 지우면 포커스를 스레드 작성기 → 안내 → 닫기 순으로.
+  const discard = withDiscardFocus(container, onDiscard, THREAD_DISCARD_FOCUS);
   const actions = {
     timePlacement,
     retryLocked: locked,
     ...(onRetry === undefined ? {} : { onRetry }),
-    ...(onDiscard === undefined ? {} : { onDiscard }),
+    ...(discard === undefined ? {} : { onDiscard: discard }),
     ...(mentionNames === undefined ? {} : { mentionNames }),
     ...messageActions,
   };
   const selfMention = (m: MessageItemData) => mentionsSelf?.(m) === true;
-  const container = useRef<HTMLElement>(null);
   const lastEsc = useRef(0);
   const lastReply = lastServerSeq(replies);
   const reportSeen = () => {
