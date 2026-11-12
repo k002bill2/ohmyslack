@@ -20,8 +20,8 @@ const settle = async () => {
 };
 
 /** 채널 general(원문 ROOT) + DM(상대 PEER). `post`가 두 대화의 전송 응답, `disabled`면 상대 비활성(잠긴 DM). */
-async function mount(options: { readonly post: Reply; readonly disabled?: boolean }) {
-  installViewport(1400);
+async function mount(options: { readonly post: Reply; readonly disabled?: boolean; readonly width?: number }) {
+  installViewport(options.width ?? 1400);
   let id = 0;
   const ctx = setup({ newClientMessageId: () => U(900 + (id += 1)) });
   ctx.server.on('GET /api/conversations', () => ({
@@ -94,7 +94,7 @@ describe('실패 항목 지운 뒤 포커스', () => {
     expect(document.activeElement).toBe(box);
   });
 
-  it('활성 DM 스레드 「삭제」 → 스레드 작성기(본문 작성기가 가져가지 않음)', async () => {
+  it('채널 스레드 「삭제」 → 스레드 작성기(본문 작성기가 가져가지 않음)', async () => {
     const { user } = await mount({ post: { status: 500 } });
     await open(user, 'general');
     const panel = await openThread(user);
@@ -102,6 +102,42 @@ describe('실패 항목 지운 뒤 포커스', () => {
     await user.type(reply, '답글{Enter}');
     await settle();
     await press(user, within(panel).getByRole('button', { name: '삭제' }));
+    expect(within(panel).queryByText('답글')).toBeNull();
+    expect(document.activeElement).toBe(reply);
+  });
+
+  it('390 활성 DM 본문 「삭제」 → 본문 작성기(QA 재현 폭)', async () => {
+    const { user } = await mount({ post: { status: 500 }, width: 390 });
+    await open(user, 'B');
+    const pane = screen.getByRole('main');
+    const box = within(pane).getByRole('textbox', { name: 'B에 메시지 작성' });
+    await user.type(box, '안녕{Enter}');
+    await settle();
+    await press(user, within(pane).getByRole('button', { name: '삭제' }));
+    expect(within(pane).queryByText('안녕')).toBeNull();
+    expect(document.activeElement).toBe(box);
+  });
+
+  it('활성 DM 스레드 「삭제」 → 스레드 작성기', async () => {
+    const { user } = await mount({ post: { status: 500 } });
+    await open(user, 'B');
+    const panel = await openThread(user);
+    const reply = within(panel).getByRole('textbox', { name: COMPOSER_COPY.replyLabel });
+    await user.type(reply, '답글{Enter}');
+    await settle();
+    await press(user, within(panel).getByRole('button', { name: '삭제' }));
+    expect(within(panel).queryByText('답글')).toBeNull();
+    expect(document.activeElement).toBe(reply);
+  });
+
+  it('채널 스레드 「목록에서 지우기」(확인 안 됨) → 스레드 작성기', async () => {
+    const { user } = await mount({ post: 'network' });
+    await open(user, 'general');
+    const panel = await openThread(user);
+    const reply = within(panel).getByRole('textbox', { name: COMPOSER_COPY.replyLabel });
+    await user.type(reply, '답글{Enter}');
+    await settle();
+    await press(user, within(panel).getByRole('button', { name: '목록에서 지우기' }));
     expect(within(panel).queryByText('답글')).toBeNull();
     expect(document.activeElement).toBe(reply);
   });
