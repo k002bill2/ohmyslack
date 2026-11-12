@@ -731,8 +731,8 @@ body {
   .conversation-header:has(> .bot-channel-control) > .conversation-heading {
     flex-basis: 0;
   }
+  /* 봇 컨트롤은 DOM에서 메뉴 뒤(a11y-focus-order) — order 없이 다음 줄로 넘어가 Tab 순서와 화면 순서가 같다. */
   .conversation-header > .bot-channel-control {
-    order: 1;
     flex: 1 0 100%;
     max-width: 100%;
   }

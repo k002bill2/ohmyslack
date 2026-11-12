@@ -194,11 +194,12 @@ function ConversationPane(props: {
             {memberCount > 0 ? SHELL_COPY.channelMeta(memberCount) : SHELL_COPY.kind[space.kind]}
           </span>
         </div>
-        {props.botControl !== undefined && <BotChannelControl {...props.botControl} />}
         <HeaderMenu
           {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
           {...(membership?.onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave: membership.onLeave } : {})}
         />
+        {/* a11y-focus-order(WCAG 2.4.3): DOM 순서 = 화면 순서. 390은 봇 컨트롤이 둘째 줄이라 메뉴 뒤, 834·1440도 같은 순서로 그린다. */}
+        {props.botControl !== undefined && <BotChannelControl {...props.botControl} />}
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
         {props.onCloseThread && (
           <button
