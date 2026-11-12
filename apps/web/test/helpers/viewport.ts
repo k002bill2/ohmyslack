@@ -7,8 +7,17 @@ type Listener = (e: MediaQueryListEvent) => void;
 const LE = /^\(width <= ([\d.]+)px\)$/;
 const GE = /^\(width >= ([\d.]+)px\)$/;
 const BETWEEN = /^\(([\d.]+)px < width < ([\d.]+)px\)$/;
+/** `ui/no-auto-keyboard.ts`의 터치 우선 쿼리 — 폭과 무관하게 `setCoarsePointer`로 정한다(기본 false = 데스크톱). */
+const COARSE = '(hover: none) and (pointer: coarse)';
+let coarse = false;
+
+/** 터치 우선 기기 흉내. `installViewport`가 false로 되돌리므로 그 뒤에 부른다. */
+export function setCoarsePointer(next: boolean): void {
+  coarse = next;
+}
 
 export function evaluate(query: string, width: number): boolean {
+  if (query === COARSE) return coarse;
   const le = LE.exec(query);
   if (le) return width <= Number(le[1]);
   const ge = GE.exec(query);
@@ -23,6 +32,7 @@ const lists = new Set<{ query: string; listeners: Set<Listener>; last: boolean }
 
 export function installViewport(initial: number): void {
   width = initial;
+  coarse = false;
   lists.clear();
   window.matchMedia = ((query: string) => {
     const entry = { query, listeners: new Set<Listener>(), last: evaluate(query, width) };

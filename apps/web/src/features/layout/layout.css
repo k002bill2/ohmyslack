@@ -612,36 +612,6 @@ body {
   font-size: var(--text-lg);
   line-height: var(--leading-tight);
 }
-/*
- * QA D-1: 채널 헤더 봇 컨트롤(BotChannelControl) — 수축하지 않고 버튼 라벨은 한 줄. 좁은 화면 폭 상한은 640px 블록.
- * Codex r1·r2 P2: 봇 이름이 길거나 여럿이어도 채널명·헤더 메뉴를 밀어내지 않게 헤더 폭 기준 상한 + 가로 스크롤(모든 구간).
- * 봇 배지 QA 관찰 3: 1440 스레드 열림처럼 상한에 걸리면 버튼을 자르지 않고 다음 줄로 넘긴다(640px 이하는 기존 한 줄).
- * 버튼 하나가 상한보다 길면 말줄임 — 전체 라벨은 버튼 title·접근 이름 그대로. 말줄임은 블록 상자에서만 동작해
- * inline-flex를 바꾸고 세로 가운데는 align-content로.
- */
-.bot-channel-control {
-  flex: none;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 40%;
-  overflow-x: auto;
-}
-.bot-channel-control > .btn {
-  flex: none;
-  display: block;
-  align-content: center;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 스크롤 컨테이너가 바깥 포커스 링을 자르므로 링을 버튼 안쪽에 그린다. */
-.bot-channel-control > .btn:focus-visible {
-  outline-offset: -2px;
-}
 .conversation-header > button:not(.btn) {
   min-height: 44px;
   min-width: 44px;
@@ -715,29 +685,6 @@ body {
 @media (width <= 640px) {
   .conversation-header {
     padding: var(--space-2) var(--space-3);
-  }
-  /* QA D-1: 좁은 화면은 기존처럼 한 줄 + 버튼 폭 상한(말줄임 규칙은 위 공통 블록).
-     넘침은 끝 쪽으로만(flex-end면 시작 쪽 넘침이 스크롤로 닿지 않는다). */
-  .bot-channel-control {
-    flex-wrap: nowrap;
-    justify-content: flex-start;
-  }
-  /* header-390: 봇 컨트롤이 있는 머리만 두 줄 — 첫 줄 뒤로·채널명·메뉴(채널명이 남는 폭 전부), 둘째 줄 봇 버튼(한 줄 가로 스크롤).
-     채널명 기준 폭 0이라 긴 이름도 메뉴를 다음 줄로 밀지 않고 말줄임. 봇 컨트롤이 없는 머리는 그대로 한 줄. */
-  .conversation-header:has(> .bot-channel-control) {
-    flex-wrap: wrap;
-    row-gap: var(--space-2);
-  }
-  .conversation-header:has(> .bot-channel-control) > .conversation-heading {
-    flex-basis: 0;
-  }
-  /* 봇 컨트롤은 DOM에서 메뉴 뒤(a11y-focus-order) — order 없이 다음 줄로 넘어가 Tab 순서와 화면 순서가 같다. */
-  .conversation-header > .bot-channel-control {
-    flex: 1 0 100%;
-    max-width: 100%;
-  }
-  .bot-channel-control > .btn {
-    max-width: 30vw;
   }
   .mention-picker {
     inset-inline: var(--space-3);

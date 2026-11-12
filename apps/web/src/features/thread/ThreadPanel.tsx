@@ -1,5 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
+import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, withDiscardFocus, THREAD_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
@@ -95,6 +96,11 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
   useEffect(() => {
     // 작성기가 없으면(G-52) 닫기 버튼으로 — medium 오버레이에서 포커스가 inert 본문에 남지 않게.
     const el = container.current;
+    if (prefersNoAutoKeyboard()) {
+      // 터치 기기: 입력란 focus는 가상 키보드를 띄운다 — 제목(tabIndex=-1)으로, 없으면 닫기.
+      (el?.querySelector<HTMLElement>('.thread-title') ?? el?.querySelector<HTMLElement>('.thread-close'))?.focus({ preventScroll: true });
+      return;
+    }
     (el?.querySelector('textarea') ?? el?.querySelector<HTMLElement>('.thread-close'))?.focus();
   }, [root.id]);
 
@@ -159,7 +165,9 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
       <div className="thread-header">
         {variant === 'compact' && closeButton}
         <div className="thread-heading">
-          <h2 className="thread-title">스레드</h2>
+          <h2 className="thread-title" tabIndex={-1}>
+            스레드
+          </h2>
           <p className="thread-subtitle">{subtitle}</p>
         </div>
         {variant !== 'compact' && closeButton}
