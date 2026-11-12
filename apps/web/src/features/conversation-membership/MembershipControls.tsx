@@ -71,10 +71,10 @@ export function LeaveChannelControl({ onLeave, renderTrigger }: LeaveChannelCont
   );
 }
 
-/** ConversationHeader 「나간 채널」 행: 「다시 참여」만(UI_STATES §2-5). */
+/** ConversationHeader 「나간 채널」 행: 「다시 참여」만(UI_STATES §2-5). `data-rejoin`은 나간 직후 포커스 대상(focus-after-leave). */
 export function RejoinButton({ onRejoin }: { readonly onRejoin: () => void }) {
   return (
-    <button type="button" className="btn btn-secondary" onClick={onRejoin}>
+    <button type="button" className="btn btn-secondary" data-rejoin="header" onClick={onRejoin}>
       {LEFT_CHANNEL_COPY.rejoin}
     </button>
   );

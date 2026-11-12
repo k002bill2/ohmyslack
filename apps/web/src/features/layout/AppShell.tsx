@@ -22,6 +22,7 @@ import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
 import { HeaderMenu } from './HeaderMenu.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
+import { useFocusAfterLeave } from './focus-after-leave.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { SpaceSwitcher } from './SpaceSwitcher.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
@@ -169,6 +170,8 @@ function ConversationPane(props: {
   const onPinScroll = usePinBottom(list, space.id);
   // menu-bots-touch-focus: 봇 추가·제거는 머리 「대화 더보기」 메뉴 항목(머리 버튼 줄 없음 — 390도 한 줄).
   const botMenu = useBotChannelMenu(props.botControl, space.id);
+  // focus-after-leave: 나가기 성공 뒤 사라진 「대화 더보기」 대신 머리 「다시 참여」로(BODY 유실 방지).
+  const onLeave = useFocusAfterLeave(pane, space.id, left, membership?.onLeave);
   // UI_STATES §4-1 메시지 단위 roving tabindex(compact는 보이는 버튼이라 끈다).
   const roving = useMessageRoving(list, roots.map((m) => m.id));
   const rovingOn = breakpoint !== 'compact';
@@ -202,7 +205,7 @@ function ConversationPane(props: {
         </div>
         <HeaderMenu
           {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
-          {...(membership?.onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave: membership.onLeave } : {})}
+          {...(onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave } : {})}
           bots={botMenu.items}
         />
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
