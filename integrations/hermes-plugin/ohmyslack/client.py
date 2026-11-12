@@ -148,6 +148,10 @@ class BotClient:
             params["through"] = str(through)
         return await self.request("GET", "/sync", params=params)
 
+    async def get_replies(self, root_id: str, *, limit: int = 1) -> dict:
+        """`GET messages/{root_id}/replies` → `{root, replies, has_more}`(TRD §5-2-6). 재시도 없이 1회만 부른다."""
+        return await self.request("GET", f"/messages/{root_id}/replies", params={"limit": str(limit)})
+
     async def get_snapshot(self, conversation_id: str, *, before_seq: Optional[int] = None) -> dict:
         params = {"conversation_id": conversation_id}
         if before_seq is not None:

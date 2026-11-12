@@ -5,7 +5,8 @@ TRD §5-2-8). `created_at`이 15분을 넘은 지시는 실행하지 않고 대�
 세션: 최상위 → `thread_id = message.id`, 답글 → `thread_id = thread_root_id`(ADR §3-d).
 `/approve`·`/deny` 등 텍스트는 해석하지 않고 그대로 Hermes에 넘긴다(D-5).
 채널(BOT_CHANNEL_SPEC §5): `/me.conversations`의 종류로 dm/channel을 구분하고 모르는 대화는 무시한다. 채널은
-owner 글 중 서버 `mention_user_ids`에 봇이 있는 것만(답글 포함) 받고, 본문 맨 앞 `@<봇 표시 이름>` 1개를 지운다.
+owner 글 중 서버 `mention_user_ids`에 봇이 있는 것과, 봇 스레드의 owner 비멘션 답글(§10 Q5 변경 2026-11-13)만 받고,
+본문 맨 앞 `@<봇 표시 이름>` 1개를 지운다.
 """
 
 from __future__ import annotations
@@ -53,6 +54,12 @@ INBOUND_IMAGE_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".
 ATTACHMENTS_PER_MESSAGE_MAX = 4  # shared/attachments.ts
 SYNC_OPS = frozenset({"create", "edit", "delete"})  # shared/sync.ts SYNC_CHANGE_OPS
 CHAT_KINDS = frozenset({"dm", "channel"})  # shared/bots.ts botMeSchema conversations[].kind
+# 봇 스레드 이어받기(BOT_CHANNEL_SPEC §10 Q5 변경 2026-11-13): 기억하는 루트 수는 dedupe 기록 상한과 같은 크기로 둔다.
+BOT_THREADS_MAX = RECENT_IDS_MAX
+# 음성·오류 조회 결과 캐시 수명: 같은 루트의 연속 답글이 매번 조회하지 않게 하되, 일시 오류가 오래 굳지 않을 만큼 짧게.
+NOT_BOT_THREAD_TTL_SECONDS = 60.0
+# 루트 조회 상한: 수신 루프를 오래 붙잡지 않도록 세션 기본(30초)보다 짧게. 넘기면 거부(fail-closed).
+ROOT_LOOKUP_TIMEOUT_SECONDS = 5.0
 WS_CLOSE_TOKEN_INVALID = 1008  # 토큰 폐기·봇 비활성화·회전(token_revoked·session_ended) — 재연결하지 않는다
 
 
@@ -176,6 +183,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._recent: tuple[str, ...] = ()
         self._root_of: dict[str, str] = {}
         self._backlog: dict[str, int] = {}
+        self._bot_threads: dict[str, None] = {}  # 이번 프로세스에서 owner 지시를 넘긴 채널 스레드 루트(삽입 순서 = 오래된 순)
+        self._not_bot_threads: dict[str, float] = {}  # 조회 결과 음성·오류인 루트 → 캐시 만료 시각
 
     # ---------- lifecycle ----------
     async def connect(self, *, is_reconnect: bool = False) -> bool:
@@ -394,12 +403,15 @@ class OhmySlackAdapter(BasePlatformAdapter):
 
     def _count_snapshot_page(self, cid: str, messages, prev: Optional[CursorState]) -> float:
         oldest = float("inf")
+        # 같은 페이지의 owner 멘션 루트도 봇 스레드로 센다(API 조회 없음 — 오차는 안내 숫자뿐, REPORT 명시).
+        page_roots = frozenset(str(m.get("id") or "") for m in messages if m.get("thread_root_id") is None
+                               and self._is_owner_instruction(m) and self._mentions_me(m))
         for m in messages:
             mid = str(m.get("id") or "")
             fresh = not self._dedup.is_duplicate(mid)
             created = _epoch(m.get("created_at")) or 0.0
             oldest = min(oldest, created)
-            if prev is not None and fresh and self._is_owner_instruction(m) and self._passes_gate(cid, m) \
+            if prev is not None and fresh and self._is_owner_instruction(m) and self._passes_gate(cid, m, page_roots) \
                     and created >= prev.saved_at:
                 self._backlog[cid] = self._backlog.get(cid, 0) + 1
         return oldest
@@ -414,12 +426,65 @@ class OhmySlackAdapter(BasePlatformAdapter):
         mentions = m.get("mention_user_ids")
         return isinstance(mentions, list) and self._me_id in {str(x) for x in mentions}
 
-    def _passes_gate(self, conversation_id: str, m: dict) -> bool:
-        """대화 종류·멘션 게이팅(§5-2): DM은 통과, 채널은 수정되지 않은 봇 멘션만, 모르는 대화는 거부."""
+    def _passes_gate(self, conversation_id: str, m: dict, page_roots: frozenset = frozenset()) -> bool:
+        """대화 종류·멘션 게이팅(§5-2, 백로그 집계용 동기 판정): DM은 통과, 채널은 수정되지 않은 봇 멘션이거나
+        알려진 봇 스레드(집합·같은 페이지 루트)의 비멘션 답글, 모르는 대화는 거부."""
         kind = self._kinds.get(conversation_id)
         if kind == "dm":
             return True
-        return kind == "channel" and self._mentions_me(m) and m.get("edited_at") is None
+        if kind != "channel" or m.get("edited_at") is not None:
+            return False
+        if self._mentions_me(m):
+            return True
+        root = self._follow_candidate(m)
+        return root is not None and (root in self._bot_threads or root in page_roots)
+
+    def _follow_candidate(self, m: dict) -> Optional[str]:
+        """멘션 없는 채널 답글이 봇 스레드 이어받기 후보면 루트 id. 수정본·다른 사용자 멘션(그 사람에게 한 말)은 제외."""
+        root = str(m.get("thread_root_id") or "")
+        if not root or m.get("edited_at") is not None or m.get("mention_user_ids"):
+            return None
+        return root
+
+    def _mark_bot_thread(self, root: str) -> None:
+        self._not_bot_threads.pop(root, None)
+        self._bot_threads.pop(root, None)
+        self._bot_threads[root] = None
+        while len(self._bot_threads) > BOT_THREADS_MAX:
+            del self._bot_threads[next(iter(self._bot_threads))]
+
+    async def _follows_bot_thread(self, conversation_id: str, m: dict) -> bool:
+        """봇 스레드(owner가 봇을 멘션해 시작한 스레드)의 owner 비멘션 답글인가(§10 Q5 변경 2026-11-13).
+
+        집합에 없으면(재시작 등) 루트를 1회 조회해 작성자 == owner·봇 멘션이면 통과. 404·오류·타임아웃은 거부하고
+        음성 결과와 함께 짧게 캐시한다. 로그엔 루트 ID·예외 종류만.
+        """
+        root = self._follow_candidate(m)
+        if root is None:
+            return False
+        if root in self._bot_threads:
+            return True
+        now = self._clock()
+        if self._not_bot_threads.get(root, 0.0) > now or not _is_uuid(root) or self._client is None:
+            return False
+        ok = False
+        try:
+            data = await asyncio.wait_for(self._client.get_replies(root), ROOT_LOOKUP_TIMEOUT_SECONDS)
+            r = data.get("root") if isinstance(data, dict) else None
+            ok = (isinstance(r, dict) and str(r.get("id") or "") == root
+                  and str(r.get("conversation_id") or conversation_id) == conversation_id
+                  and r.get("thread_root_id") is None and str(r.get("author_id") or "") == self._owner_id
+                  and self._mentions_me(r))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — fail-closed
+            logger.warning("ohmyslack: thread root %s lookup failed (%s)", root, type(exc).__name__)
+        if ok:
+            self._mark_bot_thread(root)
+        else:
+            self._not_bot_threads = {k: v for k, v in self._not_bot_threads.items() if v > now}
+            self._not_bot_threads[root] = now + NOT_BOT_THREAD_TTL_SECONDS
+        return ok
 
     async def _ingest(self, conversation_id: str, m: dict, *, aux_root: bool = False,
                       op: Optional[str] = None) -> None:
@@ -430,8 +495,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
         kind = self._kinds.get(conversation_id)
         if kind is None:
             return  # 모르는 대화는 기본 거부(§5-1, S8)
-        if kind == "channel" and not self._mentions_me(m):
-            # 게이팅 탈락: 실행·백로그 집계 없이 dedupe에만 기록한다.
+        if kind == "channel" and not self._mentions_me(m) and not await self._follows_bot_thread(conversation_id, m):
+            # 게이팅 탈락: 실행·백로그 집계 없이 dedupe에만 기록한다. 봇 스레드의 owner 비멘션 답글은 통과(§10 Q5).
             if not self._dedup.is_duplicate(mid):
                 self._remember(mid)
             return
@@ -472,6 +537,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
             # 인계 실패: 중복 방지 등록을 풀고 커서도 전진시키지 않는다 → 재연결 catch-up에서 재전달.
             self._dedup.discard(mid)
             raise
+        if kind == "channel":
+            self._mark_bot_thread(thread_id)  # 이후 이 스레드의 owner 비멘션 답글은 같은 세션으로 이어진다
         self._remember(mid)
 
     async def _cache_inbound_images(self, m: dict) -> tuple[list[str], list[str]]:
