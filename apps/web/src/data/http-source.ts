@@ -130,9 +130,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let account: Account | undefined;
   /** 목록이 한 번이라도 2xx로 왔는가 — 이후 실패는 목록을 유지하고 배너(연결 상태)로만 알린다. */
   let listState: ListState = 'loading';
-  /** 목록 조회 시작 횟수 — 미반영 표시보다 나중에 시작된 조회만 그 표시를 확정한다. */
+  /** 목록 조회 시작 순번(발급한 마지막 값). 응답 순서가 바뀌어도 시작 순번으로 신·구를 가린다. */
   let listRequests = 0;
-  /** 동작은 성공했지만 목록 재조회가 실패해 아직 확인되지 않은 대화 id → 표시 시점의 `listRequests`(snapshot `pendingIds`). */
+  /** 화면에 반영한 성공 목록 응답 중 가장 늦게 시작된 것의 순번 — 이보다 먼저 시작된 응답은 버린다. */
+  let listApplied = 0;
+  /**
+   * 동작은 성공했지만 목록 재조회가 실패해 아직 확인되지 않은 대화 id → 동작 성공 시점까지 발급한 순번(snapshot `pendingIds`).
+   * 이 값보다 나중에 시작된 성공 목록이 반영되면 「목록에 있음/없음」이 확정된다.
+   */
   let unlisted: ReadonlyMap<string, number> = new Map();
   let names: ReadonlyMap<string, string> = new Map();
   /** `GET /api/members` kind = bot인 사용자 ID(W-19b): 멘션 후보 배지. 봇 DM 고정·배지는 목록의 peer_kind(W-22b). */
@@ -678,12 +683,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     }
     // 세션 종료 뒤 늦게 도착한 목록 응답은 버린다(Codex r1 P2).
     if (ended) return [];
+    // 더 늦게 시작된 성공 응답을 이미 반영했다 — 오래된 목록이 최신 목록·pending을 덮지 않게 버리고 반영된 목록을 돌려준다(PR 28 Codex r4 P2).
+    if (startedAt < listApplied) return summaries;
+    listApplied = startedAt;
     summaries = all;
     spaces = withLeft(all.map((c) => toSpace(c, names, reads, inactiveNames)));
     listState = 'ready';
-    // 성공한 목록이 진실 — 이 조회가 시작되기 전에 미반영으로 표시된 id는 이제 「목록에 있음/없음」이 확정됐다.
-    // 표시보다 먼저 시작된 조회(동작 전 상태)는 확정할 수 없으므로 남긴다.
-    unlisted = new Map([...unlisted].filter(([, markedAt]) => markedAt >= startedAt));
+    // 성공한 목록이 진실 — 동작 성공 뒤에 시작된 조회면 그 id는 이제 「목록에 있음/없음」이 확정됐다.
+    // 동작 성공 전에 시작된 조회(동작 전 상태)는 확정할 수 없으므로 남긴다.
+    unlisted = new Map([...unlisted].filter(([, succeededAt]) => startedAt <= succeededAt));
     notePeers();
     syncBackground();
     retryDeferredThreadReads();
@@ -977,12 +985,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 생성·참여·DM은 이미 성공했다 — 목록 조회 실패를 동작 실패로 돌려주면 재제출이 409가 된다(Codex r1 P2).
     // 목록은 다음 복귀 절차가 다시 읽는다. 401은 api가 세션을 이미 끝냈다.
     opening = id;
+    // 동작 성공 시점까지 발급한 순번 — 이후 시작되는 조회(아래 재조회 포함)만 이 대화의 목록 반영을 확정할 수 있다.
+    const succeededAt = listRequests;
     try {
       await loadList();
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
       // 도착한 대화가 목록에서 아직 확인되지 않았다 — 화면이 「없음」으로 오진하지 않게 알린다(Codex r3 P2).
-      if (arrived && !ended) unlisted = new Map(unlisted).set(id, listRequests);
+      // 동작 뒤에 시작된 다른 성공 조회가 이미 반영됐으면 확정된 상태다 — 늦은 실패가 pending을 되살리지 않는다(PR 28 Codex r4 P2).
+      if (arrived && !ended && listApplied <= succeededAt) unlisted = new Map(unlisted).set(id, succeededAt);
     } finally {
       opening = null;
     }
