@@ -168,7 +168,7 @@ function ConversationPane(props: {
   const onDiscard = withDiscardFocus(pane, props.onDiscard, MAIN_DISCARD_FOCUS);
   const onPinScroll = usePinBottom(list, space.id);
   // menu-bots-touch-focus: 봇 추가·제거는 머리 「대화 더보기」 메뉴 항목(머리 버튼 줄 없음 — 390도 한 줄).
-  const botMenu = useBotChannelMenu(props.botControl);
+  const botMenu = useBotChannelMenu(props.botControl, space.id);
   // UI_STATES §4-1 메시지 단위 roving tabindex(compact는 보이는 버튼이라 끈다).
   const roving = useMessageRoving(list, roots.map((m) => m.id));
   const rovingOn = breakpoint !== 'compact';

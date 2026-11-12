@@ -371,6 +371,9 @@
   top: calc(100% + var(--space-1));
   inset-inline-end: 0;
   z-index: 3;
+  /* Codex r1 P2: 봇 항목이 많거나 화면이 낮아도 대화 영역(overflow hidden) 밖으로 잘리지 않게 높이 상한 + 세로 스크롤. */
+  max-height: 60vh;
+  overflow-y: auto;
 }
 @media (pointer: fine) and (width > 640px) {
   .header-menu > .icon-button,

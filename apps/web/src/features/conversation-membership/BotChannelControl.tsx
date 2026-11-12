@@ -66,22 +66,34 @@ export interface BotChannelMenu {
  * 추가는 바로 요청하고 실패는 `failure`로, 제거는 확인 Dialog(「채널 나가기」 `LeaveChannelControl`과 같은 규칙: body 포털,
  * 닫으면 진행 중 결과를 버린다). 메뉴가 닫히며 포커스를 「…」로 돌려준 뒤 Dialog가 열리므로 Dialog가 닫히면 「…」로 돌아간다.
  * 노출 판정(owner·채널·참여 중)과 성공 뒤 목록 갱신은 호출자(onAdd·onRemove)가 한다.
+ * `scopeId`(대화 ID)가 바뀌면 확인창·진행 중 결과·실패 표시를 버린다 — 대화 화면이 재사용돼도 다른 채널 봇을 지우지 않게(Codex r1 P1).
  */
-export function useBotChannelMenu(control: BotChannelControlProps | undefined): BotChannelMenu {
+export function useBotChannelMenu(control: BotChannelControlProps | undefined, scopeId: string): BotChannelMenu {
   const [removing, setRemoving] = useState<ChannelBot | null>(null);
   const [busy, setBusy] = useState(false);
   const [removeFailure, setRemoveFailure] = useState<ActionFailure | null>(null);
   const [addFailure, setAddFailure] = useState<ActionFailure | null>(null);
   const adding = useRef(new Set<string>());
   const attempt = useRef(0);
+  const scope = useRef(0);
+  useEffect(() => {
+    scope.current += 1;
+    attempt.current += 1;
+    setRemoving(null);
+    setBusy(false);
+    setRemoveFailure(null);
+    setAddFailure(null);
+  }, [scopeId]);
 
   const add = async (bot: ChannelBot) => {
     if (control === undefined || adding.current.has(bot.id)) return;
     adding.current.add(bot.id);
     setAddFailure(null);
+    const mine = scope.current;
     const res = await control.onAdd(bot.id);
     adding.current.delete(bot.id);
-    if (!res.ok) setAddFailure(res);
+    // 그사이 대화가 바뀌었으면 이전 채널의 실패를 새 채널 머리 아래에 띄우지 않는다.
+    if (!res.ok && mine === scope.current) setAddFailure(res);
   };
   const close = () => {
     attempt.current += 1;

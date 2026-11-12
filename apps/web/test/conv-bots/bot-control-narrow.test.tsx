@@ -31,4 +31,11 @@ describe('머리 봇 줄 제거(menu-bots-touch-focus)', () => {
     expect(Object.keys(membership)).not.toContain('BotChannelControl');
     expect(typeof membership.useBotChannelMenu).toBe('function');
   });
+
+  it('Codex r1 P2: 봇 항목이 많아도 머리 메뉴는 높이 상한 + 세로 스크롤(대화 영역 밖으로 잘리지 않게)', () => {
+    const refresh = readFileSync(fileURLToPath(new URL('../../src/features/layout/refresh.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const menu = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => (m[1] ?? '').trim() === '.header-menu > .msg-menu').map((m) => m[2] ?? '').join('\n');
+    expect(menu).toMatch(/max-height:/);
+    expect(menu).toContain('overflow-y: auto');
+  });
 });
