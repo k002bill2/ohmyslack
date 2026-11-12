@@ -151,6 +151,67 @@ describe('Dialog — 포커스가 BODY일 때도 트랩', () => {
     expect(closed).toEqual(['자식', '부모']);
   });
 
+  it('중첩 — 부모·portal 자식이 열린 뒤 트리 다른 곳에서 나중에 연 최상위 Dialog가 위', () => {
+    const closed: string[] = [];
+    function Tree({ showS }: { readonly showS: boolean }) {
+      const [child, setChild] = useState(true);
+      const [s, setS] = useState(true);
+      return (
+        <>
+          <Dialog title="부모" onClose={() => closed.push('부모')}>
+            <button type="button">부모 버튼</button>
+            {child &&
+              createPortal(
+                <Dialog
+                  title="자식"
+                  onClose={() => {
+                    closed.push('자식');
+                    setChild(false);
+                  }}
+                >
+                  <button type="button">자식 버튼</button>
+                </Dialog>,
+                document.body,
+              )}
+          </Dialog>
+          {showS && s && (
+            <Dialog
+              title="별도"
+              onClose={() => {
+                closed.push('별도');
+                setS(false);
+              }}
+            >
+              <button type="button">별도 버튼</button>
+            </Dialog>
+          )}
+        </>
+      );
+    }
+    const { rerender } = render(<Tree showS={false} />);
+    rerender(<Tree showS />);
+    const pressOnBody = (key: string) => {
+      (document.activeElement as HTMLElement).blur();
+      return fireEvent.keyDown(document.body, { key });
+    };
+    const firstOf = (name: string) => within(screen.getByRole('dialog', { name, hidden: true })).getByRole('button', { name: '닫기' });
+
+    expect(pressOnBody('Tab')).toBe(false);
+    expect(document.activeElement).toBe(firstOf('별도'));
+    pressOnBody('Escape');
+    expect(closed).toEqual(['별도']);
+    expect(screen.queryByRole('dialog', { name: '별도', hidden: true })).toBeNull();
+    // 별도가 닫히면 자식, 자식이 닫히면 부모가 가장 위.
+    expect(pressOnBody('Tab')).toBe(false);
+    expect(document.activeElement).toBe(firstOf('자식'));
+    pressOnBody('Escape');
+    expect(closed).toEqual(['별도', '자식']);
+    expect(pressOnBody('Tab')).toBe(false);
+    expect(document.activeElement).toBe(firstOf('부모'));
+    pressOnBody('Escape');
+    expect(closed).toEqual(['별도', '자식', '부모']);
+  });
+
   it('상자 안 Tab은 기존 onKeyDown이 한 번만 처리(끝 → 닫기)', () => {
     render(<Host />);
     fireEvent.click(screen.getByRole('button', { name: '열기' }));

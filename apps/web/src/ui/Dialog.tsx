@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { DIALOG_CLOSE_LABEL } from './copy.js';
 
 export interface DialogProps {
@@ -17,25 +17,35 @@ function isComposingKey(e: globalThis.KeyboardEvent): boolean {
   return e.isComposing || e.keyCode === 229 || e.key === 'Process';
 }
 
-/**
- * React 트리상 바깥 Dialog 수(깊이). context는 portal을 넘어 전달되므로 portal 자식 Dialog도 부모보다 깊다.
- * 같은 커밋에 부모·자식이 함께 열리면 자식 effect가 먼저 돌아 등록 순서만으로는 부모가 위가 된다(Codex r1 P2).
- */
-const DialogDepth = createContext(0);
-
+/** 열린 Dialog 하나 — React 트리상 부모 Dialog 항목(없으면 null)과 상자 ref. 마운트 동안 같은 객체. */
 interface OpenBox {
-  readonly box: HTMLElement;
-  readonly depth: number;
+  readonly parent: OpenBox | null;
+  readonly box: RefObject<HTMLDivElement | null>;
 }
 
-/** 열린 Dialog 상자들 — 등록(마운트 effect) 순서. portal·트리 안 Dialog가 섞이면 DOM 순서 ≠ 열린 순서. */
+/** 바깥 Dialog 항목. context는 portal을 넘어 전달되므로 portal 자식 Dialog도 부모를 안다. */
+const ParentDialog = createContext<OpenBox | null>(null);
+
+/**
+ * 열린 Dialog 스택 — 끝이 가장 위. 같은 커밋에 부모·자식이 열리면 자식 effect가 먼저 돌므로(Codex r1 P2)
+ * 등록 시 **이미 등록된 자기 자손 앞**에 끼워 넣고, 그 외에는 끝에 붙인다. 그래서 「자식이 부모 위」와
+ * 「나중에 연 것이 위」를 함께 지킨다(깊이 최대 규칙은 트리 다른 곳에서 나중에 연 Dialog를 자손 아래에 둔다).
+ */
 const openBoxes: OpenBox[] = [];
 
-/** 가장 위 상자: 깊이가 가장 큰 것, 같으면 나중에 등록된 것(형제는 나중에 연 것이 위). */
-function topBox(): HTMLElement | undefined {
-  let top: OpenBox | undefined;
-  for (const entry of openBoxes) if (top === undefined || entry.depth >= top.depth) top = entry;
-  return top?.box;
+function isDescendant(entry: OpenBox, ancestor: OpenBox): boolean {
+  for (let p = entry.parent; p !== null; p = p.parent) if (p === ancestor) return true;
+  return false;
+}
+
+function pushOpenBox(entry: OpenBox): void {
+  const at = openBoxes.findIndex((other) => isDescendant(other, entry));
+  if (at === -1) openBoxes.push(entry);
+  else openBoxes.splice(at, 0, entry);
+}
+
+function topBox(): HTMLElement | null | undefined {
+  return openBoxes.at(-1)?.box.current;
 }
 
 /**
@@ -66,9 +76,8 @@ function trapTab(box: HTMLElement, shiftKey: boolean): boolean {
  * Tab → 첫 항목, Shift+Tab → 마지막 항목, Esc → 닫기. 상자 안 키는 `onKeyDown` 몫이라 건너뛰고(중복 처리 금지),
  * 다른 레이어(나중에 열린 portal 메뉴 등)의 키는 가로채지 않는다. 포커스를 미리 끌어오지 않고 키를 누를 때만 잡는다.
  */
-function trapOutsideKeys(box: HTMLElement, depth: number, background: readonly HTMLElement[], close: () => void): () => void {
-  const entry: OpenBox = { box, depth };
-  openBoxes.push(entry);
+function trapOutsideKeys(entry: OpenBox, box: HTMLElement, background: readonly HTMLElement[], close: () => void): () => void {
+  pushOpenBox(entry);
   const onKeyDown = (e: globalThis.KeyboardEvent) => {
     if (e.defaultPrevented || topBox() !== box) return;
     const target = e.target;
@@ -128,8 +137,10 @@ function observeLostFocus(box: HTMLElement): () => void {
  */
 export function Dialog({ title, onClose, children }: DialogProps) {
   const titleId = useId();
-  const depth = useContext(DialogDepth);
+  const parent = useContext(ParentDialog);
   const box = useRef<HTMLDivElement>(null);
+  // 부모 사슬은 마운트 동안 바뀌지 않는다 — 첫 렌더의 부모로 항목을 한 번 만든다.
+  const [entry] = useState<OpenBox>(() => ({ parent, box }));
   // 마운트 effect가 한 번만 걸리므로 최신 onClose를 ref로 읽는다(문서 수준 Esc).
   const latestClose = useRef(onClose);
   useEffect(() => {
@@ -150,7 +161,7 @@ export function Dialog({ title, onClose, children }: DialogProps) {
     );
     siblings.forEach((el) => (el.inert = true));
     const releaseFocusGuard = box.current === null ? null : observeLostFocus(box.current);
-    const releaseKeyTrap = box.current === null ? null : trapOutsideKeys(box.current, depth, siblings, () => latestClose.current());
+    const releaseKeyTrap = box.current === null ? null : trapOutsideKeys(entry, box.current, siblings, () => latestClose.current());
     return () => {
       releaseKeyTrap?.();
       releaseFocusGuard?.();
@@ -158,8 +169,8 @@ export function Dialog({ title, onClose, children }: DialogProps) {
       body.style.overflow = prevOverflow;
       if (trigger?.isConnected) trigger.focus();
     };
-    // depth는 조상 Dialog 수라 마운트 동안 바뀌지 않는다 — 사실상 마운트 1회.
-  }, [depth]);
+    // entry는 마운트 동안 같은 객체 — 사실상 마운트 1회.
+  }, [entry]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
@@ -182,7 +193,7 @@ export function Dialog({ title, onClose, children }: DialogProps) {
             {DIALOG_CLOSE_LABEL}
           </button>
         </div>
-        <DialogDepth.Provider value={depth + 1}>{typeof children === 'function' ? children({ titleId }) : children}</DialogDepth.Provider>
+        <ParentDialog.Provider value={entry}>{typeof children === 'function' ? children({ titleId }) : children}</ParentDialog.Provider>
       </div>
     </div>
   );
