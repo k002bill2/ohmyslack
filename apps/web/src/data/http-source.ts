@@ -130,6 +130,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let account: Account | undefined;
   /** 목록이 한 번이라도 2xx로 왔는가 — 이후 실패는 목록을 유지하고 배너(연결 상태)로만 알린다. */
   let listState: ListState = 'loading';
+  /** 목록 조회 시작 횟수 — 미반영 표시보다 나중에 시작된 조회만 그 표시를 확정한다. */
+  let listRequests = 0;
+  /** 동작은 성공했지만 목록 재조회가 실패해 아직 확인되지 않은 대화 id → 표시 시점의 `listRequests`(snapshot `pendingIds`). */
+  let unlisted: ReadonlyMap<string, number> = new Map();
   let names: ReadonlyMap<string, string> = new Map();
   /** `GET /api/members` kind = bot인 사용자 ID(W-19b): 멘션 후보 배지. 봇 DM 고정·배지는 목록의 peer_kind(W-22b). */
   let bots: ReadonlySet<string> = new Set();
@@ -367,6 +371,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       loadedHistory,
       loadedReplies: [...repliesLoaded],
       activeRevision,
+      pendingIds: [...unlisted.keys()],
       ...(account === undefined ? {} : { account }),
     });
     listeners.forEach((l) => l());
@@ -404,6 +409,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     readTimer = null;
     reloadTimer = null;
     pending = [];
+    unlisted = new Map();
     checkpoint = null;
     clearCheckpoints(storage);
     emit();
@@ -662,6 +668,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   /** `next_cursor`가 null이 될 때까지 모든 페이지를 합친다(Codex r1 P2). */
   const loadList = async () => {
+    listRequests += 1;
+    const startedAt = listRequests;
     let page = await api.get<ConversationsResponse>('/api/conversations');
     const all = [...page.conversations];
     while (page.next_cursor !== null) {
@@ -673,6 +681,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     summaries = all;
     spaces = withLeft(all.map((c) => toSpace(c, names, reads, inactiveNames)));
     listState = 'ready';
+    // 성공한 목록이 진실 — 이 조회가 시작되기 전에 미반영으로 표시된 id는 이제 「목록에 있음/없음」이 확정됐다.
+    // 표시보다 먼저 시작된 조회(동작 전 상태)는 확정할 수 없으므로 남긴다.
+    unlisted = new Map([...unlisted].filter(([, markedAt]) => markedAt >= startedAt));
     notePeers();
     syncBackground();
     retryDeferredThreadReads();
@@ -962,7 +973,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   };
 
   /** 생성·참여·DM 성공 뒤: 목록 갱신 → 화면 반영. 이동·구독은 호출자의 `open(id)`이 기존 규칙으로 한다. */
-  const refreshThen = async (id: string): Promise<string> => {
+  const refreshThen = async (id: string, arrived = true): Promise<string> => {
     // 생성·참여·DM은 이미 성공했다 — 목록 조회 실패를 동작 실패로 돌려주면 재제출이 409가 된다(Codex r1 P2).
     // 목록은 다음 복귀 절차가 다시 읽는다. 401은 api가 세션을 이미 끝냈다.
     opening = id;
@@ -970,6 +981,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       await loadList();
     } catch (e) {
       if (!(e instanceof NetworkError) && !(e instanceof HttpStatusError)) throw e;
+      // 도착한 대화가 목록에서 아직 확인되지 않았다 — 화면이 「없음」으로 오진하지 않게 알린다(Codex r3 P2).
+      if (arrived && !ended) unlisted = new Map(unlisted).set(id, listRequests);
     } finally {
       opening = null;
     }
@@ -1014,7 +1027,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         // 목록 재조회가 실패해도 나간 상태는 바로 보인다(Codex r1 P2).
         spaces = withLeft(spaces.filter((sp) => sp.id !== conversationId));
         emit();
-        await refreshThen(conversationId);
+        await refreshThen(conversationId, false);
         return null;
       }),
     listConversationMembers: (conversationId) =>

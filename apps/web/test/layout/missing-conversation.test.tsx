@@ -1,12 +1,15 @@
 /** QA §4-2: 주소의 대화가 확정된 목록에 없으면(나간 채널 새로고침·삭제·권한 없음·오타) 빈 화면 대신 안내 + 「채널 찾기」. */
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory } from '../../src/app/route.js';
 import { createMemoryDataSource, type DataSource, type Snapshot } from '../../src/data';
+import { createHttpDataSource, type HttpDataSource } from '../../src/data/http-source.js';
+import { LiveApp } from '../../src/LiveApp.js';
 import { AppShell } from '../../src/features/layout';
 import { CHANNEL_BROWSER_COPY, DIALOG_TITLES, ERROR_COPY } from '../../src/ui/copy.js';
 import { installViewport } from '../helpers/viewport.js';
+import { CONV, FakeServer, MemoryStorage, U, flush, summary } from '../sync/fake-server.js';
 
 const C1 = '11111111-1111-4111-8111-111111111111';
 const MISSING = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
@@ -116,7 +119,13 @@ describe('주소의 대화가 목록에 없음 — Codex r1 P2×2·QA D1', () =>
   it('(a) 참여는 성공했지만 목록 재조회가 실패해 목록에 없으면 안내를 내지 않는다', async () => {
     const user = userEvent.setup();
     // 재조회 실패: joinChannel은 성공 id를 돌려주지만 목록(spaces)은 그대로, listState는 기존 'ready'.
-    const { ds } = controllable(seed(), () => ({ joinChannel: vi.fn(() => Promise.resolve({ ok: true as const, value: MISSING })) }));
+    // 데이터 계층이 「목록 미반영」을 `pendingIds`로 알린다(arrivedId 제거, Codex r3 P2).
+    const { ds } = controllable(seed(), (set) => ({
+      joinChannel: vi.fn(() => {
+        set(seed({ pendingIds: [MISSING] }));
+        return Promise.resolve({ ok: true as const, value: MISSING });
+      }),
+    }));
     open(1280, `/c/${MISSING}`, ds);
     expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
     await joinFromNotice(user);
@@ -202,5 +211,135 @@ describe('주소의 대화가 목록에 없음 — Codex r1 P2×2·QA D1', () =>
     const dialog = screen.getByRole('dialog', { name: DIALOG_TITLES.browseChannels });
     await user.click(await within(dialog).findByRole('button', { name: CHANNEL_BROWSER_COPY.join }));
     expect(opened.mock.calls.filter(([id]) => id === MISSING)).toHaveLength(1);
+  });
+});
+
+/**
+ * Codex r3 P2 근본 수정: 「목록 미반영」은 데이터 계층(`pendingIds`)이 알린다 — 실제 `createHttpDataSource`로 검증한다
+ * (셸이 선택 경로로 추측하지 않는다 — 전환기·사이드바·뒤로가기 무관).
+ */
+describe('주소의 대화가 목록에 없음 — 데이터 계층 pendingIds(Codex r1·r2·r3 P2)', () => {
+  const A = U(77);
+  const settle = async () => {
+    for (let i = 0; i < 8; i += 1) await act(flush);
+  };
+
+  /** 목록 응답을 바꿀 수 있는 서버: 'ok'=C(+A), 'fail'=503. A 참여는 성공한다. */
+  function liveServer() {
+    const server = new FakeServer();
+    let list: 'ok' | 'fail' = 'ok';
+    let withA = false;
+    server.on('GET /api/conversations', () =>
+      list === 'fail' ? { status: 503 } : { status: 200, body: { conversations: withA ? [summary(), summary({ id: A, name: 'left-one' })] : [summary()], next_cursor: null } },
+    );
+    server.on('GET /api/conversations/discover', () => ({ status: 200, body: { channels: [{ id: A, name: 'left-one' }], next_cursor: null } }));
+    server.on(`POST /api/conversations/${A}/join`, () => {
+      list = 'fail';
+      return { status: 200, body: { id: A } };
+    });
+    server.on(`GET /api/conversations/${A}/messages`, () => ({ status: 200, body: { messages: [], has_more: false } }));
+    return {
+      server,
+      setList: (next: 'ok' | 'fail', includeA = false) => {
+        list = next;
+        withA = includeA;
+      },
+    };
+  }
+
+  function mountLive(server: FakeServer, path: string) {
+    installViewport(1280);
+    const sources: HttpDataSource[] = [];
+    const history = createMemoryHistory(path);
+    render(
+      <LiveApp
+        fetch={server.fetch}
+        history={history}
+        replacePath={() => undefined}
+        readHash={() => ''}
+        createSource={(deps) => {
+          const ds = createHttpDataSource({
+            ...deps,
+            wsUrl: 'wss://oms.test/api/ws',
+            createSocket: server.createSocket,
+            storage: new MemoryStorage(),
+            isOnline: () => true,
+            setTimer: () => 0,
+            clearTimer: () => undefined,
+          });
+          sources.push(ds);
+          return ds;
+        }}
+      />,
+    );
+    return { history, source: () => sources.at(-1)! };
+  }
+
+  async function joinA() {
+    fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: DIALOG_TITLES.browseChannels }));
+    await settle();
+    const dialog = screen.getByRole('dialog', { name: DIALOG_TITLES.browseChannels });
+    fireEvent.click(within(dialog).getByRole('button', { name: CHANNEL_BROWSER_COPY.join }));
+    await settle();
+  }
+
+  /** 목록 조회 성공(복귀 절차) — 성공한 목록이 진실이다. */
+  async function reloadList(source: () => HttpDataSource) {
+    act(() => source().reload?.());
+    await settle();
+  }
+
+  const sidebarGeneral = () => within(screen.getByRole('navigation', { name: '공간' })).getByRole('button', { name: /general/ });
+
+  it('r1: 참여 성공 + 목록 재조회 실패 → 안내 없음, 이후 목록 조회 성공인데 없으면 안내', async () => {
+    const { server, setList } = liveServer();
+    const { history, source } = mountLive(server, `/c/${A}`);
+    await settle();
+    expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
+    await joinA();
+    expect(history.pathname()).toBe(`/c/${A}`);
+    expect(screen.queryByText(ERROR_COPY.notFound)).toBeNull();
+    setList('ok');
+    await reloadList(source);
+    expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
+  });
+
+  it('r2: 다른 대화를 보는 동안 목록에 들어왔다 사라진 참여 대화로 돌아오면 안내', async () => {
+    const { server, setList } = liveServer();
+    const { history, source } = mountLive(server, `/c/${A}`);
+    await settle();
+    await joinA();
+    fireEvent.click(sidebarGeneral());
+    await settle();
+    expect(history.pathname()).toBe(`/c/${CONV}`);
+    setList('ok', true);
+    await reloadList(source);
+    setList('ok', false);
+    await reloadList(source);
+    act(() => history.back());
+    await settle();
+    expect(history.pathname()).toBe(`/c/${A}`);
+    expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
+  });
+
+  it('r3: 재조회 실패 중 사이드바 B → 전환기 B 재선택 → 뒤로 A여도 안내 없음, 목록 조회 성공 뒤 없으면 안내', async () => {
+    const { server, setList } = liveServer();
+    const { history, source } = mountLive(server, `/c/${A}`);
+    await settle();
+    await joinA();
+    fireEvent.click(sidebarGeneral());
+    await settle();
+    expect(history.pathname()).toBe(`/c/${CONV}`);
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
+    await settle();
+    fireEvent.click(screen.getByRole('option', { name: /general/ }));
+    await settle();
+    act(() => history.back());
+    await settle();
+    expect(history.pathname()).toBe(`/c/${A}`);
+    expect(screen.queryByText(ERROR_COPY.notFound)).toBeNull();
+    setList('ok');
+    await reloadList(source);
+    expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
   });
 });

@@ -317,11 +317,6 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | null>(null);
 
   const space = snap.spaces.find((s) => s.id === state.conversationId);
-  /** 생성·참여·DM으로 막 이동한 대화 — 목록에 들어오기 전까지 「없음」 안내 억제(목록 재조회 실패, Codex r1 P2). */
-  const [arrivedId, setArrivedId] = useState<string | null>(null);
-  useEffect(() => {
-    if (arrivedId !== null && snap.spaces.some((s) => s.id === arrivedId)) setArrivedId(null);
-  }, [snap.spaces, arrivedId]);
   /** 비동기 참여 완료 시점의 선택 대화(렌더 당시 값이 아니라 최신). */
   const selectedId = useRef(state.conversationId);
   useEffect(() => {
@@ -463,13 +458,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       history.replace(formatRoute(state.conversationId === null ? { kind: 'root' } : { kind: 'conversation', conversationId: state.conversationId }));
     }
   };
-  /** 생성·참여·DM 성공: 목록은 DataSource가 갱신을 시도했다 → 패널 닫기 → 그 대화로 이동(구독은 `open` 효과가 기존 규칙으로). */
+  /** 생성·참여·DM 성공: 목록은 DataSource가 갱신을 시도했다(실패면 `pendingIds`로 알린다) → 패널 닫기 → 그 대화로 이동(구독은 `open` 효과가 기존 규칙으로). */
   const goTo = (conversationId: string) => {
     setPanel(null);
     setMembers(false);
     focusComposer.current = true;
-    // 목록 재조회가 실패했을 수 있다(동작은 성공) — 목록에 들어오기 전까지 「없음」 안내를 내지 않는다(Codex r1 P2).
-    setArrivedId(conversationId);
     // 같은 대화(다시 참여)여도 F4 effect가 돌게 — conversationId가 그대로면 deps가 바뀌지 않는다.
     bumpFocus();
     dispatch({ type: 'select-space', conversationId });
@@ -632,8 +625,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     />
   );
   // QA §4-2: 목록이 확정됐는데(로딩·catch-up 아님) 주소의 대화가 없으면 빈 화면 대신 안내(나간 채널 새로고침·삭제·오타).
+  // 동작은 성공했지만 목록에서 아직 확인되지 않은 대화는 데이터 계층이 `pendingIds`로 알린다(Codex r1·r3 P2).
   const listSettled = (snap.listState ?? 'ready') === 'ready' && snap.connection !== 'catching-up';
-  const missing = !members && space === undefined && state.conversationId !== null && state.conversationId !== arrivedId && listSettled && (
+  const unconfirmed = state.conversationId !== null && (snap.pendingIds ?? []).includes(state.conversationId);
+  const missing = !members && space === undefined && state.conversationId !== null && listSettled && !unconfirmed && (
     <MissingConversation
       breakpoint={bp}
       // 숨은 `?thread=`가 복원돼 있어도 한 번에 목록으로(`back`은 스레드부터 닫는다 — Codex r1 P2).
