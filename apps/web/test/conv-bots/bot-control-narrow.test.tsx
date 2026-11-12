@@ -82,7 +82,8 @@ describe('봇 컨트롤 좁은 화면(QA D-1)', () => {
     // 채널명 기준 폭 0 — 긴 채널명도 메뉴를 다음 줄로 밀지 않고 남는 폭을 쓴 뒤 말줄임.
     expect(rules(narrow, '.conversation-header:has(> .bot-channel-control) > .conversation-heading')).toContain('flex-basis: 0');
     const control = rules(narrow, '.conversation-header > .bot-channel-control');
-    expect(control).toContain('order: 1');
+    // a11y-focus-order: 봇 컨트롤이 DOM에서 메뉴 뒤라 order 재배치 없이 둘째 줄 — Tab 순서 = 화면 순서(header-tab-order 테스트).
+    expect(control).not.toContain('order');
     expect(control).toContain('flex: 1 0 100%');
     expect(control).toContain('max-width: 100%');
     // 봇 컨트롤이 없는 머리(DM 등)는 한 줄 그대로: 머리 자체에는 줄바꿈 규칙이 없다.
@@ -91,6 +92,8 @@ describe('봇 컨트롤 좁은 화면(QA D-1)', () => {
     // 640px 초과에는 두 줄 규칙이 없다(834·1440 배치 불변).
     expect(outsideMedia()).not.toContain(':has(> .bot-channel-control)');
     expect(rules(outsideMedia(), '.conversation-header > .bot-channel-control')).toBe('');
+    // 834·1440도 order로 시각 배치를 DOM과 다르게 하지 않는다(Tab 순서 = 화면 순서).
+    expect(css).not.toMatch(/\border\s*:/);
   });
 
   it('봇 배지 QA 관찰 3: 버튼은 접히지 않고 DOM·탭 순서에 모두 남는다', () => {

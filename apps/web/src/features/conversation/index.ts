@@ -7,6 +7,7 @@ export { DateSeparator, NewMessagesDivider, dateSeparatorText, dayKey, type Date
 export { Composer, type ComposerProps, type MentionKey } from './Composer.js';
 export { ComposerNotice } from './ComposerNotice.js';
 export { useFocusOnLock } from './focus-on-lock.js';
+export { MAIN_DISCARD_FOCUS, THREAD_DISCARD_FOCUS, withDiscardFocus } from './discard-focus.js';
 export { MENTION_CANDIDATE_LIMIT, type MentionCandidate } from './mention.js';
 export { createDraftStore, type DraftStore } from './drafts.js';
 export { MessageStatus, type MessageStatusProps } from './MessageStatus.js';
