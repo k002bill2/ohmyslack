@@ -9,11 +9,10 @@ export const THREAD_DISCARD_FOCUS = [':scope > .composer .composer-input', ':sco
  * a11y-focus-order 항목 2(WCAG 2.4.3): 실패 항목 「삭제」·「목록에서 지우기」로 항목이 사라지면 포커스가 body로 떨어진다.
  * 버튼 포커스가 `scope` 안에 있을 때만(다른 영역 포커스는 빼앗지 않는다) 같은 영역의 첫 대상(`targets` 순서)으로 먼저 옮긴 뒤 지운다.
  */
-export function withDiscardFocus(
-  scope: RefObject<HTMLElement | null>,
-  onDiscard: ((clientMessageId: string) => void) | undefined,
-  targets: readonly string[],
-): ((clientMessageId: string) => void) | undefined {
+type Discard = (clientMessageId: string) => void;
+export function withDiscardFocus(scope: RefObject<HTMLElement | null>, onDiscard: Discard, targets: readonly string[]): Discard;
+export function withDiscardFocus(scope: RefObject<HTMLElement | null>, onDiscard: Discard | undefined, targets: readonly string[]): Discard | undefined;
+export function withDiscardFocus(scope: RefObject<HTMLElement | null>, onDiscard: Discard | undefined, targets: readonly string[]): Discard | undefined {
   if (onDiscard === undefined) return undefined;
   return (clientMessageId) => {
     const root = scope.current;
