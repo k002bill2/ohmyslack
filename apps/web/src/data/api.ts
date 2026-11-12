@@ -30,6 +30,20 @@ async function errorCode(res: Response): Promise<string | undefined> {
 export class NetworkError extends Error {}
 
 /**
+ * 요청 시간 상한 초과(action-timeout). 응답을 받지 못했다는 점에서 네트워크 오류의 한 종류라 기존 처리
+ * (끊김 판정·복귀 재시도·읽음 백오프)를 그대로 따른다. 서버 쪽 동작은 이미 일어났을 수 있다 —
+ * 화면 문구는 「확인하지 못했습니다」(`ERROR_COPY.timeout`)이고 자동 재전송은 하지 않는다.
+ */
+export class TimeoutError extends NetworkError {}
+
+/**
+ * 요청 1건의 시간 상한. fetch 표준에는 기본 타임아웃이 없어 서버가 응답하지 않으면 요청이 끝나지 않는다.
+ * 지연이 큰 모바일 망에서도 정상 액션·목록 조회는 수 초 안에 끝나고, 20초를 넘으면 사용자는 이미 실패로 본다.
+ * 첨부 업로드(원시 바이트)는 파일 크기·망 속도에 비례해 길어질 수 있어 제외한다.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
  * 리버스 프록시(Tailscale Serve)가 서버에 닿지 못했을 때의 게이트웨이 응답. 앱 서버는 이 코드를 내지 않으므로
  * 끊김 판정(UI_STATES C6)에서는 네트워크 오류와 같이 센다(W-16 F-8). 전송 결과 판정(4xx·5xx → 실패)은 그대로다.
  */
@@ -52,6 +66,35 @@ export function createApi(deps: ApiDeps) {
 
   /** `raw`: JSON 대신 원시 바이트(첨부 업로드, TRD §3 `POST /api/attachments`) — `Content-Type`은 파일 형식. */
   const request = async <T>(method: string, path: string, body?: unknown, raw?: { readonly bytes: Blob; readonly type: string }): Promise<T> => {
+    if (raw !== undefined) return send<T>(method, path, body, raw, undefined, () => false);
+    // 상한에 닿으면 fetch를 abort하고 TimeoutError로 끝낸다. signal을 무시하는 fetch여도 race로 끝난다.
+    const controller = new AbortController();
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        deps.onNetwork?.(false);
+        reject(new TimeoutError('timeout'));
+      }, REQUEST_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([send<T>(method, path, body, raw, controller.signal, () => timedOut), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /** `isTimedOut`: 상한 초과 뒤 늦게 끝난 결과는 알림(onNetwork·onUnauthorized)을 내지 않는다 — 결과는 이미 TimeoutError다. */
+  const send = async <T>(
+    method: string,
+    path: string,
+    body: unknown,
+    raw: { readonly bytes: Blob; readonly type: string } | undefined,
+    signal: AbortSignal | undefined,
+    isTimedOut: () => boolean,
+  ): Promise<T> => {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (raw !== undefined) headers['Content-Type'] = raw.type;
     else if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -63,11 +106,14 @@ export function createApi(deps: ApiDeps) {
         credentials: 'same-origin',
         headers,
         ...(raw !== undefined ? { body: raw.bytes } : body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(signal === undefined ? {} : { signal }),
       });
     } catch {
+      if (isTimedOut()) throw new TimeoutError('timeout');
       deps.onNetwork?.(false);
       throw new NetworkError('network');
     }
+    if (isTimedOut()) throw new TimeoutError('timeout');
     deps.onNetwork?.(!GATEWAY_STATUSES.has(res.status));
     if (res.status === 401) {
       csrf = null;
