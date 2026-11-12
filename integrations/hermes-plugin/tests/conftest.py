@@ -87,6 +87,8 @@ class FakeBotServer:
         self.upload_status: list[int] = []  # 다음 업로드 응답 상태를 순서대로 강제(예: [429], [413])
         self.blobs: dict[str, tuple[str, bytes]] = {}  # 다운로드용 첨부 id → (mime, bytes)
         self.downloads: list[str] = []
+        self.replies_status: Optional[int] = None  # 강제 응답 상태(예: 404·500). None이면 changes에서 루트를 찾는다
+        self.replies_calls: list[str] = []  # GET messages/{root_id}/replies 요청 루트 id 순서대로
         self.base = ""
         self._runner: Optional[web.AppRunner] = None
 
@@ -210,6 +212,17 @@ class FakeBotServer:
         msg = make_message(author=BOT_ID, mid=request.match_info["mid"])
         return web.json_response({"message": msg, "seq": 1, "change_id": self.add(msg), "mention_user_ids": []})
 
+    async def replies(self, request):
+        self._log(request)
+        mid = request.match_info["mid"]
+        self.replies_calls.append(mid)
+        if self.replies_status is not None:
+            return web.json_response({"error": "forced"}, status=self.replies_status)
+        root = next((m for _c, _conv, m in self.changes if m.get("id") == mid), None)
+        if root is None:
+            return web.json_response({"error": "not_found"}, status=404)
+        return web.json_response({"root": root, "replies": [], "has_more": False})
+
     async def ws(self, request):
         self._log(request)
         self.ws_connects += 1
@@ -241,6 +254,7 @@ class FakeBotServer:
         app.router.add_get(f"{p}/sync/snapshot", self.snapshot)
         app.router.add_post(f"{p}/conversations/{{cid}}/messages", self.post)
         app.router.add_patch(f"{p}/messages/{{mid}}", self.patch)
+        app.router.add_get(f"{p}/messages/{{mid}}/replies", self.replies)
         app.router.add_get(f"{p}/ws", self.ws)
         app.router.add_post(f"{p}/attachments", self.upload)
         app.router.add_get(f"{p}/attachments/{{aid}}", self.download)
