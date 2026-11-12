@@ -11,7 +11,7 @@ import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
-import { BotChannelControl, canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useConversationMembers, type BotChannelControlProps } from '../conversation-membership';
+import { canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useBotChannelMenu, useConversationMembers, type BotChannelControlProps } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
@@ -165,6 +165,8 @@ function ConversationPane(props: {
   // a11y-focus-order: 실패 항목을 지우면 포커스를 본문 작성기(없으면 안내)로 — body로 떨어지지 않게.
   const onDiscard = withDiscardFocus(pane, props.onDiscard, MAIN_DISCARD_FOCUS);
   const onPinScroll = usePinBottom(list, space.id);
+  // menu-bots-touch-focus: 봇 추가·제거는 머리 「대화 더보기」 메뉴 항목(머리 버튼 줄 없음 — 390도 한 줄).
+  const botMenu = useBotChannelMenu(props.botControl);
   // UI_STATES §4-1 메시지 단위 roving tabindex(compact는 보이는 버튼이라 끈다).
   const roving = useMessageRoving(list, roots.map((m) => m.id));
   const rovingOn = breakpoint !== 'compact';
@@ -199,9 +201,8 @@ function ConversationPane(props: {
         <HeaderMenu
           {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
           {...(membership?.onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave: membership.onLeave } : {})}
+          bots={botMenu.items}
         />
-        {/* a11y-focus-order(WCAG 2.4.3): DOM 순서 = 화면 순서. 390은 봇 컨트롤이 둘째 줄이라 메뉴 뒤, 834·1440도 같은 순서로 그린다. */}
-        {props.botControl !== undefined && <BotChannelControl {...props.botControl} />}
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
         {props.onCloseThread && (
           <button
@@ -216,6 +217,8 @@ function ConversationPane(props: {
           </button>
         )}
       </header>
+      {botMenu.failure}
+      {botMenu.dialog}
       {props.notice}
       {membership && left ? (
         <LeftChannelNotice onRejoin={membership.onRejoin} />

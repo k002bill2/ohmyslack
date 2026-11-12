@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FocusEvent } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { ActionFailure, ActionResult, Account, DataSource, Space } from '../../data';
 import { BOT_CHANNEL_COPY, CANCEL_LABEL } from '../../ui/copy.js';
@@ -37,7 +37,7 @@ export function useActiveBots(dataSource: DataSource, enabled: boolean): readonl
 }
 
 export interface BotChannelControlProps {
-  /** 활성 봇. 0개면 아무것도 렌더하지 않는다. */
+  /** 활성 봇. 0개면 메뉴 항목이 없다. */
   readonly bots: readonly ChannelBot[];
   /** 지금 채널 멤버 ID(멘션 후보원과 같은 `GET …/members`). */
   readonly memberIds: ReadonlySet<string>;
@@ -45,107 +45,91 @@ export interface BotChannelControlProps {
   readonly onRemove: (botUserId: string) => Promise<ActionResult<null>>;
 }
 
-/**
- * 채널 헤더 봇 컨트롤(FR-BOT-11, BOT_CHANNEL_SPEC §3-1 2번 위치). 봇마다: 채널에 없으면 「봇 추가」, 있으면 「봇 제거」 → 확인 Dialog.
- * 노출 판정(owner·채널·참여 중)은 호출자가 `canManageChannelBots`로 한다. 성공 뒤 목록 갱신도 호출자(onAdd·onRemove)가 한다.
- */
-export function BotChannelControl({ bots, memberIds, onAdd, onRemove }: BotChannelControlProps) {
-  if (bots.length === 0) return null;
-  return (
-    <div className="bot-channel-control" onFocus={revealFocusedButton}>
-      {bots.map((bot) =>
-        memberIds.has(bot.id) ? (
-          <RemoveBotButton key={bot.id} bot={bot} onRemove={onRemove} />
-        ) : (
-          <AddBotButton key={bot.id} bot={bot} onAdd={onAdd} />
-        ),
-      )}
-    </div>
-  );
+/** 머리 더보기 메뉴 항목(HeaderMenu가 메뉴 항목으로 그린다). */
+export interface BotMenuItem {
+  readonly key: string;
+  readonly label: string;
+  readonly onSelect: () => void;
+}
+
+export interface BotChannelMenu {
+  /** 봇마다 「봇 추가: 이름」 또는 「봇 제거: 이름」. 컨트롤이 없거나 봇 0개면 빈 목록. */
+  readonly items: readonly BotMenuItem[];
+  /** 추가 실패 표시(기존 ErrorState 문구) — 머리 아래에 둔다. */
+  readonly failure: ReactNode;
+  /** 제거 확인 Dialog(body 포털). */
+  readonly dialog: ReactNode;
 }
 
 /**
- * header-390: 좁은 화면 컨트롤은 한 줄 가로 스크롤 — Tab·Shift+Tab으로 간 버튼이 보이는 영역 밖에 걸치지 않게 직접 끌어온다
- * (390 재QA에서 브라우저 기본 포커스 스크롤이 `scrollLeft`를 움직이지 않았다). 직계 버튼만, 가장 가까운 위치로(이미 보이면 그대로).
+ * 채널 봇 추가·제거(FR-BOT-11, BOT_CHANNEL_SPEC §3-1) — menu-bots-touch-focus: 머리 버튼 줄 대신 「대화 더보기」 메뉴 항목.
+ * 추가는 바로 요청하고 실패는 `failure`로, 제거는 확인 Dialog(「채널 나가기」 `LeaveChannelControl`과 같은 규칙: body 포털,
+ * 닫으면 진행 중 결과를 버린다). 메뉴가 닫히며 포커스를 「…」로 돌려준 뒤 Dialog가 열리므로 Dialog가 닫히면 「…」로 돌아간다.
+ * 노출 판정(owner·채널·참여 중)과 성공 뒤 목록 갱신은 호출자(onAdd·onRemove)가 한다.
  */
-function revealFocusedButton(event: FocusEvent<HTMLDivElement>) {
-  const target = event.target;
-  if (target.parentElement !== event.currentTarget || typeof target.scrollIntoView !== 'function') return;
-  target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-}
-
-function AddBotButton({ bot, onAdd }: { readonly bot: ChannelBot; readonly onAdd: BotChannelControlProps['onAdd'] }) {
+export function useBotChannelMenu(control: BotChannelControlProps | undefined): BotChannelMenu {
+  const [removing, setRemoving] = useState<ChannelBot | null>(null);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<ActionFailure | null>(null);
-  const add = async () => {
-    setBusy(true);
-    setFailure(null);
-    const res = await onAdd(bot.id);
-    setBusy(false);
-    if (!res.ok) setFailure(res);
-  };
-  return (
-    <>
-      <button
-        type="button"
-        className="btn btn-secondary"
-        title={BOT_CHANNEL_COPY.add(bot.displayName)}
-        disabled={busy}
-        onClick={() => void add()}
-      >
-        {BOT_CHANNEL_COPY.add(bot.displayName)}
-      </button>
-      {failure !== null && <ErrorState message={`${BOT_CHANNEL_COPY.addFailed} ${failureText(failure)}`} />}
-    </>
-  );
-}
-
-/** 「채널 나가기」 확인 Dialog(`LeaveChannelControl`)와 같은 규칙: body 포털, 닫으면 진행 중 결과를 버린다. */
-function RemoveBotButton({ bot, onRemove }: { readonly bot: ChannelBot; readonly onRemove: BotChannelControlProps['onRemove'] }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<ActionFailure | null>(null);
+  const [removeFailure, setRemoveFailure] = useState<ActionFailure | null>(null);
+  const [addFailure, setAddFailure] = useState<ActionFailure | null>(null);
+  const adding = useRef(new Set<string>());
   const attempt = useRef(0);
+
+  const add = async (bot: ChannelBot) => {
+    if (control === undefined || adding.current.has(bot.id)) return;
+    adding.current.add(bot.id);
+    setAddFailure(null);
+    const res = await control.onAdd(bot.id);
+    adding.current.delete(bot.id);
+    if (!res.ok) setAddFailure(res);
+  };
   const close = () => {
     attempt.current += 1;
-    setOpen(false);
+    setRemoving(null);
     setBusy(false);
-    setFailure(null);
+    setRemoveFailure(null);
   };
-  const confirm = async () => {
+  const confirm = async (bot: ChannelBot) => {
+    if (control === undefined) return;
     const mine = ++attempt.current;
     setBusy(true);
-    setFailure(null);
-    const res = await onRemove(bot.id);
+    setRemoveFailure(null);
+    const res = await control.onRemove(bot.id);
     if (mine !== attempt.current) return;
     setBusy(false);
-    if (res.ok) setOpen(false);
-    else setFailure(res);
+    if (res.ok) setRemoving(null);
+    else setRemoveFailure(res);
   };
-  const title = BOT_CHANNEL_COPY.title(bot.displayName);
-  return (
-    <>
-      <button type="button" className="btn btn-secondary" title={title} onClick={() => setOpen(true)}>
-        {title}
-      </button>
-      {open &&
-        createPortal(
+
+  const items: readonly BotMenuItem[] =
+    control === undefined
+      ? []
+      : control.bots.map((bot) =>
+          control.memberIds.has(bot.id)
+            ? { key: `bot-remove-${bot.id}`, label: BOT_CHANNEL_COPY.title(bot.displayName), onSelect: () => setRemoving(bot) }
+            : { key: `bot-add-${bot.id}`, label: BOT_CHANNEL_COPY.add(bot.displayName), onSelect: () => void add(bot) },
+        );
+  const failure = addFailure === null ? null : <ErrorState message={`${BOT_CHANNEL_COPY.addFailed} ${failureText(addFailure)}`} />;
+  const title = removing === null ? '' : BOT_CHANNEL_COPY.title(removing.displayName);
+  const dialog =
+    removing === null
+      ? null
+      : createPortal(
           <Dialog title={title} onClose={close}>
             <div className="dialog-form">
               <p>{BOT_CHANNEL_COPY.body}</p>
-              {failure !== null && <ErrorState message={failureText(failure)} />}
+              {removeFailure !== null && <ErrorState message={failureText(removeFailure)} />}
               <div className="dialog-actions">
                 <button type="button" className="btn btn-secondary" onClick={close}>
                   {CANCEL_LABEL}
                 </button>
-                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void confirm()}>
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void confirm(removing)}>
                   {BOT_CHANNEL_COPY.confirm}
                 </button>
               </div>
             </div>
           </Dialog>,
           document.body,
-        )}
-    </>
-  );
+        );
+  return { items, failure, dialog };
 }

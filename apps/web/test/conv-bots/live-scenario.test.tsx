@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LiveApp } from '../../src/LiveApp.js';
 import { createHttpDataSource } from '../../src/data/http-source.js';
 import { BOT_BADGE_TEXT, BOT_CHANNEL_COPY } from '../../src/ui/copy.js';
+import { headerMenuItems, selectHeaderMenuItem } from './header-menu.js';
 import { CONV, FakeServer, ME, MemoryStorage, PEER, U, flush, message } from '../sync/fake-server.js';
 
 afterEach(() => {
@@ -98,13 +99,13 @@ describe('LiveApp 사용자 시나리오(FR-BOT-11)', () => {
     expect(screen.getByText('채널 · 멤버 2')).toBeTruthy();
     expect(mentionOptions()).toEqual(['B']);
 
-    fireEvent.click(screen.getByRole('button', { name: BOT_CHANNEL_COPY.add('Jarvis') }));
+    selectHeaderMenuItem(BOT_CHANNEL_COPY.add('Jarvis'));
     await settle();
     expect(w.state.posts).toEqual([{ bot_user_id: BOT }]);
     expect(screen.getByText('채널 · 멤버 3')).toBeTruthy();
     expect(mentionOptions()).toEqual(['B', `Jarvis ${BOT_BADGE_TEXT}`]);
 
-    fireEvent.click(screen.getByRole('button', { name: BOT_CHANNEL_COPY.title('Jarvis') }));
+    selectHeaderMenuItem(BOT_CHANNEL_COPY.title('Jarvis'));
     const dialog = screen.getByRole('dialog', { name: BOT_CHANNEL_COPY.title('Jarvis') });
     fireEvent.click(within(dialog).getByRole('button', { name: BOT_CHANNEL_COPY.confirm }));
     await settle();
@@ -112,7 +113,7 @@ describe('LiveApp 사용자 시나리오(FR-BOT-11)', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText('채널 · 멤버 2')).toBeTruthy();
     expect(mentionOptions()).toEqual(['B']);
-    expect(screen.getByRole('button', { name: BOT_CHANNEL_COPY.add('Jarvis') })).toBeTruthy();
+    expect(headerMenuItems()).toContain(BOT_CHANNEL_COPY.add('Jarvis'));
   });
 
   it('일반 멤버 계정에는 봇 컨트롤이 없다', async () => {
@@ -121,7 +122,7 @@ describe('LiveApp 사용자 시나리오(FR-BOT-11)', () => {
     fireEvent.click(within(nav()).getByRole('button', { name: 'general' }));
     await settle();
     expect(screen.getByText('안녕하세요')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: BOT_CHANNEL_COPY.add('Jarvis') })).toBeNull();
+    expect(headerMenuItems()).not.toContain(BOT_CHANNEL_COPY.add('Jarvis'));
     expect(w.server.log.some((l) => l.includes('/bots'))).toBe(false);
   });
 });
