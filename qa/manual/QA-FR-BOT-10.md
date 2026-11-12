@@ -22,6 +22,7 @@
 |---|---|---|---|
 | 1 | owner 멘션 최상위 → `chat_type=channel`·새 세션, 답글 → 같은 세션 | `test_case1_channel_mention_top_level_new_session_reply_same_session`, `test_case1_dm_still_dm_chat_type_and_body_untouched` | PASS |
 | 2 | 멘션 없는 owner 메시지 → 무시, backlog 0 | `test_case2_channel_owner_without_mention_ignored_and_not_counted` | PASS |
+| 2b | (§10 Q5 변경 2026-11-13) 봇 스레드의 owner 비멘션 답글 → 같은 세션·본문 그대로. 비봇 스레드·비owner·다른 사용자만 멘션·수정본 → 무시, 재시작 후 루트 조회 통과, 조회 404/500 → 거부·재조회 억제 | `test_case2_bot_thread_owner_reply_without_mention_continues_same_session`, `test_thread_follow_*`(8건) — 2026-11-13 어댑터 pytest 114 passed | PASS(자동) |
 | 3 | owner 아닌 사람의 멘션 → 무시 | `test_case3_channel_non_owner_mention_ignored` | PASS |
 | 4 | `@봇 /approve` 답글 → 토큰 제거 후 승인 파싱 | `test_case4_channel_approve_reply_strips_leading_token`, `test_case4_strip_only_first_leading_token_with_word_boundary` | PASS |
 | 5 | `membership.changed` joined/left·`not_found` | `test_case5_joined_subscribes_without_reconnect_then_left_ignores`, `test_case5_error_not_found_removes_conversation`, `test_case5_joined_unconfirmed_by_me_does_not_subscribe`, `test_case5_join_racing_catch_up_does_not_drop_first_mention` | PASS |
