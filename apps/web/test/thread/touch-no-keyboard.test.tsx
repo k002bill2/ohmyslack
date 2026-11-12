@@ -90,6 +90,22 @@ async function mountShell() {
 }
 
 describe('터치: 실패 항목 지운 뒤 포커스', () => {
+  it('본문 실패 항목 「삭제」 → 메시지 목록(작성기·body 아님, AppShell tabIndex=-1)', async () => {
+    const user = await mountShell();
+    await user.click(within(screen.getByRole('navigation', { name: '공간' })).getByRole('button', { name: 'general' }));
+    await settle();
+    await user.type(screen.getByRole('textbox', { name: '#general에 메시지 작성' }), '본문 실패{Enter}');
+    await settle();
+    const list = document.querySelector<HTMLElement>('.message-list');
+    if (list === null) throw new Error('목록 없음');
+    within(list).getByRole('button', { name: '삭제' }).focus();
+    await user.keyboard('{Enter}');
+    await settle();
+    expect(screen.queryByText('본문 실패')).toBeNull();
+    expectNotKeyboardTarget();
+    expect(document.activeElement).toBe(list);
+  });
+
   it('스레드 열기 → 제목, 실패 답글 「삭제」 → 제목(작성기·body 아님)', async () => {
     const user = await mountShell();
     await user.click(within(screen.getByRole('navigation', { name: '공간' })).getByRole('button', { name: 'general' }));

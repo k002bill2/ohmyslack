@@ -21,6 +21,7 @@ import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
 import { HeaderMenu } from './HeaderMenu.js';
+import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
 import { SpaceSwitcher } from './SpaceSwitcher.js';
 import { initialShellState, shellReducer, adjacentSpace } from './shell-state.js';
@@ -83,7 +84,8 @@ function ConversationTitle({ space }: { readonly space: Space }) {
   const inactive = space.kind === 'dm' ? space.peerInactiveName : undefined;
   const split = isSplitName(title, inactive);
   return (
-    <h1 className={split ? 'conversation-title name-split' : 'conversation-title'} title={split ? title : undefined}>
+    // tabIndex -1: 터치 기기 공간 전환 뒤 자동 포커스 대상(작성기 대신 — 가상 키보드를 띄우지 않게). Tab 순서에는 들지 않는다.
+    <h1 className={split ? 'conversation-title name-split' : 'conversation-title'} title={split ? title : undefined} tabIndex={-1}>
       <NameParts label={title} inactiveName={inactive} />
     </h1>
   );
@@ -228,6 +230,8 @@ function ConversationPane(props: {
         <ul
           ref={list}
           className="message-list"
+          // 터치 기기에서 실패 항목을 지운 뒤 포커스 대상(MAIN_DISCARD_FOCUS — 작성기 대신). Tab 순서에는 들지 않는다.
+          tabIndex={-1}
           onScroll={onListScroll}
           {...(rovingOn ? { onFocus: roving.onFocus, onKeyDown: roving.onKeyDown } : {})}
         >
@@ -394,11 +398,12 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     dataSource.openThread?.(state.threadRootId);
   }, [dataSource, state.threadRootId]);
 
-  // F4: 공간 전환 후 새 공간의 작성기.
+  // F4: 공간 전환 후 새 공간의 작성기. menu-bots-touch-focus: 터치 기기는 가상 키보드가 화면을 가리므로 대화 제목으로.
   useEffect(() => {
     if (!focusComposer.current) return;
     focusComposer.current = false;
-    shell.current?.querySelector<HTMLElement>('[data-composer="main"] textarea')?.focus();
+    if (prefersNoAutoKeyboard()) shell.current?.querySelector<HTMLElement>('.conversation-title')?.focus({ preventScroll: true });
+    else shell.current?.querySelector<HTMLElement>('[data-composer="main"] textarea')?.focus();
   }, [state.conversationId, focusTick]);
 
   useGlobalShortcuts(bp !== 'compact', {
