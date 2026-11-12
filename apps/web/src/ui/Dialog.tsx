@@ -13,8 +13,61 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Esc가 IME 조합 확정용이면 닫지 않는다(UI_STATES §4-3 — 조합 중 키는 IME가 먼저). */
-function isComposingKey(e: KeyboardEvent): boolean {
-  return e.nativeEvent.isComposing || e.keyCode === 229 || e.key === 'Process';
+function isComposingKey(e: globalThis.KeyboardEvent): boolean {
+  return e.isComposing || e.keyCode === 229 || e.key === 'Process';
+}
+
+/** 열린 Dialog 상자들 — 마운트 순서. 문서 수준 키는 마지막(가장 위) 상자만 처리한다(portal·트리 안 Dialog가 섞이면 DOM 순서 ≠ 열린 순서). */
+const openBoxes: HTMLElement[] = [];
+
+/**
+ * Tab/Shift+Tab을 상자 안 항목으로 순환시킨다. 처리했으면(기본 동작을 막아야 하면) true.
+ * 상자 자체(복구된 포커스)·상자 밖 포커스도 「항목 밖」으로 본다 — 기본 Tab이 상자 밖으로 빠지지 않게(Codex r1 P2).
+ */
+function trapTab(box: HTMLElement, shiftKey: boolean): boolean {
+  const items = [...box.querySelectorAll<HTMLElement>(FOCUSABLE)];
+  const head = items[0];
+  const tail = items.at(-1);
+  if (head === undefined || tail === undefined) return true;
+  const active = document.activeElement;
+  const outsideItems = active === box || !box.contains(active);
+  if (shiftKey && (active === head || outsideItems)) {
+    tail.focus();
+    return true;
+  }
+  if (!shiftKey && (active === tail || outsideItems)) {
+    head.focus();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 포커스가 BODY(배경 클릭·스크립트 blur 등)면 키가 상자 `onKeyDown`을 거치지 않는다(WCAG 2.1.2). 열린 동안
+ * `document`(버블)에서 받아, **가장 위 Dialog**이고 대상이 BODY·`html`·이 Dialog가 inert로 만든 배경일 때만
+ * Tab → 첫 항목, Shift+Tab → 마지막 항목, Esc → 닫기. 상자 안 키는 `onKeyDown` 몫이라 건너뛰고(중복 처리 금지),
+ * 다른 레이어(나중에 열린 portal 메뉴 등)의 키는 가로채지 않는다. 포커스를 미리 끌어오지 않고 키를 누를 때만 잡는다.
+ */
+function trapOutsideKeys(box: HTMLElement, background: readonly HTMLElement[], close: () => void): () => void {
+  openBoxes.push(box);
+  const onKeyDown = (e: globalThis.KeyboardEvent) => {
+    if (e.defaultPrevented || openBoxes.at(-1) !== box) return;
+    const target = e.target;
+    if (!(target instanceof Node) || box.contains(target)) return;
+    const stray = target === document.body || target === document.documentElement || background.some((el) => el.contains(target));
+    if (!stray) return;
+    if (e.key === 'Escape') {
+      if (isComposingKey(e)) return;
+      close();
+    } else if (e.key === 'Tab' && trapTab(box, e.shiftKey)) {
+      e.preventDefault();
+    }
+  };
+  document.addEventListener('keydown', onKeyDown);
+  return () => {
+    document.removeEventListener('keydown', onKeyDown);
+    openBoxes.splice(openBoxes.indexOf(box), 1);
+  };
 }
 
 /**
@@ -51,11 +104,17 @@ function observeLostFocus(box: HTMLElement): () => void {
  * - 열릴 때 포커스를 안으로(첫 입력·버튼), **언마운트 시 열기 직전 포커스(트리거)로 복귀**
  * - 열려 있는 동안 `body` 스크롤 잠금
  * - 안 포커스 요소가 disabled·제거로 포커스를 잃으면 상자로 되돌림(요청 중에도 Esc·Tab 동작)
+ * - 포커스가 BODY·배경에 있어도 Tab·Shift+Tab·Esc가 가장 위 Dialog에 닿음(문서 수준 keydown)
  * 마운트 = 열림. 소유자는 `{open && <Dialog …/>}`로 렌더한다.
  */
 export function Dialog({ title, onClose, children }: DialogProps) {
   const titleId = useId();
   const box = useRef<HTMLDivElement>(null);
+  // 마운트 effect가 한 번만 걸리므로 최신 onClose를 ref로 읽는다(문서 수준 Esc).
+  const latestClose = useRef(onClose);
+  useEffect(() => {
+    latestClose.current = onClose;
+  });
 
   useEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -71,7 +130,9 @@ export function Dialog({ title, onClose, children }: DialogProps) {
     );
     siblings.forEach((el) => (el.inert = true));
     const releaseFocusGuard = box.current === null ? null : observeLostFocus(box.current);
+    const releaseKeyTrap = box.current === null ? null : trapOutsideKeys(box.current, siblings, () => latestClose.current());
     return () => {
+      releaseKeyTrap?.();
       releaseFocusGuard?.();
       siblings.forEach((el) => (el.inert = false));
       body.style.overflow = prevOverflow;
@@ -81,29 +142,12 @@ export function Dialog({ title, onClose, children }: DialogProps) {
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
-      if (isComposingKey(e)) return;
+      if (isComposingKey(e.nativeEvent)) return;
       e.stopPropagation();
       onClose();
       return;
     }
-    if (e.key !== 'Tab') return;
-    const items = [...(box.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
-    const head = items[0];
-    const tail = items.at(-1);
-    if (head === undefined || tail === undefined) {
-      e.preventDefault();
-      return;
-    }
-    const active = document.activeElement;
-    // 상자 자체(복구된 포커스)도 「항목 밖」으로 본다 — 기본 Shift+Tab이 상자 밖으로 빠지지 않게(Codex r1 P2).
-    const outsideItems = active === box.current || !box.current?.contains(active);
-    if (e.shiftKey && (active === head || outsideItems)) {
-      e.preventDefault();
-      tail.focus();
-    } else if (!e.shiftKey && (active === tail || outsideItems)) {
-      e.preventDefault();
-      head.focus();
-    }
+    if (e.key === 'Tab' && box.current !== null && trapTab(box.current, e.shiftKey)) e.preventDefault();
   };
 
   return (
