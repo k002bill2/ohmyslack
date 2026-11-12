@@ -136,6 +136,23 @@ describe('주소의 대화가 목록에 없음 — Codex r1 P2×2·QA D1', () =>
     expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
   });
 
+  it('(a) 다른 대화를 보는 동안 목록에 들어왔다 사라진 참여 대화로 돌아오면 안내를 낸다(Codex r2 P2)', async () => {
+    const user = userEvent.setup();
+    const joined: Snapshot = seed({ spaces: [...seed().spaces, { id: MISSING, kind: 'channel', name: 'left-one', unreadCount: 0, mentionCount: 0, unreadThreadCount: 0 }] });
+    const { ds, set } = controllable(seed(), () => ({ joinChannel: vi.fn(() => Promise.resolve({ ok: true as const, value: MISSING })) }));
+    installViewport(1280);
+    const history = createMemoryHistory(`/c/${MISSING}`);
+    render(<AppShell dataSource={ds} history={history} />);
+    await joinFromNotice(user);
+    await user.click(within(screen.getByRole('navigation', { name: '공간' })).getByRole('button', { name: /general/ }));
+    expect(history.pathname()).toBe(`/c/${C1}`);
+    set(joined);
+    set(seed());
+    act(() => history.back());
+    expect(history.pathname()).toBe(`/c/${MISSING}`);
+    expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
+  });
+
   it('(b) compact: `?thread=`가 붙은 없는 대화도 「뒤로」 1회로 공간 목록', async () => {
     const user = userEvent.setup();
     open(390, `/c/${MISSING}?thread=${ROOT}`, withBrowse(seed()));

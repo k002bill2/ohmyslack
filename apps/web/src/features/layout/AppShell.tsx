@@ -320,8 +320,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   /** 생성·참여·DM으로 막 이동한 대화 — 목록에 들어오기 전까지 「없음」 안내 억제(목록 재조회 실패, Codex r1 P2). */
   const [arrivedId, setArrivedId] = useState<string | null>(null);
   useEffect(() => {
-    if (space !== undefined && space.id === arrivedId) setArrivedId(null);
-  }, [space, arrivedId]);
+    if (arrivedId !== null && snap.spaces.some((s) => s.id === arrivedId)) setArrivedId(null);
+  }, [snap.spaces, arrivedId]);
   /** 비동기 참여 완료 시점의 선택 대화(렌더 당시 값이 아니라 최신). */
   const selectedId = useRef(state.conversationId);
   useEffect(() => {
