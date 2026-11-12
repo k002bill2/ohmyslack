@@ -83,10 +83,12 @@ export function Dialog({ title, onClose, children }: DialogProps) {
       return;
     }
     const active = document.activeElement;
-    if (e.shiftKey && (active === head || !box.current?.contains(active))) {
+    // 상자 자체(복구된 포커스)도 「항목 밖」으로 본다 — 기본 Shift+Tab이 상자 밖으로 빠지지 않게(Codex r1 P2).
+    const outsideItems = active === box.current || !box.current?.contains(active);
+    if (e.shiftKey && (active === head || outsideItems)) {
       e.preventDefault();
       tail.focus();
-    } else if (!e.shiftKey && (active === tail || !box.current?.contains(active))) {
+    } else if (!e.shiftKey && (active === tail || outsideItems)) {
       e.preventDefault();
       head.focus();
     }

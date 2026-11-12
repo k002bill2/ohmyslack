@@ -80,6 +80,19 @@ describe('Dialog 공통 — 안 포커스 요소가 disabled·제거되면 상�
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it.each([
+    [true, '취소'],
+    [false, '닫기'],
+  ] as const)('상자로 복구된 포커스에서 Tab(shift=%s) → 트랩 안 %s (Codex r1 P2)', async (shiftKey, expected) => {
+    render(<Harness mode="disable" />);
+    const dialog = screen.getByRole('dialog');
+    await pressConfirm(dialog, '확인');
+    expect(document.activeElement).toBe(dialog);
+    const notPrevented = fireEvent.keyDown(dialog, { key: 'Tab', shiftKey });
+    expect(notPrevented).toBe(false);
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: expected }));
+  });
+
   it('사용자가 밖으로 옮긴 포커스는 되돌리지 않는다', async () => {
     render(<Harness mode="disable" />);
     const dialog = screen.getByRole('dialog');
