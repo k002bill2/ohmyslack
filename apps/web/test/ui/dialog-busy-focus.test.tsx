@@ -6,7 +6,7 @@
  */
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LiveApp } from '../../src/LiveApp.js';
 import { createHttpDataSource } from '../../src/data/http-source.js';
 import type { ActionResult, DataSource } from '../../src/data/index.js';
@@ -102,6 +102,40 @@ describe('Dialog 공통 — 안 포커스 요소가 disabled·제거되면 상�
     outside.focus();
     await settle();
     expect(document.activeElement).toBe(outside);
+  });
+
+  it('의도적으로 blur()한 뒤 무관한 자식이 추가돼도 상자로 가져오지 않는다 (Codex r2 P2)', async () => {
+    function Grow() {
+      const [extra, setExtra] = useState(false);
+      return (
+        <Dialog title="확인" onClose={() => undefined}>
+          <button type="button" onClick={() => setExtra(true)}>
+            추가
+          </button>
+          {extra && <p>새 줄</p>}
+        </Dialog>
+      );
+    }
+    render(<Grow />);
+    const dialog = screen.getByRole('dialog');
+    const add = within(dialog).getByRole('button', { name: '추가' });
+    add.focus();
+    add.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.click(add);
+    await settle();
+    expect(within(dialog).getByText('새 줄')).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('MutationObserver가 없는 환경에서도 예외 없이 열린다 (Codex r2 P3)', () => {
+    vi.stubGlobal('MutationObserver', undefined);
+    try {
+      expect(() => render(<Harness mode="disable" />)).not.toThrow();
+      expect(screen.getByRole('dialog')).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

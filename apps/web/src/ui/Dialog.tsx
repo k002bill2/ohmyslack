@@ -19,17 +19,29 @@ function isComposingKey(e: KeyboardEvent): boolean {
 
 /**
  * 안 포커스 요소가 요청 중 `disabled`가 되거나 제거되면 브라우저는 포커스를 BODY로 보낸다(포커스 fixup) —
- * 그러면 Esc(`onKeyDown`)·Tab 트랩이 닿지 않는다(WCAG 2.1.2·2.4.3). 상자 안 변경 직후 포커스가 BODY이거나
- * 상자 안 disabled 요소에 머물러 있으면 상자(tabIndex -1)로 되돌린다. 사용자가 밖으로 옮긴 포커스는 건드리지 않는다.
+ * 그러면 Esc(`onKeyDown`)·Tab 트랩이 닿지 않는다(WCAG 2.1.2·2.4.3). 상자 안에서 마지막으로 포커스된 요소를
+ * 기억해, **그 요소가** disabled·제거됐고 포커스가 BODY(또는 그 요소)에 있을 때만 상자(tabIndex -1)로 되돌린다.
+ * 의도적 blur 뒤 무관한 변경·사용자가 밖으로 옮긴 포커스는 건드리지 않는다(Codex r2 P2).
+ * MutationObserver가 없는 환경에서는 설치를 생략한다(Codex r2 P3). 반환값은 정리 함수.
  */
-function observeLostFocus(box: HTMLElement): MutationObserver {
+function observeLostFocus(box: HTMLElement): () => void {
+  if (typeof MutationObserver === 'undefined') return () => undefined;
+  let tracked: Element | null = box.contains(document.activeElement) ? document.activeElement : null;
+  const onFocusIn = (e: FocusEvent) => {
+    if (e.target instanceof Element) tracked = e.target;
+  };
+  box.addEventListener('focusin', onFocusIn);
   const observer = new MutationObserver(() => {
+    if (tracked === null || tracked === box) return;
+    const gone = !box.contains(tracked) || tracked.matches(':disabled');
     const active = document.activeElement;
-    const lost = active === null || active === document.body || (box.contains(active) && active !== box && active.matches(':disabled'));
-    if (lost) box.focus();
+    if (gone && (active === null || active === document.body || active === tracked)) box.focus();
   });
   observer.observe(box, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled'] });
-  return observer;
+  return () => {
+    observer.disconnect();
+    box.removeEventListener('focusin', onFocusIn);
+  };
 }
 
 /**
@@ -58,9 +70,9 @@ export function Dialog({ title, onClose, children }: DialogProps) {
       (el): el is HTMLElement => el instanceof HTMLElement && el !== backdrop && !el.inert,
     );
     siblings.forEach((el) => (el.inert = true));
-    const keepFocus = box.current === null ? null : observeLostFocus(box.current);
+    const releaseFocusGuard = box.current === null ? null : observeLostFocus(box.current);
     return () => {
-      keepFocus?.disconnect();
+      releaseFocusGuard?.();
       siblings.forEach((el) => (el.inert = false));
       body.style.overflow = prevOverflow;
       if (trigger?.isConnected) trigger.focus();
