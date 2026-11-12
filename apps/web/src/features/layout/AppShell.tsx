@@ -21,6 +21,7 @@ import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
 import { HeaderMenu } from './HeaderMenu.js';
+import { MissingConversation } from './MissingConversation.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 import { useFocusAfterLeave } from './focus-after-leave.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
@@ -618,6 +619,15 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
   );
+  // QA §4-2: 목록이 확정됐는데(로딩·catch-up 아님) 주소의 대화가 없으면 빈 화면 대신 안내(나간 채널 새로고침·삭제·오타).
+  const listSettled = (snap.listState ?? 'ready') === 'ready' && snap.connection !== 'catching-up';
+  const missing = !members && space === undefined && state.conversationId !== null && listSettled && (
+    <MissingConversation
+      breakpoint={bp}
+      onBack={() => dispatch({ type: 'back' })}
+      {...(dataSource.discoverChannels && dataSource.joinChannel ? { onBrowseChannels: () => setPanel('browse') } : {})}
+    />
+  );
   const thread = threadOpen && space && root && (
     <ThreadPanel
       variant={bp}
@@ -639,7 +649,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     />
   );
   // 시안 04: compact 공간 목록 위 설치 안내 카드(standalone·미지원이면 InstallCard가 렌더하지 않음).
-  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || (
+  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || missing || (
     <>
       <InstallCard mode={installPrompt.mode} onInstall={() => void installPrompt.install()} />
       {sidebar}
@@ -661,7 +671,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         <>
           {sidebar}
           {split.navSplitter}
-          {memberAdmin || pane}
+          {memberAdmin || pane || missing}
           {!members && thread && split.threadSplitter}
           {!members && thread}
           {spacePanel}
