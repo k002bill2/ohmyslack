@@ -21,6 +21,7 @@ import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
 import { HeaderMenu } from './HeaderMenu.js';
+import { MissingConversation } from './MissingConversation.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 import { useFocusAfterLeave } from './focus-after-leave.js';
 import { SpacePanel, type PanelKind } from './SpacePanel.js';
@@ -316,6 +317,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | null>(null);
 
   const space = snap.spaces.find((s) => s.id === state.conversationId);
+  /** 비동기 참여 완료 시점의 선택 대화(렌더 당시 값이 아니라 최신). */
+  const selectedId = useRef(state.conversationId);
+  useEffect(() => {
+    selectedId.current = state.conversationId;
+  }, [state.conversationId]);
   const pushEnv = useMemo(() => (dataSource.push ? browserPushEnv() : null), [dataSource.push]);
   const root = snap.messages.find((m) => m.id === state.threadRootId && m.conversationId === state.conversationId);
   // 나간 채널은 스레드도 닫힌 것으로 본다 — 답글 작성기로 나간 채널에 보내지 않게(Codex r1 P2).
@@ -452,7 +458,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       history.replace(formatRoute(state.conversationId === null ? { kind: 'root' } : { kind: 'conversation', conversationId: state.conversationId }));
     }
   };
-  /** 생성·참여·DM 성공: 목록은 DataSource가 이미 갱신했다 → 패널 닫기 → 그 대화로 이동(구독은 `open` 효과가 기존 규칙으로). */
+  /** 생성·참여·DM 성공: 목록은 DataSource가 갱신을 시도했다(실패면 `pendingIds`로 알린다) → 패널 닫기 → 그 대화로 이동(구독은 `open` 효과가 기존 규칙으로). */
   const goTo = (conversationId: string) => {
     setPanel(null);
     setMembers(false);
@@ -460,13 +466,13 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     // 같은 대화(다시 참여)여도 F4 effect가 돌게 — conversationId가 그대로면 deps가 바뀌지 않는다.
     bumpFocus();
     dispatch({ type: 'select-space', conversationId });
+    // 선택 중인 대화면 `open` effect가 다시 돌지 않는다 → 이력·구독을 직접 다시 연다(W-10j 다시 참여·QA D1 채널 찾기 참여).
+    if (conversationId === selectedId.current) dataSource.open?.(conversationId);
   };
-  /** W-10j 다시 참여: join 2xx → 그 대화로 이동 + 이력·구독 재개(`open`). 선택 중이면 effect가 다시 돌지 않아 직접 연다. */
+  /** W-10j 다시 참여: join 2xx → 그 대화로 이동 + 이력·구독 재개(`goTo`가 선택 중이면 직접 연다). */
   const rejoin = (conversationId: string) => {
     void dataSource.joinChannel?.(conversationId).then((res) => {
-      if (!res.ok) return;
-      goTo(res.value);
-      dataSource.open?.(res.value);
+      if (res.ok) goTo(res.value);
     });
   };
   // 링크 함수는 대화·스레드가 바뀔 때만 새로 — memo(MessageItem) 얕은 비교를 깨지 않게(F-1).
@@ -618,6 +624,18 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
   );
+  // QA §4-2: 목록이 확정됐는데(로딩·catch-up 아님) 주소의 대화가 없으면 빈 화면 대신 안내(나간 채널 새로고침·삭제·오타).
+  // 동작은 성공했지만 목록에서 아직 확인되지 않은 대화는 데이터 계층이 `pendingIds`로 알린다(Codex r1·r3 P2).
+  const listSettled = (snap.listState ?? 'ready') === 'ready' && snap.connection !== 'catching-up';
+  const unconfirmed = state.conversationId !== null && (snap.pendingIds ?? []).includes(state.conversationId);
+  const missing = !members && space === undefined && state.conversationId !== null && listSettled && !unconfirmed && (
+    <MissingConversation
+      breakpoint={bp}
+      // 숨은 `?thread=`가 복원돼 있어도 한 번에 목록으로(`back`은 스레드부터 닫는다 — Codex r1 P2).
+      onBack={() => dispatch({ type: 'route', conversationId: null })}
+      {...(dataSource.discoverChannels && dataSource.joinChannel ? { onBrowseChannels: () => setPanel('browse') } : {})}
+    />
+  );
   const thread = threadOpen && space && root && (
     <ThreadPanel
       variant={bp}
@@ -639,7 +657,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     />
   );
   // 시안 04: compact 공간 목록 위 설치 안내 카드(standalone·미지원이면 InstallCard가 렌더하지 않음).
-  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || (
+  const compactScreen = (bp === 'compact' && spacePanel) || memberAdmin || thread || pane || missing || (
     <>
       <InstallCard mode={installPrompt.mode} onInstall={() => void installPrompt.install()} />
       {sidebar}
@@ -661,7 +679,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
         <>
           {sidebar}
           {split.navSplitter}
-          {memberAdmin || pane}
+          {memberAdmin || pane || missing}
           {!members && thread && split.threadSplitter}
           {!members && thread}
           {spacePanel}

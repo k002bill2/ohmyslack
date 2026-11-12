@@ -81,6 +81,11 @@ export interface Snapshot {
    * (멘션 후보·멤버 수)를 다시 읽는다 — 서버가 비활성을 이미 빼서 준다. 없으면 0으로 본다(메모리 구현).
    */
   readonly activeRevision?: number;
+  /**
+   * 동작(생성·참여·DM)은 성공했지만 아직 목록에서 확인되지 않은 대화 id(목록 재조회 실패). 다음 목록 조회가 성공하면
+   * 비워진다 — 성공한 목록에 없으면 정말 없는 것. 없으면 빈 집합으로 본다(메모리 구현, Codex r3 P2).
+   */
+  readonly pendingIds?: readonly string[];
 }
 
 /** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */
