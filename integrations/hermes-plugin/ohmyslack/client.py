@@ -167,10 +167,12 @@ class BotClient:
 
     async def post_message(self, conversation_id: str, body: str, *,
                            thread_root_id: Optional[str] = None,
-                           attachment_ids: Optional[list[str]] = None) -> dict:
+                           attachment_ids: Optional[list[str]] = None,
+                           remaining: Optional[Callable[[], float]] = None) -> dict:
         """멱등 재시도: 같은 `client_message_id`로 429(Retry-After)·5xx·연결 오류만 다시 보낸다.
 
         서버는 같은 키 재전송을 첨부 ID 집합까지 비교해 원래 메시지로 돌려준다(messages/repo.ts replay) → 중복 없음.
+        `remaining`은 `_with_retry`와 같다(standalone 전체 deadline용, 기본은 기존 동작).
         """
         payload: dict[str, Any] = {"client_message_id": str(uuid.uuid4()), "body": body}
         if thread_root_id:
@@ -178,7 +180,7 @@ class BotClient:
         if attachment_ids:
             payload["attachment_ids"] = list(attachment_ids)
         path = f"/conversations/{conversation_id}/messages"
-        return await self._with_retry(lambda: self.request("POST", path, json=payload), "send")
+        return await self._with_retry(lambda: self.request("POST", path, json=payload), "send", remaining=remaining)
 
     async def upload_attachment(self, conversation_id: str, data: bytes, mime: str, *,
                                 remaining: Optional[Callable[[], float]] = None) -> dict:
