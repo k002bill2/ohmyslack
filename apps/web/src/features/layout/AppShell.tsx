@@ -9,6 +9,7 @@ import { ConnectionBanner } from '../sync';
 import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
 import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
+import { SessionList } from '../sessions';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
 import { canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useBotChannelMenu, useConversationMembers, type BotChannelControlProps } from '../conversation-membership';
@@ -51,9 +52,13 @@ function panelFrom(history: RouteHistory | undefined): PanelKind | null {
   return kind === 'discover' ? 'browse' : kind === 'dm-new' ? 'dm' : null;
 }
 
-/** 주소가 `/settings/members`인가(새로고침 복원·뒤로가기). */
-function membersFrom(history: RouteHistory | undefined): boolean {
-  return history !== undefined && parseRoute(history.pathname()).kind === 'members';
+/** 설정 라우트 화면(`/settings/members`·`/settings/sessions`). */
+type SettingsKind = 'members' | 'sessions';
+
+/** 주소의 설정 화면(새로고침 복원·뒤로가기). 아니면 null. */
+function settingsFrom(history: RouteHistory | undefined): SettingsKind | null {
+  const kind = history === undefined ? null : parseRoute(history.pathname()).kind;
+  return kind === 'members' || kind === 'sessions' ? kind : null;
 }
 
 /** 첫 상태: 주소가 `/c/:id`면 그 대화(새로고침 복원). */
@@ -296,7 +301,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const installPrompt = useInstallPrompt();
   const [state, dispatch] = useReducer(shellReducer, history, initialFrom);
   const [panel, setPanelState] = useState<PanelKind | null>(() => panelFrom(history));
-  const [members, setMembers] = useState(() => membersFrom(history));
+  const [settings, setSettings] = useState(() => settingsFrom(history));
+  const members = settings !== null;
   /** MemberAdmin 요청 함수(안정 참조 — 렌더마다 목록을 다시 읽지 않게). 구현이 없으면 403과 같게 본다. */
   const memberApi = useMemo(() => {
     const denied = { ok: false, status: 403 } as const;
@@ -304,6 +310,15 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       load: () => dataSource.listMembers?.() ?? Promise.resolve(denied),
       createInvite: () => dataSource.createInvite?.() ?? Promise.resolve(denied),
       deactivate: (id: string) => dataSource.deactivateMember?.(id) ?? Promise.resolve(denied),
+    };
+  }, [dataSource]);
+  /** SessionList 요청 함수(안정 참조). */
+  const sessionApi = useMemo(() => {
+    const failed = { ok: false, status: 'network' } as const;
+    return {
+      load: () => dataSource.listSessions?.() ?? Promise.resolve(failed),
+      revoke: (id: string) => dataSource.revokeSession?.(id) ?? Promise.resolve(failed),
+      logoutThisDevice: () => void dataSource.logout?.(),
     };
   }, [dataSource]);
   const routed = useRef(false);
@@ -361,8 +376,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   // 주소 ← 선택 대화. 첫 실행은 replace(로그인 직후 `/login` 등 정규화), 이후 선택 변경은 push(UI_STATES §3-3 T1).
   useEffect(() => {
     if (history === undefined) return;
-    const target = members
-      ? formatRoute({ kind: 'members' })
+    const target = settings !== null
+      ? formatRoute({ kind: settings })
       : formatRoute(state.conversationId === null ? { kind: 'root' } : { kind: 'conversation', conversationId: state.conversationId });
     const first = !routed.current;
     routed.current = true;
@@ -370,7 +385,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     if (history.pathname() === target || (first && panelFrom(history) !== null)) return;
     if (first) history.replace(target);
     else history.push(target);
-  }, [history, state.conversationId, members]);
+  }, [history, state.conversationId, settings]);
 
   // 뒤로·앞으로 → 선택 복원. 열린 공간 Dialog·화면은 닫는다.
   useEffect(
@@ -378,7 +393,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       history?.listen(() => {
         const route = parseRoute(history.pathname());
         setPanelState(panelFrom(history));
-        setMembers(route.kind === 'members');
+        setSettings(settingsFrom(history));
         dispatch({ type: 'route', conversationId: route.kind === 'conversation' ? route.conversationId : null });
         // `?thread=` 복원·뒤로가기로 닫힘(W-10i).
         const thread = route.kind === 'conversation' ? threadFrom(history) : null;
@@ -434,7 +449,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       e.shiftKey ? (id) => unread.has(id) : undefined,
     );
     if (next === null) return;
-    setMembers(false);
+    setSettings(null);
     focusComposer.current = true;
     dispatch({ type: 'select-space', conversationId: next });
   };
@@ -461,7 +476,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   /** 생성·참여·DM 성공: 목록은 DataSource가 갱신을 시도했다(실패면 `pendingIds`로 알린다) → 패널 닫기 → 그 대화로 이동(구독은 `open` 효과가 기존 규칙으로). */
   const goTo = (conversationId: string) => {
     setPanel(null);
-    setMembers(false);
+    setSettings(null);
     focusComposer.current = true;
     // 같은 대화(다시 참여)여도 F4 effect가 돌게 — conversationId가 그대로면 deps가 바뀌지 않는다.
     bumpFocus();
@@ -535,7 +550,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       collapsed={collapsed}
       compact={bp === 'compact'}
       onSelect={(id) => {
-        setMembers(false);
+        setSettings(null);
         // compact는 선택 뒤 사이드바가 화면에서 사라진다 → F4 규칙으로 포커스를 옮긴다(BODY 유실 방지).
         // wide·medium은 사이드바가 남으므로 키보드 탐색 중인 포커스를 빼앗지 않는다.
         if (bp === 'compact') {
@@ -553,8 +568,9 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(bp === 'compact' ? {} : { onOpenSwitcher: () => setOverlay('switcher') })}
       {...(split.toggleNav === undefined ? {} : { onToggleCollapse: split.toggleNav })}
       {...(dataSource.listMembers && dataSource.createInvite && dataSource.deactivateMember
-        ? { onManageMembers: () => setMembers(true) }
+        ? { onManageMembers: () => setSettings('members') }
         : {})}
+      {...(dataSource.listSessions && dataSource.revokeSession ? { onManageSessions: () => setSettings('sessions') } : {})}
       {...(dataSource.logout ? { onLogout: () => void dataSource.logout?.() } : {})}
       {...(dataSource.joinChannel ? { onRejoin: rejoin } : {})}
       {...(pushEnv !== null && dataSource.push ? { pushSettings: <PushSettings env={pushEnv} server={dataSource.push} /> } : {})}
@@ -570,17 +586,14 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onDone={goTo}
     />
   );
-  const memberAdmin = members && (
+  const memberAdmin = settings !== null && (
     <div className="member-admin-screen">
       {bp === 'compact' && (
-        <button type="button" className="btn btn-secondary" onClick={() => setMembers(false)}>
+        <button type="button" className="btn btn-secondary" onClick={() => setSettings(null)}>
           {DIALOG_CLOSE_LABEL}
         </button>
       )}
-      <MemberAdmin
-        account={snap.account}
-        {...memberApi}
-      />
+      {settings === 'members' ? <MemberAdmin account={snap.account} {...memberApi} /> : <SessionList {...sessionApi} />}
     </div>
   );
   const pane = space && (

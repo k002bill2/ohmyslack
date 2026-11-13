@@ -16,6 +16,7 @@ import type {
   MessageView,
   MessageWriteResponse,
   RepliesResponse,
+  SessionsResponse,
   SnapshotResponse,
   ReadStateResponse,
   SyncResponse,
@@ -1077,6 +1078,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         // 멤버 관리는 성공 뒤 목록을 다시 읽지 않는다 — 여기서 바로 활성에서 빼야 멘션 후보·이름이 맞는다(QA D1).
         activeIds = new Set([...activeIds].filter((id) => id !== userId));
         noteGone([userId]);
+        return null;
+      }),
+    listSessions: () =>
+      attempt(async () => {
+        const res = await api.get<SessionsResponse>('/api/sessions');
+        return res.sessions.map((x) => ({ id: x.id, deviceLabel: x.device_label, createdAt: x.created_at, lastSeenAt: x.last_seen_at, current: x.current }));
+      }),
+    revokeSession: (sessionId) =>
+      attempt(async () => {
+        await api.del<undefined>(`/api/sessions/${encodeURIComponent(sessionId)}`);
         return null;
       }),
     startDm: (userId) => attempt(async () => refreshThen((await api.post<ConversationRef>('/api/dms', { user_id: userId })).id)),

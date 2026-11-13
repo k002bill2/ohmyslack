@@ -134,6 +134,15 @@ export interface Invite {
   readonly expiresAt: string;
 }
 
+/** `GET /api/sessions` 항목(TRD §3·§5-3, W-30 CMP-22). `deviceLabel`은 서버가 만든 거친 라벨 — 모르면 null. */
+export interface DeviceSession {
+  readonly id: string;
+  readonly deviceLabel: string | null;
+  readonly createdAt: string;
+  readonly lastSeenAt: string;
+  readonly current: boolean;
+}
+
 /**
  * 공간 진입점(W-10g): 채널 만들기·찾기·참여·DM·로그아웃. 성공한 생성·참여·DM은 **목록을 다시 읽은 뒤** 대화 ID를 돌려준다
  * — 호출자는 그 ID로 이동(`open`)만 하면 기존 구독·checkpoint 규칙이 그대로 적용된다.
@@ -153,6 +162,10 @@ export interface SpacesApi {
   createInvite?(): Promise<ActionResult<Invite>>;
   /** `POST /api/admin/members/:user_id/deactivate`(owner, W-10h). 204 → ok. */
   deactivateMember?(userId: string): Promise<ActionResult<null>>;
+  /** `GET /api/sessions`(본인의 살아 있는 세션, W-30). */
+  listSessions?(): Promise<ActionResult<readonly DeviceSession[]>>;
+  /** `DELETE /api/sessions/:id`(본인 다른 기기, 204 → ok. 현재 세션 400·남의/없는 ID 404, W-30). */
+  revokeSession?(sessionId: string): Promise<ActionResult<null>>;
   /** 목록 오류 「다시 시도」 — 복귀 절차 1회. */
   reload?(): void;
   /** `POST /api/auth/logout` → 본문·checkpoint 정리 → 세션 종료. */
