@@ -7,7 +7,7 @@ created: 2026-11-07
 
 # TRD — ohmyslack (내부 코드명)
 
-- 상태: R3 최종안 (R3.3 개정, 2026-11-08 ADR-001 채택)
+- 상태: R3 최종안 (R3.3 개정, 2026-11-08 ADR-001 채택; R3.5 문서 첨부 계약 §6-1-1, 2026-11-13 — 구현 대기)
 - 작성자: GPT-Luna
 - 입력: BUZZ_ROUND2_DOCS.md, BUZZ_ROUND3_FINAL.md, PRD v1.3(R3.3 반영), `docs/decisions/ADR-001-hermes-agent-integration.md`, R1 개발설계서·디자인 레퍼런스, GPT-Sol·Claude-Opus·Claude-Fable R2 리뷰
 - 정합성: FR ID·우선순위·수용 기준은 PRD 정본을 따릅니다. 저장소·단계·테스트 계약은 개발설계서 정본을 따르고, 토큰·브레이크포인트·레이아웃·컴포넌트·IME 규칙은 디자인 레퍼런스 정본을 따릅니다.
@@ -61,7 +61,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `thread_unread_targets` | `(root_message_id,user_id)` PK, `qualified_at timestamptz NOT NULL` | PRD §7-7의 스레드 대상 자격을 기록; 편집·삭제 뒤에도 자격 유지. root/user FK `RESTRICT` |
 | `message_mentions` | `(message_id,user_id)` PK | 메시지와 멤버 FK `RESTRICT`; 수정 시 재계산, 삭제 시 같은 트랜잭션에서 제거 |
 | `bot_tokens` | `id uuid PK`, `bot_user_id uuid NOT NULL` FK users `ON DELETE CASCADE`, `token_hash text UNIQUE NOT NULL`(SHA-256), `label text NOT NULL`, `created_at`, nullable `last_used_at`, nullable `revoked_at`; 부분 unique: 봇당 미폐기 토큰 **최대 2개**(회전 겹침용, 서비스 검사) | 봇 인증(§5-2). 원문 미저장 |
-| `attachments` | `id uuid PK`, `conversation_id uuid NOT NULL`, `uploader_id uuid NOT NULL`, nullable `message_id uuid`(결속 전 NULL), `mime text CHECK (mime IN ('audio/mpeg','image/png','image/jpeg','image/webp'))`, `byte_size integer CHECK (byte_size BETWEEN 1 AND 10485760)`, `sha256 text NOT NULL`, nullable `duration_ms`/`width`/`height`, `created_at`, `expires_at timestamptz NOT NULL`, nullable `deleted_at` | 첨부 메타데이터(§6-1). `(conversation_id,message_id)`→messages 복합 FK `RESTRICT` |
+| `attachments` | `id uuid PK`, `conversation_id uuid NOT NULL`, `uploader_id uuid NOT NULL`, nullable `message_id uuid`(결속 전 NULL), `mime text CHECK (mime IN ('audio/mpeg','image/png','image/jpeg','image/webp'))`, `byte_size integer CHECK (byte_size BETWEEN 1 AND 10485760)`, `sha256 text NOT NULL`, nullable `duration_ms`/`width`/`height`, `created_at`, `expires_at timestamptz NOT NULL`, nullable `deleted_at` | 첨부 메타데이터(§6-1). `(conversation_id,message_id)`→messages 복합 FK `RESTRICT`. 문서 확장(`filename`·`has_macros`·MIME 9종·상한 26,214,400)은 §6-1-1 마이그레이션 `0005`(1b 구현 시 반영) |
 | `attachment_blobs` | `attachment_id uuid PK` FK `ON DELETE CASCADE`, `bytes bytea NOT NULL` | 바이트 분리 저장(목록 조회가 bytea를 읽지 않게). 보존 만료·메시지 삭제 시 행 삭제 |
 | `push_subscriptions` | `id uuid PK`, `user_id uuid NOT NULL` FK `CASCADE`, `session_id uuid` FK sessions `CASCADE`, `endpoint text UNIQUE NOT NULL`, `p256dh text NOT NULL`, `auth text NOT NULL`, `vapid_key_id text NOT NULL`, `created_at`, nullable `last_success_at` | 기기(세션)별 구독(§6-2). 로그아웃·세션 폐기 시 함께 삭제 |
 
@@ -225,6 +225,93 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 - 다운로드 응답: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: inline`(허용 미디어만), **HTTP Range(206) 지원**(iOS 오디오 재생 — 실기 QA 확인 필요).
 - 권한: `access: attachment` 메타 → 첨부의 `conversation_id`로 `assertAccess(read)`. 비참여자 404.
 
+### 6-1-1. 문서 첨부 (R3.5, ADR-002 §4, PRD FR-OPS-09 — 계약 확정·구현 대기 1b)
+
+§6-1의 경계(허용목록·내용 판정·`attachment_blobs` 저장·`access: attachment`·응답 헤더)를 그대로 재사용하고 **문서 형식만** 넓힙니다. 문서와 충돌하는 §6-1 문장(PDF 거부, `inline`, 10 MiB)은 이 소절이 문서 형식에 한해 우선합니다. ADR-002 §4-3 결정 5개(매크로 문서 받음·구형 Office 받음·양방향·25 MiB·90일, 영환님 2026-11-10)는 바꾸지 않습니다. ★는 이 레인의 제안값입니다(미측정).
+
+**(1) 허용 형식과 서버 판정**
+
+| 형식 | 저장 확장자 | 저장 MIME | 판정 규칙(모두 만족) |
+|---|---|---|---|
+| PDF | `.pdf` | `application/pdf` | 오프셋 0이 `%PDF-` |
+| Word (OOXML) | `.docx` / 매크로 시 `.docm` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` / `application/vnd.ms-word.document.macroEnabled.12` | ZIP 컨테이너(아래) + `[Content_Types].xml` 엔트리 + `word/document.xml` 엔트리 |
+| Excel (OOXML) | `.xlsx` / 매크로 시 `.xlsm` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` / `application/vnd.ms-excel.sheet.macroEnabled.12` | ZIP 컨테이너 + `[Content_Types].xml` + `xl/workbook.xml` |
+| PowerPoint (OOXML) | `.pptx` / 매크로 시 `.pptm` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` / `application/vnd.ms-powerpoint.presentation.macroEnabled.12` | ZIP 컨테이너 + `[Content_Types].xml` + `ppt/presentation.xml` |
+| 한글 (HWPX) | `.hwpx` | `application/hwp+zip` | ZIP 컨테이너 + 첫 엔트리 `mimetype`(저장 방식 0=무압축)의 내용이 정확히 `application/hwp+zip` + `Contents/content.hpf` 엔트리 |
+| 한글 (HWP 5.x) | `.hwp` | ★`application/x-hwp` | OLE 컨테이너(아래) + 루트 `FileHeader` 스트림 첫 17바이트 `HWP Document File` + `DocInfo` 스트림 + `BodyText` 저장소 |
+| Word 97–2003 | `.doc` | `application/msword` | OLE 컨테이너 + 루트 `WordDocument` 스트림 |
+| Excel 97–2003 | `.xls` | `application/vnd.ms-excel` | OLE 컨테이너 + 루트 `Workbook` 스트림(`Book` = Excel 5/95 이하는 415) |
+| PowerPoint 97–2003 | `.ppt` | `application/vnd.ms-powerpoint` | OLE 컨테이너 + 루트 `PowerPoint Document` 스트림 |
+
+- **읽는 범위(불변식):** ZIP은 EOCD·중앙 디렉터리 **목록만**, OLE는 헤더·FAT/DIFAT·디렉터리 엔트리 **목록만** 읽습니다. 예외는 두 곳의 고정 길이 읽기뿐입니다: HWPX `mimetype`(무압축 저장 엔트리 19바이트), HWP `FileHeader` 첫 32바이트(미니 스트림 경유 가능). **압축 해제·XML 파싱·형식 변환·미리보기·썸네일·텍스트 추출은 서버에서 0입니다**(ADR-002 §5-7).
+- **ZIP 컨테이너 규칙:** 오프셋 0이 로컬 헤더 `PK\x03\x04`. EOCD(`PK\x05\x06`)는 파일 끝에서 22+주석 길이 위치에 정확히 하나이고 그 뒤 잔여 바이트 0. `cd_offset + cd_size = EOCD 오프셋`. 분할(다중 디스크)·ZIP64(`PK\x06\x06`/`PK\x06\x07`)·암호화 플래그(general purpose bit 0) 엔트리는 415. 엔트리 이름 중복·NUL 포함은 415.
+- **OLE 컨테이너 규칙:** 오프셋 0이 `D0 CF 11 E0 A1 B1 1A E1`, 바이트 순서 `FE FF`, 메이저 버전 3(섹터 512B) 또는 4(섹터 4,096B)만. 섹터 번호는 파일 섹터 수 미만이어야 하고 체인 순환은 방문 표식으로 즉시 415. 루트에 `EncryptionInfo`·`EncryptedPackage`가 있으면(암호 걸린 OOXML) 415.
+- **단일 일치 규칙(폴리글랏 차단):** 모든 판정기(§6-1 미디어 4종 + 위 9종)를 돌려 **정확히 하나**만 일치해야 저장합니다. 0개 또는 2개 이상(예: `%PDF-`로 시작하면서 끝에 유효한 ZIP EOCD·중앙 디렉터리, ZIP 안에 `word/document.xml`과 `xl/workbook.xml` 동시 존재)은 415입니다.
+- **선언 값:** 업로드 `Content-Type`은 판정 결과 MIME 또는 `application/octet-stream`일 때만 통과(그 밖은 415). 브라우저마다 문서 MIME 선언이 달라 미디어(§6-1, 선언=판정 일치 필수)보다 완화하되, 저장·응답 MIME은 항상 판정 결과입니다.
+- **확장자-형식 일치(415):** 원 파일명의 마지막 확장자(대소문자 무시)가 판정 형식의 허용 확장자여야 합니다. 매크로가 감지된 OOXML은 `.docm/.xlsm/.pptm`만 허용(`.docx` 등으로 오면 415 — ADR-002 §4-3-1). 매크로가 없는 OOXML은 `x`·`m` 두 확장자 모두 허용하고 원래 확장자를 유지합니다. 그 밖의 형식은 표의 확장자 1개만.
+
+**(2) 판정기 자원 상한(★, 상수는 `packages/shared` 문서 첨부 모듈)**
+
+| 상수(제안 이름) | ★값 | 근거 |
+|---|---|---|
+| `DOC_ZIP_MAX_ENTRIES` | 5,000 | 실사용 OOXML·HWPX는 수십–수백 엔트리, 슬라이드 수백 장 pptx도 수천 미만. EOCD 선언 엔트리 수가 넘으면 중앙 디렉터리를 읽기 전에 415 |
+| `DOC_ZIP_MAX_CD_BYTES` | 2 MiB (2,097,152) | 엔트리 5,000 × (고정 46B + 이름 ≤ 300B) 상한 근사. 선언 `cd_size` 초과 시 415 |
+| `DOC_ZIP_MAX_NAME_BYTES` | 1,024 | ZIP 형식 상한 65,535B를 판정용으로 축소. 초과 엔트리 415 |
+| `DOC_ZIP_EOCD_SCAN_BYTES` | 65,557 | EOCD 22B + 주석 최대 65,535B(ZIP 형식 상한). 그 밖은 탐색하지 않음 |
+| `DOC_OLE_MAX_DIR_SECTORS` | 1,024 | 섹터 512B 기준 디렉터리 엔트리 4,096개. 실사용 문서는 수십–수백 엔트리 |
+| `DOC_OLE_MAX_DIR_ENTRIES` | 4,096 | 위와 같음(섹터 4,096B 버전 4에도 엔트리 수로 같은 상한) |
+| `DOC_OLE_MAX_CHAIN_STEPS` | 파일 섹터 수(25 MiB/512B = 51,200) | FAT·DIFAT·미니 FAT 체인 순회 총 단계. 순환·자기 참조는 방문 표식으로 즉시 415 |
+| `DOC_SNIFF_DEADLINE_MS` | 1,000 | 위 단계 상한이 1차 통제(결정적·테스트 가능). 벽시계 상한은 보조 안전판이며 초과 시 415 + ops 로그 `reason=sniff_deadline`(본문·파일명 미기록) |
+
+- 판정기는 업로드 body 버퍼(최대 25 MiB) 위에서 동기로 돌고 추가 할당은 중앙 디렉터리·디렉터리 섹터 크기 이하입니다.
+- ★ 사람 계정 동시 업로드 2건(메모리, 초과 429): 25 MiB 버퍼가 동시에 쌓이는 것을 막습니다. 봇은 §5-2 (7) rate limit을 그대로 씁니다.
+
+**(3) 매크로 감지 → `has_macros`**
+
+- OOXML: 엔트리 이름이 `vbaProject.bin`으로 끝나는 것(대소문자 무시, 예 `word/vbaProject.bin`) 또는 `xl/macrosheets/` 아래 엔트리 → `has_macros = true`.
+- OLE(.doc/.xls/.ppt/.hwp): 디렉터리 어디든 `Macros`·`_VBA_PROJECT_CUR`·`VBA` 저장소 → `true`. ★ HWP는 `Scripts` 저장소(스크립트 매크로)도 `true`, HWPX는 `Scripts/` 아래 엔트리도 `true`.
+- ★ **목록으로 판정할 수 없는 경우 보수 표시:** `.xls`(Excel 4.0 매크로 시트는 `Workbook` 스트림 안)와 `.ppt`(VBA 저장소가 `PowerPoint Document` 스트림 안에 압축 저장)는 목록만으로 매크로 부재를 증명할 수 없으므로 항상 `has_macros = true`로 저장합니다(거짓 양성 수용).
+- PDF는 `has_macros = false`(PDF 능동 콘텐츠는 파싱하지 않음 — 다운로드 전용으로만 완화, THREAT_MODEL TM-ATT-07).
+- 응답 projection에 `has_macros`를 싣고 웹은 첨부 행에 텍스트 표지를 표시합니다(문구는 UI 명세·COPY_GAPS 소관).
+
+**(4) 상한**
+
+| 항목 | 값 | 비고 |
+|---|---|---|
+| 문서 파일당 | **25 MiB = 26,214,400바이트** (상수 `ATTACHMENT_DOC_MAX_BYTES`) | ADR-002 §4-3-4 |
+| 이미지·음성 파일당 | 10 MiB = 10,485,760바이트 (기존 `ATTACHMENT_MAX_BYTES`) | 유지. 판정이 미디어인데 10 MiB 초과면 413 |
+| 메시지당 개수 | 4개(기존 `ATTACHMENTS_PER_MESSAGE_MAX`, 문서·미디어 합산) | 유지 |
+| 업로드 라우트 body 상한 | 26,214,400 | 사람 `POST /api/attachments`, 봇 `POST /api/bot/v1/attachments` 모두 같은 상수. 전역 64 KiB는 유지 |
+| 봇 리스너 | 업로드 라우트만 26,214,400, 그 밖 64 KiB 유지 | 어댑터 업로드·다운로드 상한도 같은 값 |
+| 봇 업로드 rate | 10건/분·100 MiB/일 유지(§5-2 (7)) | 최대 크기 문서 하루 4개. 실사용 후 조정은 확인 필요 |
+
+- 순서: body 상한(413, 저장 0) → 0바이트(400) → 판정(415) → 종류별 상한(미디어 10 MiB 초과 413) → 확장자 일치(415) → 저장.
+
+**(5) 원 파일명 저장·정규화**
+
+- 마이그레이션 ★`0005_attachment_documents.sql`: `attachments.mime` CHECK에 위 9종 MIME 추가, `byte_size` CHECK를 `BETWEEN 1 AND 26214400`으로(미디어 10 MiB는 서비스 검사), 컬럼 `filename text NULL`(기존 미디어 행은 NULL), `has_macros boolean NOT NULL DEFAULT false` 추가, `CHECK ((mime IN (<문서 9종>)) = (filename IS NOT NULL))`, `CHECK (filename IS NULL OR (char_length(filename) BETWEEN 1 AND 200 AND octet_length(filename) <= 255))`.
+- 전달: ★ 요청 헤더 `X-Attachment-Filename`에 UTF-8 퍼센트 인코딩 값(인코딩 후 ≤ 1,024바이트, 초과·잘못된 UTF-8은 400). 쿼리 문자열은 프록시·이력에 남을 수 있어 쓰지 않습니다. 문서인데 헤더가 없으면 400.
+- ★ 정규화(서버, 순서대로): ① 퍼센트 디코드 → 유효 UTF-8 ② NFC ③ 마지막 `/`·`\` 뒤만 남김(basename) ④ C0(U+0000–001F)·DEL·C1(U+0080–009F)·양방향 제어(U+061C, U+200E–200F, U+202A–202E, U+2066–2069) 제거 ⑤ 앞뒤 공백·점 제거 ⑥ 확장자 분리 후 확장자는 판정 형식의 소문자 정규형으로 교체(예 `보고서.PDF` → `보고서.pdf`) ⑦ 줄기(stem)를 code point 경계에서 잘라 전체 ≤ 200 code point·≤ 255 UTF-8 바이트 ⑧ 줄기가 비면 `document`.
+- 파일명은 첨부 projection(`attachments[]`의 `filename`)에만 싣고 로그·계측·push payload에는 넣지 않습니다(B6, TR-SEC-15). 로그 카나리아(`check:log-leak`)에 합성 파일명을 추가합니다.
+
+**(6) 다운로드 응답(문서)**
+
+- `Content-Disposition: attachment; filename="<ASCII 대체>"; filename*=UTF-8''<퍼센트 인코딩>`(RFC 6266 §4.3 순서, RFC 5987 `attr-char` 밖은 모두 `%XX`). ASCII 대체는 정규화 이름에서 출력 가능 ASCII 밖 문자와 `"` `\` `%` `;`를 `_`로 바꾼 값입니다. 헤더 값에 원문 문자열을 그대로 넣지 않습니다(CR·LF 주입 불가).
+- `Content-Type`은 저장된 판정 MIME, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` 유지. **문서는 `inline` 금지**(형식 분기 누락을 테스트로 고정). Range(206)는 §6-1 그대로.
+- SW 우회(`/api/attachments/**`)·지속 캐시 0 유지(FR-CLIENT-04).
+
+**(7) 보존·삭제·백업**
+
+- 문서 보존 **90일**(`ATTACHMENT_RETENTION_DAYS`에 `document: 90` 추가): 경과 시 바이트 삭제, 메타는 「만료된 첨부」 자리표시자(파일명·크기 표시는 UI 명세가 정함). 메시지 삭제 시 같은 트랜잭션에서 즉시 바이트 삭제(§6-1 규칙 재사용). 미결속 1시간 삭제 유지.
+- 백업·복원 드릴(FR-OPS-02) 측정 항목(1b 레인, 격리 테스트 DB·합성 데이터만): ① 합성 문서 0 / 0.5 / 1 GiB 적재 시 `pg_dump -Fc` 시간·덤프 크기 ② `pg_restore` 시간 ③ 드릴 대조 항목에 첨부 메타 수·`attachment_blobs` 바이트 합·sha256 표본 일치 추가 ④ 결과는 기록만(합격 임계는 확인 필요). 현재 드릴 합성 시드는 첨부 행이 0입니다.
+
+**(8) 방향과 Hermes 경계**
+
+- **봇 → 사람:** Hermes가 어댑터 `send_document(chat_id, file_path, caption, file_name, reply_to, metadata)`를 호출하면 어댑터는 기존 업로드 경로(`O_NOFOLLOW`·일반 파일·1B–25 MiB 읽기 → `POST /api/bot/v1/attachments` + `X-Attachment-Filename`(= `file_name` 또는 `file_path` basename) → 메시지 생성 `attachment_ids`)를 씁니다. 415·413·429는 텍스트 대체 + 실패를 Hermes 결과(`success=False` 또는 `warnings`)로 올립니다(1a와 같은 원칙). 본문은 caption, 없으면 정규화 파일명(TRD §2 본문 필수 규칙).
+- **사람 → 봇:** 웹 업로드 → 메시지 결속 → 어댑터가 owner 작성 메시지(TM-BOT-04 allowlist)의 문서 첨부만 `GET /api/bot/v1/attachments/{id}`로 받습니다(상한 25 MiB, 만료·삭제 첨부는 건너뜀) → Hermes 문서 캐시에 저장 → 세션에는 파일 경로 안내만 전달합니다.
+- **어댑터 문서 캐시 경계:** Hermes 문서 캐시 디렉터리(0700)만 사용하고 어댑터 자체 디렉터리를 만들지 않습니다. 파일 이름은 Hermes가 붙이는 무작위 접두사 + 정규화 파일명이며 서버가 정한 확장자를 씁니다. 삭제 시점은 Hermes 미디어 캐시 정리(약 24시간 + 정리 주기)이고, ★ 어댑터는 같은 메시지가 삭제(`message.deleted`)되면 해당 캐시 파일을 즉시 지웁니다. 캐시 파일은 서버 90일 보존보다 짧아야 합니다.
+- **Hermes 측 처리:** 받은 문서는 텍스트 추출만 하고 Office 앱 실행·매크로 실행·형식 변환을 하지 않습니다. 추출 입력 상한 = 25 MiB. HWP/HWPX 추출기는 현재 없음(확인 필요 — 경로 안내만). 추출 텍스트는 신뢰할 수 없는 입력으로 다룹니다(THREAT_MODEL TM-ATT-09).
+
 ### 6-2. Web Push (R3.3, ADR-001 §3-i, PRD FR-CLIENT-05)
 
 - 범위: 사람 계정의 구독 기기에 ① Jarvis DM의 새 최상위 메시지·자기 스레드 답글 ② 자기 멘션을 보냅니다. 자기 메시지·이미 읽은 대화는 보내지 않습니다. 같은 대화 알림은 60초 안에 1건으로 묶습니다(`Topic` 헤더로 교체).
@@ -283,6 +370,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 | R3.2 (Jarvis 보안 결정) | 2026-11-07 | 위협 모델 §6 공백 해소: §5-1 S1–S13, TR-SEC-11·12, 초대 폐기 route |
 | R3.3 (ADR-001) | 2026-11-08 | Hermes 연동 P0 승격(영환님 결정, ADR-001 D-1–D-7 ★ 채택): `users.kind`·`bot_tokens`·`attachments`·`attachment_blobs`·`push_subscriptions`, 봇 리스너(§5-2), 첨부(§6-1)·Web Push(§6-2) 라우트, `author_kind`·`attachments` projection, 413/415, TR-SEC-13–15, §1·§6 「파일·Push MVP 제외」 문장 정정, 계측 2종 |
 | R3.4 (BOT_CHANNEL_SPEC) | 2026-11-10 | 봇 채널 참여 P1 FR(영환님 결정, BOT_CHANNEL_SPEC §10-1 Q1–Q8 ★ 채택): §3 봇 추가·제거 라우트, §4 `membership.changed`, §5-2 (5) 공개 채널·수치 상한 없음·봇 읽기 `joined_seq` 이후, (6) 봇 `/me` 대화 종류·표시 이름 |
+| R3.5 (ADR-002 §4) | 2026-11-13 | 문서 첨부 계약 §6-1-1 신설(영환님 결정 §4-3 5개 불변): 허용 형식 9종·ZIP/OLE 목록 판정·단일 일치·판정기 자원 상한·`has_macros`·확장자 일치 415·25 MiB 상수·업로드/봇 리스너 상한·파일명 정규화·`attachment` 다운로드·90일·드릴 측정 항목·Hermes 경계. §2 `attachments` 행에 `0005` 지시. 구현 전 계약(1b 레인) |
 
 ## 리뷰 반영 기록
 
