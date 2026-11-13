@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
+import types
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +15,9 @@ import pytest
 from aiohttp import web
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Hermes 진입 부트스트랩(`gateway.run` 등이 import)은 의존성 준비·프로세스 재실행(execv)을 한다 — 테스트 프로세스에서는
+# 절대 돌지 않게 빈 모듈로 막는다(Hermes 본체는 수정하지 않는다).
+sys.modules.setdefault("hermes_bootstrap", types.ModuleType("hermes_bootstrap"))
 
 FIXTURE_BEARER = "omsb_fixture-1"  # 가짜 서버 전용 fixture 값(실제 토큰 아님)
 TOKEN = FIXTURE_BEARER
@@ -293,6 +298,36 @@ async def server():
     await srv.start()
     yield srv
     await srv.stop()
+
+
+@pytest.fixture
+def thread_server():
+    """sync 테스트용 가짜 서버: 별도 스레드의 루프에서 돈다(Hermes cron `asyncio.run` 경로를 루프 없는 테스트에서 부르기 위해)."""
+    loop = asyncio.new_event_loop()
+    runner = threading.Thread(target=loop.run_forever, name="fake-bot-server", daemon=True)
+    runner.start()
+    srv = FakeBotServer()
+    asyncio.run_coroutine_threadsafe(srv.start(), loop).result(5)
+    yield srv
+    asyncio.run_coroutine_threadsafe(srv.stop(), loop).result(5)
+    loop.call_soon_threadsafe(loop.stop)
+    runner.join(5)
+    loop.close()
+
+
+class FakeClock:
+    """단조 시계 대역. 가짜 sleep이 시계를 앞당긴다(실제 대기 0)."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, delay: float) -> None:
+        self.sleeps.append(delay)
+        self.now += delay
 
 
 @pytest.fixture
