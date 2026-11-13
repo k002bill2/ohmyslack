@@ -19,6 +19,8 @@ export interface BotRateLimiter {
   takeUpload(tokenId: string, bytes: number): RateDecision;
   /** 바이트(100 MiB/일)만 검사·기록한다. 길이를 미리 모르는(chunked) 업로드가 body를 받은 뒤 쓴다. 거부는 기록하지 않는다. */
   takeUploadBytes(tokenId: string, bytes: number): RateDecision;
+  /** 바이트(100 MiB/일)에 `bytes`만큼 잔여가 있는지 판정만 한다(기록 없음). chunked 업로드가 body를 받기 전에 쓴다. */
+  checkUploadBytes(tokenId: string, bytes: number): RateDecision;
 }
 
 export function createBotRateLimiter(clock: () => number = Date.now): BotRateLimiter {
@@ -57,6 +59,9 @@ export function createBotRateLimiter(clock: () => number = Date.now): BotRateLim
       if (!sized.decision.ok) return sized.decision;
       byteWindows.set(tokenId, [...sized.used, { at: now, bytes }]);
       return { ok: true };
+    },
+    checkUploadBytes(tokenId, bytes) {
+      return byteDecision(tokenId, bytes, clock()).decision;
     },
     take(tokenId, kind) {
       const now = clock();

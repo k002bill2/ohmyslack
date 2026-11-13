@@ -105,8 +105,10 @@ function rejectRate(reply: FastifyReply, decision: RateDecision): void {
 /**
  * 봇 업로드 판정(TRD §5-2 7항, SR-D-01). `admit`(onRequest)은 25 MiB body를 버퍼에 쌓기 **전**에 토큰 → 대화 write 접근 →
  * 업로드 상한(건수 + 선언 길이 바이트)을 판정한다(사람 경로 concurrentUploadGuard와 같은 위치). 미인증·비참여·상한 초과는
- * body를 기다리지 않고 401·404·429. 길이를 모르는 chunked 업로드는 건수만 먼저 기록하고 바이트는 `settle`(preHandler)이
- * 받은 길이로 판정한다. `settle`은 B2 레지스트리 표식 가드다(토큰 재조회 없음).
+ * body를 기다리지 않고 401·404·429. 길이를 모르는 chunked 업로드는 일일 바이트 잔여가 없으면 바로 429, 있으면 건수만 먼저
+ * 기록하고 바이트는 `settle`(preHandler)이 받은 길이로 판정한다.
+ * `settle`은 body 수신 뒤 토큰(폐기·봇 비활성화)과 대화 접근(채널 제거)을 **다시** 판정한다 — body를 기다리는 사이 권한이
+ * 회수되면 같은 401·404로 거부하고 저장 0. 이미 기록한 건수·선언 바이트는 되돌리지 않는다(413·415 거부와 같은 규칙).
  */
 function botUploadGuards(deps: BotRouteDeps, token: preHandlerAsyncHookHandler): { admit: onRequestAsyncHookHandler; settle: preHandlerAsyncHookHandler } {
   const access = accessGuard(deps, 'query', 'write');
@@ -116,13 +118,18 @@ function botUploadGuards(deps: BotRouteDeps, token: preHandlerAsyncHookHandler):
     await access.call(request.server, request, reply);
     const bytes = declaredUploadBytes(request);
     if (bytes === 'invalid') return;
-    if (bytes === undefined) unsized.add(request);
-    rejectRate(reply, deps.limiter.takeUpload(requireBot(request).tokenId, bytes ?? 0));
+    const tokenId = requireBot(request).tokenId;
+    if (bytes === undefined) {
+      unsized.add(request);
+      rejectRate(reply, deps.limiter.checkUploadBytes(tokenId, 1));
+    }
+    rejectRate(reply, deps.limiter.takeUpload(tokenId, bytes ?? 0));
   };
   const settle = markBotGuard(async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    const bot = requireBot(request);
+    await token.call(request.server, request, reply);
+    await access.call(request.server, request, reply);
     if (!unsized.has(request)) return;
-    rejectRate(reply, deps.limiter.takeUploadBytes(bot.tokenId, Buffer.isBuffer(request.body) ? request.body.length : 0));
+    rejectRate(reply, deps.limiter.takeUploadBytes(requireBot(request).tokenId, Buffer.isBuffer(request.body) ? request.body.length : 0));
   });
   return { admit, settle };
 }

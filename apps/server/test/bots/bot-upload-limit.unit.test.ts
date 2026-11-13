@@ -32,4 +32,12 @@ describe('봇 업로드 상한', () => {
     expect(limiter.takeUpload('t1', 1).ok).toBe(false);
     expect(limiter.takeUpload('t1', 0).ok).toBe(true);
   });
+
+  it('바이트 잔여 판정(checkUploadBytes)은 기록하지 않고 일일 잔여가 없으면 거부한다', () => {
+    const limiter = createBotRateLimiter(() => 0);
+    expect(limiter.checkUploadBytes('t1', BOT_UPLOAD_BYTES_PER_DAY).ok).toBe(true);
+    expect(limiter.checkUploadBytes('t1', BOT_UPLOAD_BYTES_PER_DAY).ok).toBe(true);
+    expect(limiter.takeUploadBytes('t1', BOT_UPLOAD_BYTES_PER_DAY).ok).toBe(true);
+    expect(limiter.checkUploadBytes('t1', 1)).toEqual({ ok: false, retryAfterSeconds: 24 * 60 * 60 });
+  });
 });
