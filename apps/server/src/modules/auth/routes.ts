@@ -76,7 +76,8 @@ export function registerAuthRoutes(app: FastifyInstance, service: AuthService): 
     const auth = requireAuth(request);
     const params = sessionIdParams.safeParse(request.params);
     if (!params.success) throw new HttpError(400, 'invalid_request');
-    const result = await service.revokeOwnSession(auth, params.data.id);
+    // UUID는 대소문자 무관(PostgreSQL uuid 비교도 그렇다) — 파싱 직후 소문자로 정규화해 현재 세션 판정과 조회가 같은 값을 쓴다.
+    const result = await service.revokeOwnSession(auth, params.data.id.toLowerCase());
     if (result === 'current') throw new HttpError(400, 'invalid_request');
     if (result === 'not_found') throw new HttpError(404, 'not_found');
     return reply.code(204).send();

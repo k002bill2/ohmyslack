@@ -218,4 +218,36 @@ describe('기기 세션 원격 로그아웃', () => {
     expect(await sessionRow(targetId)).toMatchObject({ revoked_at: null });
     expect((await req(app, 'GET', '/api/me', target)).statusCode).toBe(200);
   });
+
+  it('세션 UUID의 대소문자 변형도 소문자와 같은 판정이다(현재 세션 400·세션과 push 구독 유지, 본인 204, 남의 세션 404)', async () => {
+    const { app, ids } = ctx.conv;
+    const actor = await loginAs(app, 'a@example.test', MAC_CHROME_UA);
+    const target = await loginAs(app, 'a@example.test', IPHONE_UA);
+    const other = await loginAs(app, 'b@example.test', MAC_CHROME_UA);
+    const [actorId, targetId, otherId] = await Promise.all([sessionIdOf(actor.token), sessionIdOf(target.token), sessionIdOf(other.token)]);
+    await addPushSubscription(ids.a, actorId);
+    // 첫 16진 문자만 대문자 — 원문·전체 대문자와 모두 다른 혼합 변형(무작위 위치 의존 없음).
+    const mixed = (id: string): string => id.replace(/[a-f]/, (c) => c.toUpperCase());
+
+    // 현재 세션: 대문자·혼합 대소문자 모두 400, 세션·push 구독 유지.
+    for (const variant of [actorId.toUpperCase(), mixed(actorId)]) {
+      expect(variant).not.toBe(actorId);
+      expect((await req(app, 'DELETE', `/api/sessions/${variant}`, actor)).statusCode).toBe(400);
+    }
+    expect(await sessionRow(actorId)).toMatchObject({ revoked_at: null });
+    expect((await req(app, 'GET', '/api/me', actor)).statusCode).toBe(200);
+    expect(await subscriptionCount(actorId)).toBe(1);
+
+    // 남의 세션 대문자: 소문자 요청과 같은 404(상태·본문·헤더), 남의 세션 무변경.
+    const foreignUpper = await req(app, 'DELETE', `/api/sessions/${otherId.toUpperCase()}`, actor);
+    const foreignLower = await req(app, 'DELETE', `/api/sessions/${otherId}`, actor);
+    expect(foreignUpper.statusCode).toBe(404);
+    expect(shape(foreignUpper)).toEqual(shape(foreignLower));
+    expect((await req(app, 'GET', '/api/me', other)).statusCode).toBe(200);
+
+    // 본인 다른 세션 대문자: 204 폐기.
+    expect((await req(app, 'DELETE', `/api/sessions/${targetId.toUpperCase()}`, actor)).statusCode).toBe(204);
+    expect((await req(app, 'GET', '/api/me', target)).statusCode).toBe(401);
+    expect((await req(app, 'GET', '/api/me', actor)).statusCode).toBe(200);
+  });
 });
