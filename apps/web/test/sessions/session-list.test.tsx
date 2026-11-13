@@ -105,7 +105,7 @@ const WIRE = [
   { id: S_PHONE, device_label: null, created_at: '2026-11-01T00:00:00.000Z', last_seen_at: '2026-11-10T01:00:00.000Z', current: false },
 ];
 
-describe('UI-AC-12 진입·라우트·제목 포커스', () => {
+describe('FR-AUTH-04 UI-AC-12 진입·라우트·제목 포커스', () => {
   it('사이드바 「로그인한 기기」(member 역할에도 보임) → /settings/sessions, 제목에 포커스', async () => {
     installViewport(1280);
     const server = liveServer(WIRE);
@@ -128,7 +128,7 @@ describe('UI-AC-12 진입·라우트·제목 포커스', () => {
   });
 });
 
-describe('UI-AC-13 로딩·오류·시간 초과', () => {
+describe('FR-AUTH-04 UI-AC-13 로딩·오류·시간 초과', () => {
   it('로딩 중 목록 aria-busy, 응답 후 해제', async () => {
     const d = deferred<ActionResult<readonly DeviceSession[]>>();
     renderList({ load: () => d.promise });
@@ -159,7 +159,7 @@ describe('UI-AC-13 로딩·오류·시간 초과', () => {
   });
 });
 
-describe('UI-AC-14 정렬·이 기기 표지·대비', () => {
+describe('FR-AUTH-04 UI-AC-14 정렬·이 기기 표지·대비', () => {
   it('이 기기 맨 위 + 「이 기기」 텍스트 표지, 나머지는 마지막 사용 내림차순, 이 기기 행에는 기기 로그아웃 버튼 없음', async () => {
     renderList();
     await settle();
@@ -202,7 +202,7 @@ describe('UI-AC-14 정렬·이 기기 표지·대비', () => {
   });
 });
 
-describe('UI-AC-15 라벨 없음', () => {
+describe('FR-AUTH-04 UI-AC-15 라벨 없음', () => {
   it('device_label null → 「알 수 없는 기기」, 같은 이름이 둘이면 버튼 이름에 마지막 사용 덧붙임', async () => {
     renderList({
       sessions: [
@@ -231,7 +231,7 @@ describe('UI-AC-15 라벨 없음', () => {
   });
 });
 
-describe('UI-AC-16 확인 Dialog·busy', () => {
+describe('FR-AUTH-04 UI-AC-16 확인 Dialog·busy', () => {
   it('「로그아웃」 → Dialog(G-69), 요청 중 Esc·닫기·취소로 닫히지 않고 aria-busy', async () => {
     const d = deferred<ActionResult<null>>();
     const { revoke } = renderList({ revoke: () => d.promise });
@@ -267,7 +267,7 @@ describe('UI-AC-16 확인 Dialog·busy', () => {
   });
 });
 
-describe('UI-AC-17 성공: 행 제거·알림·포커스', () => {
+describe('FR-AUTH-04 UI-AC-17 성공: 행 제거·알림·포커스', () => {
   const confirmOn = async (name: string) => {
     const trigger = screen.getByRole('button', { name });
     trigger.focus();
@@ -306,7 +306,7 @@ describe('UI-AC-17 성공: 행 제거·알림·포커스', () => {
   });
 });
 
-describe('UI-AC-18 실패', () => {
+describe('FR-AUTH-04 UI-AC-18 실패', () => {
   it.each([
     [{ ok: false, status: 'network', timedOut: true } as const, ERROR_COPY.timeout],
     [{ ok: false, status: 500 } as const, ERROR_COPY.server],
@@ -350,7 +350,7 @@ describe('UI-AC-18 실패', () => {
   });
 });
 
-describe('UI-AC-20 이 기기에서 로그아웃', () => {
+describe('FR-AUTH-04 UI-AC-20 이 기기에서 로그아웃', () => {
   it('확인 없이 바로 호출', async () => {
     const { logout, revoke } = renderList();
     await settle();
