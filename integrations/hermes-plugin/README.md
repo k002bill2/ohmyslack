@@ -59,8 +59,17 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
   - `edit_message`는 PATCH로 처리합니다. 스트리밍은 Hermes 설정을 따르며 기본은 꺼짐입니다
   - 첨부(W-20 H2, ADR-001 §3-g): `send_voice`(mp3)·`send_image_file`(png·jpeg·webp, 파일당 10 MiB)은 `POST /attachments` 업로드 후 `attachment_ids`로 메시지를 만듭니다(본문 = caption, 없으면 파일명). 허용 밖 형식·10 MiB 초과·심볼릭 링크·디렉터리·없는 경로·업로드 실패는 텍스트 대체 안내로 보냅니다. 업로드 뒤 메시지 생성이 실패하면 대체 게시하지 않고(중복 방지) 미결속 첨부는 서버가 1시간 뒤 정리합니다. 문서·영상은 텍스트 대체(FR-OPS-09 P1). 수신은 사람 메시지의 이미지 첨부를 봇 토큰으로 받아 Hermes 이미지 캐시에 두고 이벤트 미디어로 넘깁니다(실패 시 텍스트만). 오디오 수신은 아직 넘기지 않습니다. 로그에는 경로·본문·캡션을 남기지 않습니다(첨부 ID만)
 - **standalone sender**: 게이트웨이 밖에서 도는 cron이 같은 HTTP 클라이언트로 홈 채널에 **최상위** 메시지를 보냅니다
-  - 첨부(ADR-002 1a): `media_files`의 mp3·png·jpeg·webp는 라이브 경로와 같은 판정·상한(파일당 10 MiB, 메시지당 4개)으로 업로드해 텍스트의 첫 청크에 결속합니다(본문이 비면 첫 파일명). 모든 첨부가 결속되면 `media_delivered: True`를 함께 돌려줍니다
-  - 지원 밖 형식(문서·영상 등)·없는 파일·상한 초과·업로드 실패·4개 초과(지원 형식 앞 4개만 시도)·시간 예산 초과는 업로드하지 않고 파일마다 `warnings`에 `"<파일명>: <사유>"` 한 줄(`unsupported_type`·`not_found`·`too_large`·`rejected`·`upload_failed`·`too_many`·`budget_exceeded`)을 싣습니다. 전송 전체(`/me`·파일 읽기·업로드·텍스트 게시와 재시도)는 시작부터 50초(`STANDALONE_TOTAL_DEADLINE_S`, Hermes 기본 상한 60초 − 여유 10초) 안에서만 하고, 업로드는 35초(`STANDALONE_UPLOAD_BUDGET_S`)와 "남은 시간 − 텍스트 몫 10초" 중 작은 값만 씁니다. 남은 시간보다 긴 재시도 대기(429 `Retry-After` 등)는 기다리지 않고, 텍스트를 deadline 안에 못 보내면 `deadline_exceeded` 오류(모인 첨부 사유 포함)로 끝냅니다. 텍스트는 그대로 보내고 `success`는 텍스트 전송 결과를 따릅니다(텍스트 실패는 `send_error`). Hermes cron은 `warnings`를 전달 오류로 올립니다
+  - **단일 호출 계약**: 플랫폼을 `max_message_length=0`으로 등록합니다. 그래서 Hermes는 원문을 쪼개지 않고 원문 전체와 첨부 전체를 sender **한 번** 호출에 넘깁니다(Hermes `tools/send_message_tool.py` `_platform_max_length`, 이 등록값을 읽는 유일한 곳). `/me`도 한 번, deadline도 하나입니다. 4,000 code point 청크 분할(`(i/n)` 표기 포함)은 어댑터 안에서 합니다. 라이브 어댑터 경로도 어댑터가 같은 함수로 나누므로 게시 형태는 같습니다
+  - 첨부(ADR-002 1a): `media_files`의 mp3·png·jpeg·webp는 라이브 경로와 같은 판정·상한(파일당 10 MiB, 메시지당 4개)으로 업로드해 텍스트의 **첫 청크**에 결속합니다(본문이 비면 첫 파일명). 모든 첨부가 결속되면 `media_delivered: True`를 함께 돌려줍니다. 라이브 경로(`send_message` → 텍스트 뒤 별도 미디어 메시지)와 첨부 위치가 다른 것은 알려진 차이입니다
+  - 파일 검사·읽기는 daemon 스레드 1개에서 한 번만 합니다(`O_NOFOLLOW` open → `fstat`으로 사유 판정, 이벤트 루프 스레드의 파일 시스템 호출 없음). 멈춘 파일 시스템 읽기가 있어도 Hermes `asyncio.run` 종료가 그 스레드를 기다리지 않습니다
+  - 지원 밖 형식(문서·영상 등)·없는 파일·상한 초과·업로드 실패·4개 초과(지원 형식 앞 4개만 시도)·시간 예산 초과는 업로드하지 않고 파일마다 `warnings`에 `"<파일명>: <사유>"` 한 줄(`unsupported_type`·`not_found`·`too_large`·`rejected`·`upload_failed`·`too_many`·`budget_exceeded`)을 싣습니다. 텍스트는 그대로 보냅니다
+  - 시간: 전송 전체(`/me`·파일 읽기·업로드·청크 게시와 재시도)는 시작부터 **25초**(`STANDALONE_TOTAL_DEADLINE_S`) 안에서만 하고, 업로드는 15초(`STANDALONE_UPLOAD_BUDGET_S`)와 "남은 시간 − 텍스트 몫 8초"(`STANDALONE_TEXT_RESERVE_S`) 중 작은 값만 씁니다. 남은 시간보다 긴 재시도 대기(429 `Retry-After` 등)는 기다리지 않습니다. 25초는 Hermes 폴백 분기(실행 중인 루프 안에서 불릴 때 30초)보다 짧게 잡은 값입니다. **Hermes `cron.standalone_send_timeout_seconds`가 기본 60초라고 가정합니다** — 25초 밑으로 낮추면 Hermes 취소가 먼저 와서 아래 보고가 사라집니다
+  - 결과 규칙: 청크를 하나도 못 올리면 `send_error`(모인 첨부 사유 포함, `deadline_exceeded`·`HTTP <status>` 등)입니다. 아무것도 나가지 않았으므로 Hermes 재전달 큐가 안전합니다. 청크 k개(≥ 1)를 올린 뒤 실패하거나 deadline이 지나면 `success: True` + `warnings`의 `text: partial_delivery <k>/<n>`입니다. 오류로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가 중복되므로, **중복 대신 보이는 꼬리 유실**을 택합니다(첫 청크에 첨부가 결속되므로 첨부는 전달됨). Hermes cron은 `warnings`를 전달 오류(`delivery warning: …`)로 올립니다
+  - 남은 위험(플러그인만으로는 못 막음, Hermes 본체 변경 제안은 별건):
+    - A-1: Hermes 바깥 상한을 25초 밑으로 설정하면 어댑터 deadline보다 먼저 취소됩니다. 이때 warnings·부분 보고가 사라지고, 부분 게시 상태면 재전달 큐 중복이 생길 수 있습니다
+    - A-2: 재전달 큐는 부분 게시를 모릅니다. 정상 반환은 위 규칙으로 피하지만, 취소 경로(바깥 타임아웃·프로세스 종료)에서는 보고할 기회가 없습니다
+    - A-3: 결정적 멱등 키를 만들 수 없습니다. Hermes가 실행 단위 ID를 넘기지 않아, 원문 해시 키는 같은 문구를 반복하는 cron을 조용히 삼킵니다. 멱등 범위는 "게시 호출 1회 안의 재시도"뿐입니다
+    - A-4: 멈춘 파일 시스템 읽기 스레드 자체는 죽일 수 없습니다(호출당 최대 4개, fd 1개씩 점유하는 상한 있는 누수)
   - `thread_id`·`force_document`는 쓰지 않습니다. 대상이 DM이 아니면 업로드도 하지 않고 거부합니다
 
 ## Hermes 확인 항목 (ADR REPORT §8 3–6)
