@@ -417,3 +417,37 @@ export const AUTHOR_NAME_COPY = {
   inactiveSuffix: INACTIVE_SUFFIX,
   unknown: '알 수 없는 사용자',
 } as const;
+
+/**
+ * CMP-22 SessionList 「로그인한 기기」(W-30, UI_STATES §2-14, COPY_GAPS G-63–G-72 ★ Designer 초안).
+ * 목록 오류·시간 초과·대상 없음은 `ERROR_COPY` 재사용(G-72·G-70), 「취소」는 `CANCEL_LABEL`.
+ */
+const SESSION_LIST_TITLE = '로그인한 기기';
+export const SESSION_LIST_COPY = {
+  /** G-63: 진입 버튼 이름 = 화면 제목 = 목록 `aria-label`. */
+  title: SESSION_LIST_TITLE,
+  /** G-64 이 기기 표지. */
+  thisDevice: '이 기기',
+  /** G-65 라벨 없음. */
+  unknownDevice: '알 수 없는 기기',
+  /** G-66 2줄째(`{시각}`은 오늘·어제 + 시각 / 그 전은 날짜만). */
+  lastUsed: (when: string): string => `마지막 사용 ${when}`,
+  /** G-65 같은 이름 행이 둘 이상이면 접근 이름 끝에 덧붙인다. */
+  lastUsedSuffix: (when: string): string => `, 마지막 사용 ${when}`,
+  /** G-67 다른 기기 행 버튼(보이는 글자)·접근 이름. */
+  logout: '로그아웃',
+  logoutName: (label: string): string => `${label} 로그아웃`,
+  /** G-67 이 기기 행 버튼(확인 없이 기존 로그아웃). */
+  logoutThisDevice: '이 기기에서 로그아웃',
+  /** G-68 다른 기기 없음. */
+  noOtherDevices: '다른 기기에서 로그인하지 않았습니다',
+  /** G-69 확인 Dialog. */
+  confirmTitle: '기기 로그아웃',
+  confirmBody: (label: string): string =>
+    `${label} 기기가 5초 안에 로그아웃되고 그 기기의 알림도 꺼집니다. 그 기기에서 다시 쓰려면 다시 로그인해야 합니다.`,
+  confirm: '로그아웃',
+  /** G-70 실패 첫 문장(뒤에 원인 1문장). */
+  failed: '로그아웃하지 못했습니다.',
+  /** G-71 완료 알림(StatusRegion). */
+  done: (label: string): string => `${label} 기기를 로그아웃했습니다`,
+} as const;
