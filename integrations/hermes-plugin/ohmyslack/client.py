@@ -183,13 +183,17 @@ class BotClient:
         return await self._with_retry(lambda: self.request("POST", path, json=payload), "send", remaining=remaining)
 
     async def upload_attachment(self, conversation_id: str, data: bytes, mime: str, *,
+                                filename: Optional[str] = None,
                                 remaining: Optional[Callable[[], float]] = None) -> dict:
         """원시 바이트 업로드 → 미결속 첨부(`attachment_id`). 재시도는 post_message와 같은 정책.
 
         업로드에는 멱등 키가 없어, 응답 유실 뒤 재시도하면 미결속 첨부가 하나 더 생길 수 있다 — 결속되지 않은 것은
         서버가 1시간 뒤 정리한다(ATTACHMENT_UNBOUND_TTL_MS). 메시지는 하나만 만들어진다.
         `remaining`은 `_with_retry`와 같다(standalone 시간 예산용, 기본은 기존 동작).
+        `filename`은 자리만 둔다(W-27 문서 업로드가 `X-Attachment-Filename`으로 채울 예정, TRD §6-1-1 (5)) — 지금은
+        보내지 않는다(미디어는 헤더가 필요 없다).
         """
+        del filename  # 아직 쓰지 않는다(위 참조)
         return await self._with_retry(
             lambda: self.request("POST", "/attachments", params={"conversation_id": conversation_id},
                                  data=data, content_type=mime), "upload", remaining=remaining)

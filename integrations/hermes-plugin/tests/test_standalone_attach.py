@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import CHANNEL_ID, DM_ID, TOKEN
+from conftest import CHANNEL_ID, DM_ID, TOKEN, FakeClock
 
 MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" * 64
 PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
@@ -147,21 +147,6 @@ async def test_non_dm_target_refused_before_upload(server, tmp_path):
 
 # ---- Codex r1 P1: Hermes 전체 상한(기본 60초) 안에서 텍스트·warnings가 반드시 나가야 한다 ----
 
-class FakeClock:
-    """단조 시계 대역. 가짜 sleep이 시계를 앞당긴다(실제 대기 0)."""
-
-    def __init__(self) -> None:
-        self.now = 1000.0
-        self.sleeps: list[float] = []
-
-    def __call__(self) -> float:
-        return self.now
-
-    async def sleep(self, delay: float) -> None:
-        self.sleeps.append(delay)
-        self.now += delay
-
-
 async def _send_clocked(server, message, media_files, clock, monkeypatch, **kwargs):
     import ohmyslack.adapter as adapter_mod
     monkeypatch.setattr(adapter_mod, "BotClient", functools.partial(adapter_mod.BotClient, sleep=clock.sleep))
@@ -256,10 +241,10 @@ async def test_slow_me_shrinks_upload_budget_so_text_lands_before_deadline(serve
     from ohmyslack.adapter import STANDALONE_TOTAL_DEADLINE_S
     clock = FakeClock()
     start = clock.now
-    _slow_me(monkeypatch, clock, 26.0)
+    _slow_me(monkeypatch, clock, 12.0)
     path = _write(tmp_path, "briefing.mp3", MP3)
     server.upload_status = [429]
-    server.upload_retry_after = "30"  # 업로드 예산(35초)보다 짧지만 deadline 남은 몫(24−10=14초)보다 길다
+    server.upload_retry_after = "10"  # 업로드 예산(15초)보다 짧지만 deadline 남은 몫(25−12−8=5초)보다 길다
     out = await _send_clocked(server, "아침 브리핑", [(path, True)], clock, monkeypatch)
     assert out["success"] is True
     assert out["warnings"] == ["briefing.mp3: upload_failed"]
@@ -291,7 +276,7 @@ async def test_slow_file_read_is_cut_at_budget_and_text_still_sent(server, tmp_p
 
     def stuck_read(path, *args):
         release.wait(2.0)  # 파일 시스템이 멈춘 상황(테스트 끝에 풀어 스레드를 정리)
-        return None
+        return None, "rejected"
     monkeypatch.setattr(adapter_mod, "read_attachment_file", stuck_read)
     path = _write(tmp_path, "briefing.mp3", MP3)
     began = time.monotonic()

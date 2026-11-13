@@ -141,7 +141,7 @@ def test_register_smoke_with_fake_ctx():
     assert kw["name"] == "ohmyslack"
     assert kw["adapter_factory"] is OhmySlackAdapter
     assert kw["cron_deliver_env_var"] == "OHMYSLACK_HOME_CHANNEL"
-    assert kw["max_message_length"] == 4000
+    assert kw["max_message_length"] == 0  # 단일 호출 계약: Hermes 외부 청킹 끔(길이는 어댑터 내부 MAX_MESSAGE_LENGTH)
     assert kw["standalone_sender_fn"] is standalone_send
     assert kw["allowed_users_env"] == "OHMYSLACK_ALLOWED_USERS"
     assert "allow_all_env" not in kw

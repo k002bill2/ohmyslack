@@ -18,6 +18,7 @@ import os
 import random
 import re
 import stat
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -77,28 +78,38 @@ def _epoch(iso: Any) -> Optional[float]:
         return None
 
 
-def read_attachment_file(path: Any, allowed: dict[str, str],
-                         declared_mime: Optional[str] = None) -> Optional[tuple[bytes, str, str]]:
-    """Hermes가 넘긴 경로를 첨부로 읽는다 → (바이트, MIME, 파일명). 허용 밖·상한 초과·링크·비정규 파일은 None.
+AttachmentRead = tuple[Optional[tuple[bytes, str, str]], str]
 
+
+def read_attachment_file(path: Any, allowed: dict[str, str],
+                         declared_mime: Optional[str] = None) -> AttachmentRead:
+    """Hermes가 넘긴 경로를 첨부로 읽는다 → ((바이트, MIME, 파일명) | None, 거절 사유).
+
+    사유(warnings enum): 성공 "", 없는 파일 `not_found`, 상한 초과 `too_large`, 그 외(형식·링크·비정규·빈 파일) `rejected`.
     심볼릭 링크는 따라가지 않고(O_NOFOLLOW), 연 fd를 fstat해 정규 파일·크기를 확인한 뒤 상한+1바이트까지만 읽는다
-    (검사와 읽기 사이 파일 교체·성장도 막는다). base `validate_media_delivery_path`를 거치지 않는 호출 경로의 이중 방어.
+    (검사와 읽기 사이 파일 교체·성장도 막는다). 사유도 같은 fd의 fstat으로 정한다 — 경로를 다시 조회(lstat)하지 않는다.
+    base `validate_media_delivery_path`를 거치지 않는 호출 경로의 이중 방어. 파일 시스템 호출이 있으므로
+    루프 스레드에서 부르지 않는다(`_read_off_loop`).
     """
     try:
         name = os.path.basename(os.fspath(path))
     except TypeError:
-        return None
+        return None, "rejected"
     mime = allowed.get(os.path.splitext(name)[1].lower())
     if mime is None or (declared_mime and declared_mime.lower() != mime):
-        return None
+        return None, "rejected"
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except FileNotFoundError:
+        return None, "not_found"
     except (OSError, ValueError):
-        return None
+        return None, "rejected"
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > ATTACHMENT_MAX_BYTES or info.st_size == 0:
-            return None
+        if stat.S_ISREG(info.st_mode) and info.st_size > ATTACHMENT_MAX_BYTES:
+            return None, "too_large"
+        if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+            return None, "rejected"
         chunks: list[bytes] = []
         remaining = ATTACHMENT_MAX_BYTES + 1
         while remaining > 0:
@@ -109,12 +120,44 @@ def read_attachment_file(path: Any, allowed: dict[str, str],
             remaining -= len(chunk)
         data = b"".join(chunks)
     except OSError:
-        return None
+        return None, "rejected"
     finally:
         os.close(fd)
-    if not data or len(data) > ATTACHMENT_MAX_BYTES:
-        return None
-    return data, mime, name
+    if len(data) > ATTACHMENT_MAX_BYTES:
+        return None, "too_large"
+    if not data:
+        return None, "rejected"
+    return (data, mime, name), ""
+
+
+async def _read_off_loop(path: Any, allowed: dict[str, str], declared_mime: Optional[str] = None) -> AttachmentRead:
+    """`read_attachment_file`을 daemon 스레드 1개에서 실행하고 결과를 기다린다(루프 스레드 파일 시스템 호출 0).
+
+    기본 executor(`asyncio.to_thread`)를 쓰지 않는다: `asyncio.run` 종료가 executor 스레드를 기한 없이 join하므로
+    멈춘 파일 시스템 읽기가 Hermes cron 반환을 붙잡는다. daemon 스레드는 join 대상이 아니다 — 멈춘 스레드는 남지만
+    호출당 최대 ATTACHMENTS_PER_MESSAGE_MAX개로 상한이 있다. 호출자가 기다리기를 포기(취소)해도 결과는 버려진다.
+    """
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+
+    def deliver(result: AttachmentRead) -> None:
+        if not fut.done():  # 취소된 future에 set_result하면 InvalidStateError
+            fut.set_result(result)
+
+    def run() -> None:
+        try:
+            result = read_attachment_file(path, allowed, declared_mime)
+        except Exception:  # 예상 밖 예외에도 future가 영원히 미결로 남지 않게
+            result = (None, "rejected")
+        if loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(deliver, result)
+        except RuntimeError:  # is_closed 확인 뒤 닫힌 경쟁
+            pass
+
+    threading.Thread(target=run, name="ohmyslack-attachment-read", daemon=True).start()
+    return await fut
 
 
 def strip_mention_token(body: str, display_name: str) -> str:
@@ -711,7 +754,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
         refused = self._refuse_channel_top_level(chat_id, self._thread_root(reply_to, metadata))
         if refused is not None:
             return refused  # 업로드 전에 막는다(대체 텍스트도 채널 최상위가 되므로 보내지 않음)
-        loaded = await asyncio.to_thread(read_attachment_file, path, allowed, declared_mime)
+        loaded, _reason = await _read_off_loop(path, allowed, declared_mime)
         if loaded is None:
             return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata,
                                                    reason="file rejected (type, size or not a regular file)")
@@ -786,29 +829,18 @@ def _media_path(descriptor: Any) -> Any:
     return descriptor
 
 
-def _reject_reason(path: Any) -> str:
-    """read_attachment_file이 거절한 이유 분류(warnings용 enum). 형식 판정은 호출 전에 끝난다."""
-    try:
-        info = os.lstat(path)
-    except FileNotFoundError:
-        return "not_found"
-    except (OSError, TypeError, ValueError):
-        return "rejected"
-    if stat.S_ISREG(info.st_mode) and info.st_size > ATTACHMENT_MAX_BYTES:
-        return "too_large"
-    return "rejected"
-
-
-# standalone 업로드 전체가 쓰는 공유 시간 예산(초). Hermes는 standalone 전송 전체를 기본 60초
-# (`cron.standalone_send_timeout_seconds`)에 끊는다 — 넘으면 텍스트·warnings 모두 사라진다. `/me` 조회·텍스트 게시
-# (청크·재시도)와 여유를 남기려고 업로드에는 35초만 쓴다.
-STANDALONE_UPLOAD_BUDGET_S = 35.0
-# standalone 전송 전체(`/me`·파일 읽기·업로드·텍스트 게시와 그 재시도)의 deadline(초, 호출 시작 기준).
-# Hermes 기본 `cron.standalone_send_timeout_seconds` 60초 − 정리 여유 10초. 실제 설정값은 어댑터가 알 수 없어
-# 기본값을 가정한다 — 운영자가 상한을 50초 밑으로 줄이면 Hermes 취소가 먼저 온다.
-STANDALONE_TOTAL_DEADLINE_S = 50.0
-# 텍스트 게시 몫: 업로드 예산은 deadline까지 남은 시간에서 이만큼 먼저 떼고 계산한다.
-STANDALONE_TEXT_RESERVE_S = 10.0
+# standalone 호출 계약: 플러그인은 `max_message_length=0`으로 등록해 Hermes가 원문 전체·첨부 전체를 sender **1회** 호출에
+# 싣는다(Hermes `tools/send_message_tool.py` `_platform_max_length`·`_send_to_platform`). 그래서 아래 deadline 하나가
+# 전송 전체(`/me` 1회·파일 읽기·업로드·내부 청크 게시와 그 재시도)를 덮는다.
+# standalone 전송 전체 deadline(초, 호출 시작 기준). Hermes 바깥 상한은 정상 분기 60초(`cron.standalone_send_timeout_seconds`
+# 기본값 — 어댑터는 실제 설정값을 알 수 없어 기본값을 가정한다, README)지만, 실행 중인 루프 안에서 불리는 폴백 분기는
+# 30초(`cron/scheduler_delivery.py` `_standalone_send`의 `.result(timeout=30)`)라 그보다 5초 짧게 둔다 — 폴백이 먼저 끊고
+# 재전달 큐에 넣는 동안 이쪽 전송이 성공해 이중 게시되는 것을 막는다. 대상은 루프백 봇 리스너라 정상 경로는 1초 미만이다.
+STANDALONE_TOTAL_DEADLINE_S = 25.0
+# 텍스트 게시 몫: 업로드 예산은 deadline까지 남은 시간에서 이만큼 먼저 떼고 계산한다(텍스트가 첨부보다 우선).
+STANDALONE_TEXT_RESERVE_S = 8.0
+# standalone 업로드 전체가 쓰는 공유 시간 예산 상한(초). 실제 예산은 min(이 값, 남은 시간 − 텍스트 몫).
+STANDALONE_UPLOAD_BUDGET_S = 15.0
 
 
 # 단조 시계 — 호출 시점에 모듈 속성에서 읽는다(Hermes는 sender에 `clock=`을 넘길 수 없어, 실제 진입점 테스트가
@@ -886,14 +918,14 @@ async def _upload_standalone_media(client: BotClient, chat_id: str, media_files:
         if remaining() <= 0:
             warnings.append(f"{name}: budget_exceeded")
             continue
-        try:  # 읽기(스레드 대기 포함)도 예산 안에서만 — 멈춘 파일 시스템이 전송 전체를 붙잡지 않게
-            loaded = await asyncio.wait_for(asyncio.to_thread(read_attachment_file, path, STANDALONE_TYPES),
-                                            timeout=max(remaining(), 0.0))
+        try:  # 검사·읽기(daemon 스레드 1회)도 예산 안에서만 — 멈춘 파일 시스템이 전송 전체를 붙잡지 않게
+            loaded, reason = await asyncio.wait_for(_read_off_loop(path, STANDALONE_TYPES),
+                                                    timeout=max(remaining(), 0.0))
         except asyncio.TimeoutError:
             warnings.append(f"{name}: budget_exceeded")
             continue
         if loaded is None:
-            warnings.append(f"{name}: {_reject_reason(path)}")
+            warnings.append(f"{name}: {reason or 'rejected'}")
             continue
         data, mime, _ = loaded
         attachment_id, reason = await _upload_one(client, str(chat_id), data, mime, remaining)
@@ -912,13 +944,18 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
                           clock: Optional[Callable[[], float]] = None) -> dict:
     """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·`force_document`는 쓰지 않는다.
 
+    단일 호출 계약: `max_message_length=0` 등록으로 Hermes는 원문 전체·첨부 전체를 이 함수 **1회** 호출에 넘긴다 —
+    청크 분할(MAX_MESSAGE_LENGTH)·첨부 결속은 여기서만 정한다.
     홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 업로드도 하지 않는다.
-    첨부(ADR-002 1a): 음성·이미지는 업로드해 첫 청크에 결속(라이브 `_send_attachment`와 같은 규칙), 지원 밖·없는 파일·
-    상한 초과·업로드 실패·시간 예산 초과는 파일마다 `warnings`에 싣고 텍스트는 보낸다. `success`는 텍스트 전송 결과를 따른다.
-    전체는 시작 시각부터 STANDALONE_TOTAL_DEADLINE_S초(단조 `clock`) 안에서만 — Hermes 전체 상한(기본 60초)에 취소되면
+    첨부(ADR-002 1a): 음성·이미지는 업로드해 첫 청크에 결속, 지원 밖·없는 파일·상한 초과·업로드 실패·시간 예산 초과는
+    파일마다 `warnings`에 싣고 텍스트는 보낸다.
+    전체는 시작 시각부터 STANDALONE_TOTAL_DEADLINE_S초(단조 시계) 안에서만 — Hermes 바깥 상한에 취소되면
     텍스트·warnings가 모두 사라지므로. `/me`·게시(재시도 대기 포함)는 남은 시간으로 제한하고, 업로드는
-    min(`upload_budget`, 남은 시간 − STANDALONE_TEXT_RESERVE_S)초만 쓴다. 텍스트를 deadline 안에 못 끝내면
-    `deadline_exceeded` send_error(모인 첨부 warnings를 메시지에 덧붙인다 — Hermes는 실패 시 `error`만 남긴다).
+    min(`upload_budget`, 남은 시간 − STANDALONE_TEXT_RESERVE_S)초만 쓴다.
+    결과: 청크를 하나도 못 올렸으면 send_error(모인 첨부 warnings를 메시지에 덧붙인다 — Hermes는 실패 시 `error`만
+    남기고, 아무것도 안 나갔으므로 재전달 큐가 안전하다). 청크 k개(≥1)를 올린 뒤 실패·deadline 초과면 `success` +
+    `warnings`의 `text: partial_delivery <k>/<n>` — error로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가
+    중복되므로, 중복 대신 보이는 꼬리 유실을 택한다(첫 청크 = 첨부 결속 청크이므로 첨부는 전달됨).
     """
     from gateway.platforms._shared import send_error
     extra = getattr(pconfig, "extra", None) or {}
@@ -941,9 +978,10 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
         return send_error(f"ohmyslack standalone send: {reason}{suffix}")
     attachment_ids: list[str] = []
     warnings: list[str] = []
+    chunks: list[str] = []
+    ids: list[str] = []
     async with session_factory() as session:
         client = BotClient(base, token, session)
-        ids = []
         try:
             me = await _within(client.get_me(), left)
             kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
@@ -960,11 +998,18 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
                     remaining=left), left)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except _DeadlineExceeded:
-            return failed("deadline_exceeded")
+            reason = "deadline_exceeded"
         except BotApiError as exc:
-            return failed(f"HTTP {exc.status}")
+            reason = f"HTTP {exc.status}"
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            return failed(type(exc).__name__)
+            reason = type(exc).__name__
+        else:
+            reason = ""
+    if reason and not ids:
+        return failed(reason)
+    if reason:  # 부분 게시: 재전달(전체 재전송)을 타지 않게 성공 + 보이는 경고
+        logger.warning("ohmyslack: standalone send partial (%d/%d chunks, %s)", len(ids), len(chunks), reason)
+        warnings = [*warnings, f"text: partial_delivery {len(ids)}/{len(chunks)}"]
     out: dict[str, Any] = {"success": True, "message_id": ids[-1] if ids else None}
     if warnings:
         out["warnings"] = warnings
