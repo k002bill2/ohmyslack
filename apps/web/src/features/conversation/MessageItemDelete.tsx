@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ActionResult } from '../../data/index.js';
+import { settleAction, type ActionResult } from '../../data/index.js';
 import { Dialog } from '../../ui/Dialog.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { CANCEL_LABEL, DELETE_MESSAGE_COPY } from '../../ui/copy.js';
@@ -22,7 +22,7 @@ export function DeleteMessageDialog({ onConfirm, onClose, onDeleted }: DeleteMes
     if (busy) return;
     setBusy(true);
     setFailure(null);
-    const result = await onConfirm();
+    const result = await settleAction(onConfirm);
     if (result.ok) {
       onDeleted();
       return;

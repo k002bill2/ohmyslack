@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { ActionFailure, ActionResult, Account, DataSource, Space } from '../../data';
+import { settleAction, type ActionFailure, type ActionResult, type Account, type DataSource, type Space } from '../../data';
 import { BOT_CHANNEL_COPY, CANCEL_LABEL } from '../../ui/copy.js';
 import { Dialog } from '../../ui/Dialog.js';
 import { ErrorState } from '../../ui/ErrorState.js';
@@ -106,7 +106,7 @@ export function useBotChannelMenu(control: BotChannelControlProps | undefined, s
     const mine = ++attempt.current;
     setBusy(true);
     setRemoveFailure(null);
-    const res = await control.onRemove(bot.id);
+    const res = await settleAction(() => control.onRemove(bot.id));
     if (mine !== attempt.current) return;
     setBusy(false);
     if (res.ok) setRemoving(null);

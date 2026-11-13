@@ -95,6 +95,18 @@ export type ActionFailure = { readonly status: number; readonly code?: string } 
 /** 공간 진입 동작 결과. */
 export type ActionResult<T> = { readonly ok: true; readonly value: T } | ({ readonly ok: false } & ActionFailure);
 
+/**
+ * 확인 Dialog의 동작 결과를 받는다. 분류 체계 밖 예외도 일반 실패(`{ status: 'network' }`, ERROR_COPY.network)로 바꿔
+ * busy가 반드시 풀리게 한다 — 요청 중 닫기 차단이 영구 잠금이 되지 않게(action-timeout Codex r1 P1).
+ */
+export async function settleAction<T>(run: () => Promise<ActionResult<T>>): Promise<ActionResult<T>> {
+  try {
+    return await run();
+  } catch {
+    return { ok: false, status: 'network' };
+  }
+}
+
 export interface DiscoverChannel {
   readonly id: string;
   readonly name: string;
