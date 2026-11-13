@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import type { AuthEvents } from './events.js';
 import type { LoginLimiter } from './login-limiter.js';
 import { hashPassword, normalizeEmail, verifyPassword } from './password.js';
-import type { AuthStore, HumanUserRecord, SessionRecord, UserRecord } from './store.js';
+import type { AuthStore, HumanUserRecord, SessionListing, SessionRecord, UserRecord } from './store.js';
 
 /** 세션 수명(정본: TRD §5 30일 sliding, §5-1 S8 절대 90일). */
 export const SESSION_SLIDING_MS = 30 * 24 * 60 * 60 * 1000;
@@ -44,21 +44,33 @@ export type SessionCandidate = HumanUserRecord | (Omit<HumanUserRecord, 'kind'> 
 
 export type IssuedSession = { readonly token: string; readonly user: UserRecord; readonly session: SessionRecord };
 
+/**
+ * 원격 로그아웃 결과(TRD §5-3 4항). `not_found`는 남의 세션과 없는 세션을 구분하지 않는다(TM-HTTP-21).
+ * `gone`은 이미 폐기·만료된 본인 세션(DB 무변경, 멱등 204).
+ */
+export type RemoteRevokeResult = 'revoked' | 'gone' | 'not_found' | 'current';
+
 export interface AuthService {
   /** 성공 시 요청에 실려 온 기존 세션(previousToken)을 새 세션 insert **전에** 폐기한다(고아 세션 방지, NC-07). */
-  login(email: string, secret: string, previousToken?: string): Promise<LoginResult>;
+  /** deviceLabel: 라우트가 User-Agent에서 만든 거친 라벨(TRD §5-3). 원문 UA는 서비스로 오지 않는다. */
+  login(email: string, secret: string, previousToken?: string, deviceLabel?: string | null): Promise<LoginResult>;
   /**
    * 검증을 마친 활성 **사람** 계정에 새 세션을 발급한다(초대 수락). 기존 세션은 먼저 폐기한다.
    * 봇은 타입으로 받지 않는다(TRD §5-2 1항: 봇 세션 0). `kind`를 생략한 새 계정은 사람으로 확정한다.
    */
-  issueSession(user: SessionCandidate, previousToken?: string): Promise<IssuedSession>;
+  issueSession(user: SessionCandidate, previousToken?: string, deviceLabel?: string | null): Promise<IssuedSession>;
   authenticate(token: string | undefined): Promise<Authenticated | undefined>;
   /** authenticate와 같은 판정이지만 세션을 연장하지 않는다(WS 트래픽, TRD §5-1 S7). */
   peek(token: string | undefined): Promise<Authenticated | undefined>;
   logout(auth: Authenticated): Promise<void>;
   /** 로그인 직전 요청에 실려 온 기존 세션을 폐기한다(세션 고정·회전, NC-07). */
   revokeByToken(token: string | undefined): Promise<void>;
-  listSessions(auth: Authenticated): Promise<readonly SessionRecord[]>;
+  listSessions(auth: Authenticated): Promise<readonly SessionListing[]>;
+  /**
+   * 본인 세션 하나를 원격 폐기한다(FR-AUTH-04, TRD §5-3 4·5항). 현재 요청 세션이면 `current`, 본인 행이 없으면 `not_found`.
+   * 폐기는 로그아웃과 같은 저장소 연산(구독 삭제 포함) + 커밋 후 `sessionRevoked` 이벤트(WS 1008 close)다.
+   */
+  revokeOwnSession(auth: Authenticated, sessionId: string): Promise<RemoteRevokeResult>;
   /**
    * 주어진 세션 ID 중 peek 기준으로 지금 유효한 것만(단일 쿼리, 비연장). 프로세스 밖 폐기를 WS sweep이 잡는 데 쓴다
    * (F-2, NC-21). 저장소가 일괄 조회를 지원할 때만 있다.
@@ -136,7 +148,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     if (session !== undefined && session.revokedAt === null) await revoke(session);
   }
 
-  async function issueSession(candidate: SessionCandidate, previousToken?: string): Promise<IssuedSession> {
+  async function issueSession(candidate: SessionCandidate, previousToken?: string, deviceLabel?: string | null): Promise<IssuedSession> {
     const user: HumanUserRecord = { ...candidate, kind: 'human' };
     await revokeByToken(previousToken);
     const token = randomBytes(TOKEN_BYTES).toString('base64url');
@@ -150,16 +162,18 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       expiresAt: slidingExpiry(createdAt, createdAt),
       revokedAt: null,
     };
-    await store.insertSession(session);
+    await store.insertSession(session, deviceLabel);
     return { token, user, session };
   }
+
+  const isLive = (session: SessionRecord, at: Date): boolean =>
+    session.revokedAt === null && session.expiresAt > at && at.getTime() < session.createdAt.getTime() + SESSION_ABSOLUTE_MS;
 
   const peek = async (token: string | undefined): Promise<Authenticated | undefined> => {
     if (token === undefined || token === '') return undefined;
     const session = await store.findSessionByTokenHash(hashToken(token));
     const at = now();
-    if (session === undefined || session.revokedAt !== null || session.expiresAt <= at) return undefined;
-    if (at.getTime() >= session.createdAt.getTime() + SESSION_ABSOLUTE_MS) return undefined;
+    if (session === undefined || !isLive(session, at)) return undefined;
     const user = await store.findUserById(session.userId);
     // 봇은 세션이 없다(§5-2). 행이 어떻게든 생겨도 메인 리스너 인증으로 쓰지 않는다.
     if (user === undefined || user.status !== 'active' || user.kind !== 'human') return undefined;
@@ -179,11 +193,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   return {
     ...(liveSessionIds === undefined ? {} : { liveSessionIds }),
 
-    async login(email, secret, previousToken) {
+    async login(email, secret, previousToken, deviceLabel) {
       const user = await serial(() => verifyAttempt(email, secret));
       if (user === 'rate_limited') return { ok: false, reason: 'rate_limited' };
       if (user === undefined) return { ok: false, reason: 'invalid_credentials' };
-      return { ok: true, ...(await issueSession(user, previousToken)) };
+      return { ok: true, ...(await issueSession(user, previousToken, deviceLabel)) };
     },
 
     issueSession,
@@ -208,6 +222,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
     async listSessions(auth) {
       return store.listLiveSessions(auth.user.id, now());
+    },
+
+    async revokeOwnSession(auth, sessionId) {
+      if (sessionId === auth.session.id) return 'current';
+      const session = await store.findUserSession(auth.user.id, sessionId);
+      if (session === undefined) return 'not_found';
+      if (!isLive(session, now())) return 'gone';
+      await revoke(session);
+      return 'revoked';
     },
   };
 }

@@ -124,6 +124,7 @@ function setup(clock: () => number = () => T0, botScope?: BotScope) {
     logout: unused,
     revokeByToken: unused,
     listSessions: unused,
+    revokeOwnSession: unused,
   };
   // 실제 접근 판정(assertAccess)에 멤버십만 메모리로 주입한다.
   const conversationStore: ConversationsStore = {
