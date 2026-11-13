@@ -134,8 +134,14 @@ export interface RetentionResult {
   readonly blobsDeleted: number;
 }
 
+/**
+ * 저장 트랜잭션 안 사전 검사(INSERT 전, 같은 client). 거부는 throw — 트랜잭션이 롤백돼 메타·바이트 저장 0.
+ * 검사가 잡은 행 잠금은 COMMIT까지 유지된다(봇 업로드의 권한 회수 경쟁 차단, W-26 Codex r3). 사람 경로는 넘기지 않는다.
+ */
+export type InTxCheck = (client: pg.PoolClient, conversationId: string) => Promise<void>;
+
 export interface AttachmentsStore {
-  insert(a: NewAttachment): Promise<AttachmentMeta>;
+  insert(a: NewAttachment, check?: InTxCheck): Promise<AttachmentMeta>;
   get(id: string): Promise<AttachmentMeta | undefined>;
   /** 바이트. 행이 없으면(삭제됨) undefined. */
   bytes(id: string): Promise<Buffer | undefined>;
@@ -144,8 +150,9 @@ export interface AttachmentsStore {
 }
 
 /** 메타·바이트를 한 트랜잭션으로 넣는다(부분 저장 0). */
-async function insertTx(pool: pg.Pool, a: NewAttachment): Promise<AttachmentMeta> {
+async function insertTx(pool: pg.Pool, a: NewAttachment, check: InTxCheck | undefined): Promise<AttachmentMeta> {
   const row = await withTransaction(pool, async (client) => {
+    if (check !== undefined) await check(client, a.conversationId);
     const res = await client.query<MetaRow>(
       `INSERT INTO attachments (id, conversation_id, uploader_id, mime, byte_size, sha256, duration_ms, width, height, filename, has_macros, created_at, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${META_COLUMNS}`,
@@ -183,7 +190,7 @@ async function retain(pool: pg.Pool, now: Date, unboundBefore: Date): Promise<Re
 
 export function createPgAttachmentsStore(pool: pg.Pool): AttachmentsStore {
   return {
-    insert: (a) => insertTx(pool, a),
+    insert: (a, check) => insertTx(pool, a, check),
     async get(id) {
       const res = await pool.query<MetaRow>(`SELECT ${META_COLUMNS} FROM attachments WHERE id = $1`, [id]);
       const row = res.rows[0];
