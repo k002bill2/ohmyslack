@@ -237,3 +237,84 @@ async def test_upload_attempts_capped_at_per_message_max_regardless_of_success(s
     assert out["warnings"] == [f"p{i}.png: upload_failed" for i in range(4)] + ["p4.png: too_many",
                                                                                  "p5.png: too_many"]
     assert "attachment_ids" not in _ok_posts(server)[0]
+
+
+# ---- Codex r2 P1: 전송 전체(`/me`·읽기·업로드·텍스트 게시)를 시작 시각 기준 deadline 안에 끝낸다 ----
+
+def _slow_me(monkeypatch, clock, seconds):
+    import ohmyslack.adapter as adapter_mod
+    real_get_me = adapter_mod.BotClient.get_me
+
+    async def slow_get_me(self):
+        res = await real_get_me(self)
+        clock.now += seconds  # /me가 seconds초 걸린 상황
+        return res
+    monkeypatch.setattr(adapter_mod.BotClient, "get_me", slow_get_me)
+
+
+async def test_slow_me_shrinks_upload_budget_so_text_lands_before_deadline(server, tmp_path, monkeypatch):
+    from ohmyslack.adapter import STANDALONE_TOTAL_DEADLINE_S
+    clock = FakeClock()
+    start = clock.now
+    _slow_me(monkeypatch, clock, 26.0)
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    server.upload_status = [429]
+    server.upload_retry_after = "30"  # 업로드 예산(35초)보다 짧지만 deadline 남은 몫(24−10=14초)보다 길다
+    out = await _send_clocked(server, "아침 브리핑", [(path, True)], clock, monkeypatch)
+    assert out["success"] is True
+    assert out["warnings"] == ["briefing.mp3: upload_failed"]
+    assert clock.sleeps == [] and len(server.uploads) == 1
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and posts[0]["body"] == "아침 브리핑"
+    assert clock.now - start <= STANDALONE_TOTAL_DEADLINE_S
+
+
+async def test_text_post_429_beyond_deadline_fails_fast_with_send_error(server, tmp_path, monkeypatch):
+    from ohmyslack.adapter import STANDALONE_TOTAL_DEADLINE_S
+    clock = FakeClock()
+    start = clock.now
+    server.post_status = [429]
+    server.post_retry_after = "60"
+    out = await _send_clocked(server, "아침 브리핑", None, clock, monkeypatch)
+    assert "error" in out and "success" not in out
+    assert "HTTP 429" in out["error"]
+    assert clock.sleeps == [] and _ok_posts(server) == []  # 남은 시간보다 긴 Retry-After는 기다리지 않는다
+    assert clock.now - start <= STANDALONE_TOTAL_DEADLINE_S
+
+
+async def test_slow_file_read_is_cut_at_budget_and_text_still_sent(server, tmp_path, monkeypatch):
+    import threading
+    import time
+
+    import ohmyslack.adapter as adapter_mod
+    release = threading.Event()
+
+    def stuck_read(path, *args):
+        release.wait(2.0)  # 파일 시스템이 멈춘 상황(테스트 끝에 풀어 스레드를 정리)
+        return None
+    monkeypatch.setattr(adapter_mod, "read_attachment_file", stuck_read)
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    began = time.monotonic()
+    try:
+        out = await adapter_mod.standalone_send(_cfg(server), DM_ID, "아침 브리핑", media_files=[(path, True)],
+                                                upload_budget=0.05)
+        elapsed = time.monotonic() - began
+    finally:
+        release.set()
+    assert elapsed < 1.0  # 읽기를 끝까지 기다리지 않는다
+    assert out["success"] is True
+    assert out["warnings"] == ["briefing.mp3: budget_exceeded"]
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and "attachment_ids" not in posts[0]
+
+
+async def test_me_exhausting_deadline_skips_upload_and_post(server, tmp_path, monkeypatch):
+    from ohmyslack.adapter import STANDALONE_TOTAL_DEADLINE_S
+    clock = FakeClock()
+    _slow_me(monkeypatch, clock, STANDALONE_TOTAL_DEADLINE_S)
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await _send_clocked(server, "아침 브리핑", [(path, True)], clock, monkeypatch)
+    assert "error" in out and "success" not in out
+    assert "deadline_exceeded" in out["error"]
+    assert "briefing.mp3: budget_exceeded" in out["error"]  # 실패 로그에 첨부 사유도 남는다
+    assert server.uploads == [] and server.posts == []
