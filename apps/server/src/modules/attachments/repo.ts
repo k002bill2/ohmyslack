@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { withTransaction } from '../../db/pool.js';
-import type { AttachmentMime } from '../../shared.js';
+import type { AttachmentAnyMime } from '../../shared.js';
 
 /**
  * 첨부 저장소(pg, 정본: TRD §2 `attachments`·`attachment_blobs`, §6-1). 첨부 바이트를 읽고 쓰는 SQL은 이 파일에만 있다(B10).
@@ -14,11 +14,14 @@ export interface AttachmentMeta {
   readonly conversationId: string;
   readonly uploaderId: string;
   readonly messageId: string | null;
-  readonly mime: AttachmentMime;
+  readonly mime: AttachmentAnyMime;
   readonly byteSize: number;
   readonly durationMs: number | null;
   readonly width: number | null;
   readonly height: number | null;
+  /** 문서·텍스트의 정규화 파일명(미디어 null). */
+  readonly filename: string | null;
+  readonly hasMacros: boolean;
   readonly createdAt: Date;
   readonly expiresAt: Date;
   readonly deletedAt: Date | null;
@@ -34,17 +37,19 @@ interface MetaRow {
   conversation_id: string;
   uploader_id: string;
   message_id: string | null;
-  mime: AttachmentMime;
+  mime: AttachmentAnyMime;
   byte_size: number;
   duration_ms: number | null;
   width: number | null;
   height: number | null;
+  filename: string | null;
+  has_macros: boolean;
   created_at: Date;
   expires_at: Date;
   deleted_at: Date | null;
 }
 
-const META_COLUMNS = 'id, conversation_id, uploader_id, message_id, mime, byte_size, duration_ms, width, height, created_at, expires_at, deleted_at';
+const META_COLUMNS = 'id, conversation_id, uploader_id, message_id, mime, byte_size, duration_ms, width, height, filename, has_macros, created_at, expires_at, deleted_at';
 
 function toMeta(r: MetaRow): AttachmentMeta {
   return {
@@ -57,6 +62,8 @@ function toMeta(r: MetaRow): AttachmentMeta {
     durationMs: r.duration_ms,
     width: r.width,
     height: r.height,
+    filename: r.filename,
+    hasMacros: r.has_macros,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     deletedAt: r.deleted_at,
@@ -69,16 +76,18 @@ function toMeta(r: MetaRow): AttachmentMeta {
  */
 export const ATTACHMENTS_PROJECTION_SQL = `COALESCE((SELECT json_agg(json_build_object(
     'id', a.id, 'mime', a.mime, 'byte_size', a.byte_size, 'duration_ms', a.duration_ms, 'width', a.width, 'height', a.height,
-    'expires_at', a.expires_at, 'expired', (a.deleted_at IS NOT NULL OR a.expires_at <= now())) ORDER BY a.created_at, a.id)
+    'filename', a.filename, 'has_macros', a.has_macros, 'expires_at', a.expires_at, 'expired', (a.deleted_at IS NOT NULL OR a.expires_at <= now())) ORDER BY a.created_at, a.id)
   FROM attachments a WHERE a.message_id = m.id), '[]'::json) AS attachments`;
 
 export interface AttachmentProjectionRow {
   id: string;
-  mime: AttachmentMime;
+  mime: AttachmentAnyMime;
   byte_size: number;
   duration_ms: number | null;
   width: number | null;
   height: number | null;
+  filename: string | null;
+  has_macros: boolean;
   expires_at: string;
   expired: boolean;
 }
@@ -138,9 +147,9 @@ export interface AttachmentsStore {
 async function insertTx(pool: pg.Pool, a: NewAttachment): Promise<AttachmentMeta> {
   const row = await withTransaction(pool, async (client) => {
     const res = await client.query<MetaRow>(
-      `INSERT INTO attachments (id, conversation_id, uploader_id, mime, byte_size, sha256, duration_ms, width, height, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING ${META_COLUMNS}`,
-      [a.id, a.conversationId, a.uploaderId, a.mime, a.byteSize, a.sha256, a.durationMs, a.width, a.height, a.createdAt, a.expiresAt],
+      `INSERT INTO attachments (id, conversation_id, uploader_id, mime, byte_size, sha256, duration_ms, width, height, filename, has_macros, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${META_COLUMNS}`,
+      [a.id, a.conversationId, a.uploaderId, a.mime, a.byteSize, a.sha256, a.durationMs, a.width, a.height, a.filename, a.hasMacros, a.createdAt, a.expiresAt],
     );
     await client.query('INSERT INTO attachment_blobs (attachment_id, bytes) VALUES ($1, $2)', [a.id, a.bytes]);
     return { commit: true, value: res.rows[0] };

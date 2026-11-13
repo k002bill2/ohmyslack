@@ -85,6 +85,8 @@ export function toRecord(r: MessageRow): MessageRecord {
       durationMs: a.duration_ms,
       width: a.width,
       height: a.height,
+      filename: a.filename ?? null,
+      hasMacros: a.has_macros ?? false,
       expiresAt: new Date(a.expires_at),
       expired: a.expired,
     })),

@@ -18,6 +18,8 @@ const meta = (over: Partial<AttachmentMeta> = {}): AttachmentMeta => ({
   mime: 'image/png',
   byteSize: 33,
   durationMs: null,
+  filename: null,
+  hasMacros: false,
   width: 2,
   height: 3,
   createdAt: new Date(0),
@@ -132,7 +134,7 @@ describe('service', () => {
     await expect(service.upload('u1', 'c1', 'image/jpeg', png())).rejects.toMatchObject({ statusCode: 415 });
     await expect(service.upload('u1', 'c1', 'text/html', HTML)).rejects.toMatchObject({ statusCode: 415 });
     await expect(service.upload('u1', 'c1', 'image/png', Buffer.alloc(0))).rejects.toMatchObject({ statusCode: 400 });
-    await expect(service.upload('u1', 'c1', 'image/png', Buffer.alloc(ATTACHMENT_MAX_BYTES + 1))).rejects.toMatchObject({ statusCode: 413 });
+    await expect(service.upload('u1', 'c1', 'image/png', png(2, 3, ATTACHMENT_MAX_BYTES))).rejects.toMatchObject({ statusCode: 413 });
     expect(store.inserted).toHaveLength(0);
     const saved = await service.upload('u1', 'c1', 'audio/mpeg', mp3());
     expect(saved.expiresAt.getTime()).toBe(1000 + retentionMs('audio/mpeg'));
