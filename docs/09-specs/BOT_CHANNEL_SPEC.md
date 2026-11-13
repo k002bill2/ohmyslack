@@ -96,7 +96,7 @@
 4. Jarvis는 그 메시지의 **스레드 답글**로만 진행·결과를 올린다(채널 최상위에 쓰지 않음, §5-6).
 
 ### 3-3. 스레드 응답
-1. owner가 그 스레드에 답글을 단다. 답글에도 봇 멘션이 있으면(§10 Q5 ★) 같은 세션(`thread_id = thread_root_id`)으로 이어진다.
+1. owner가 그 스레드에 답글을 단다. 봇 스레드(owner가 봇을 멘션해 시작한 스레드)의 owner 답글은 **멘션 없이도** 같은 세션(`thread_id = thread_root_id`)으로 이어진다(§10 Q5 변경 2026-11-13). 단 답글이 봇 없이 다른 사용자만 멘션하면 그 사람에게 한 말로 보고 무시한다.
 2. 승인 요청(FR-BOT-06)도 같은 스레드에서 owner의 멘션 + 텍스트 명령으로 처리한다(§5-3).
 
 ### 3-4. 봇 제거 → 구독 해제
@@ -206,7 +206,7 @@
 판정 순서(앞에서 걸리면 끝):
 1. owner 작성자 판정 — 기존 `_is_owner_instruction` 그대로(`integrations/hermes-plugin/ohmyslack/adapter.py:345-348`). **채널에서도 가장 먼저.**
 2. 대화 종류가 `dm` → 게이팅 없이 통과(현재 동작 유지. 참고 패턴: Hermes mattermost DM 우회, `~/.hermes/hermes-agent/plugins/platforms/mattermost/adapter.py:573-578`).
-3. 대화 종류가 `channel` → **`message.mention_user_ids`에 봇 자신의 ID가 있을 때만** 통과.
+3. 대화 종류가 `channel` → **`message.mention_user_ids`에 봇 자신의 ID가 있을 때** 통과. 예외(§10 Q5 변경 2026-11-13): 봇 스레드의 owner 답글은 멘션 없이 통과 — 어댑터가 이번 프로세스에서 그 루트로 지시를 넘긴 적 있거나(메모리 집합, 상한 `BOT_THREADS_MAX`), 없으면(재시작) 봇 API `GET messages/{root_id}/replies`로 루트를 1회 조회해 루트 작성자 == owner·루트 `mention_user_ids`에 봇이 있을 때. 404·오류·타임아웃은 거부(fail-closed), 음성·오류 결과는 60초 캐시. 다른 사용자만 멘션한 답글·수정된 답글·봇 스레드가 아닌 스레드의 비멘션 답글·채널 최상위 비멘션은 계속 0.
    - 멘션 판정은 **서버 값만** 쓴다. 본문 `@이름` 문자열은 판정에 쓰지 않는다(Jarvis 결정(★), 근거: "어댑터의 owner 판정은 … 본문 내용으로 판정하지 않습니다" `docs/03-trd/TRD.md:204`와 같은 원칙. 서버 값은 활성 참여자만 남긴 결과 `apps/server/src/modules/messages/repo.ts:35-37`).
    - 참고 패턴과의 차이: mattermost는 본문에서 `@봇이름`·`@봇ID` 부분 문자열을 찾는다(`~/.hermes/hermes-agent/plugins/platforms/mattermost/adapter.py:518-519`). ohmyslack은 서버가 멘션 ID를 주므로 문자열 검색이 필요 없다.
    - allowlist·free-response 채널 설정(mattermost `:510-517`)은 두지 않는다. 채널 범위는 서버 멤버십이 정한다(Jarvis 결정(★)).
@@ -242,7 +242,7 @@
 ### 5-9. 테스트 (pytest, `integrations/hermes-plugin/tests/`)
 가짜 서버 fixture(`integrations/hermes-plugin/tests/conftest.py`)에 채널 대화·`kind`·`mention_user_ids`·`membership.changed`를 더한다. 새 파일 `integrations/hermes-plugin/tests/test_channel.py`(제안) 케이스:
 1. 채널 owner 멘션 최상위 → `chat_type="channel"`·새 세션 / 답글 → 같은 세션
-2. 채널 owner 비멘션 → 무시·백로그 0
+2. 채널 owner 비멘션 → 무시·백로그 0 (예외: 봇 스레드의 owner 비멘션 답글은 같은 세션으로 전달, §10 Q5 변경 2026-11-13)
 3. 채널 비owner 멘션 → 무시(세션 0·송신 0)
 4. 채널 owner `@Jarvis /approve` 답글 → 토큰 제거 후 승인 해석
 5. `membership.changed joined` → 재연결 없이 구독 / `left`·`error not_found` → 구독 제거, 이후 그 대화 프레임 무시
@@ -289,7 +289,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 | FR-BOT-03 (개정) | 봇은 owner와의 Jarvis DM에만 참여하고, 서버 이벤트는 작성자 종류를 서버 값으로 싣는다 (채널 참여는 FR-BOT-08–11) | P0 | (현행 유지) | U, ADR-001 §3-c |
 | FR-BOT-08 | owner가 웹에서 참여 중인 공개 채널에 봇을 추가·제거한다 | P1 | owner만 성공(일반 멤버 403·DB 변화 0); 비참여 채널 404; DM 대상 400; 비활성·사람·다른 워크스페이스 사용자 대상 404; 재추가 멱등; 봇 토큰으로 추가·제거 경로 0; 제거 후 봇의 이력·쓰기 404, 기존 구독 5초 안에 중단(FR-CONV-02와 같은 기준) | U, ADR-001 §3-c, 이 스펙 §4-1·§4-2 |
 | FR-BOT-09 | 채널에 추가된 봇은 참여 이후의 메시지만 읽고, 멤버십 변화를 연결 중에 통지받는다 | P1 | 봇의 이력·답글·snapshot·sync·WS replay·WS 실시간(`message.created`·`updated`·`deleted`, 루트 재전송 포함)·첨부에 참여 전 메시지와 참여 전 시작 스레드의 메시지 0, 참여 전 루트의 답글 조회 404(§10 Q2 ★); 사람 읽기 범위 변화 0; 추가·제거 때 봇 연결에 `membership.changed` 1회(§10 Q4 ★); `/api/bot/v1/me`에 대화 종류 포함 | 이 스펙 §4-3–4-5 |
-| FR-BOT-10 | 채널에서 봇은 owner가 멘션한 메시지에만 반응하고, 스레드=세션 규칙을 따른다 | P1 | owner 멘션 메시지의 `mention_user_ids`에 봇 ID 포함(서버); 어댑터: 비owner 0·비멘션 0·`chat_type=channel`·최상위=새 세션·답글=같은 세션·채널 최상위 송신 0·채널 백로그 안내는 DM으로 → 어댑터 pytest + 수동 증거 `QA-FR-BOT-10` | ADR-001 §3-c·§3-d, 이 스펙 §5 |
+| FR-BOT-10 | 채널에서 봇은 owner가 멘션한 메시지에만 반응하고, 스레드=세션 규칙을 따른다 | P1 | owner 멘션 메시지의 `mention_user_ids`에 봇 ID 포함(서버); 어댑터: 비owner 0·비멘션 0(봇 스레드의 owner 답글은 예외, §10 Q5 변경 2026-11-13)·`chat_type=channel`·최상위=새 세션·답글=같은 세션·채널 최상위 송신 0·채널 백로그 안내는 DM으로 → 어댑터 pytest + 수동 증거 `QA-FR-BOT-10` | ADR-001 §3-c·§3-d, 이 스펙 §5 |
 | FR-BOT-11 | 채널 헤더에서 owner가 봇을 추가·제거하는 웹 컨트롤 | P1 | owner·채널일 때만 보임(일반 멤버·DM·나간 채널 0); 추가 후 멘션 후보에 봇 배지와 함께 표시; 실패는 기존 오류 표시(`ErrorState`) 재사용; 문구는 COPY_GAPS 결정 후 | 이 스펙 §3-1·§3-4 |
 
 ### 7-3. 테스트 매핑 (6-2와 같은 6열 머리 — DEV_DESIGN 새 절 "6-6. P1 선택 FR 매핑"으로 옮김, §10 Q7. 기존 6-4·6-5 절 번호를 다른 문서가 참조하므로 6-6으로 둠)
@@ -369,7 +369,7 @@ ID 규칙은 `FR-{AREA}-{NN}`(`docs/02-prd/PRD.md:154-161`). **FR-BOT-07은 버�
 2. **Q2 봇 읽기 범위** — **결정됨(2026-11-10, ★)** — ★ 봇 행위자만 "참여 후 메시지 + 참여 후 시작된 스레드"로 제한(§4-5, 경로 7곳: REST 2·snapshot·sync·WS replay·WS 실시간·첨부). 대안: 사람과 같게 전체 이력. 근거: 최소 권한, 토큰 탈취 시 노출 축소(TM-BOT-01). 비용: 읽기·전달 경로 7곳 수정(L1 규모 L의 주원인), owner는 참여 전 스레드에서 봇을 부를 수 없음.
 3. **Q3 권한 판정 위치** — **결정됨(2026-11-10, ★)** — ★ `conversation` 메타 + `AccessAction 'manage_bots'`를 `assertAccess` 안에서 판정(역할 owner + 활성 멤버 + 채널). 대안: `admin` 메타 가드 + `assertAccess(…,'read')` 두 번 검사. 근거: B2 "assertAccess 하나로만"(`docs/04-dev-design/DEV_DESIGN.md:90`).
 4. **Q4 멤버십 추가 통지** — **결정됨(2026-11-10, ★)** — ★ N1 새 프레임 `membership.changed`(영향받는 봇 연결에만). 대안 N2 `sync.required` 재사용, N3 봇 WS 재연결. 근거: 의미가 명확하고 재연결 비용 0, 프레임 1종 추가(공유 스키마 변경).
-5. **Q5 채널 스레드 답글의 멘션** — **결정됨(2026-11-10, ★)** — ★ 채널에서는 **모든 메시지(답글 포함)에 멘션 필수**. 대안: 봇이 답한 스레드는 멘션 없이 이어짐(어댑터가 세션 루트 집합을 cursor 파일에 저장해야 함). 근거: 상태 없음·재시작 안전·다른 멤버와의 대화 중 오작동 0. 비용: owner가 답글마다 `@Jarvis`를 붙여야 함.
+5. **Q5 채널 스레드 답글의 멘션** — **변경(2026-11-13, 영환님): 봇 스레드의 owner 답글은 멘션 없이 이어짐.** 판정은 어댑터 메모리 집합 + 재시작 시 루트 1회 조회(§5-2 3항, cursor 파일 저장 없음). 다른 사용자만 멘션한 답글은 제외. 이전 결정(2026-11-10, ★): 채널에서는 **모든 메시지(답글 포함)에 멘션 필수**. 대안: 봇이 답한 스레드는 멘션 없이 이어짐(어댑터가 세션 루트 집합을 cursor 파일에 저장해야 함). 근거: 상태 없음·재시작 안전·다른 멤버와의 대화 중 오작동 0. 비용: owner가 답글마다 `@Jarvis`를 붙여야 함.
 6. **Q6 수치 멤버십 상한** — **결정됨(2026-11-10, ★)** — ★ 수치 상한 없음(owner 명시 추가만). 대안: 봇 채널 수 상한 N(새 상수 → 값 결정 필요). 근거: owner 1명·봇 1개, 정본에 수치 없음(`docs/03-trd/TRD.md:201`), 새 수치는 정본에서 정해야 함(`docs/04-dev-design/DEV_DESIGN.md:396`).
 7. **Q7 P1 FR 판정 방법** — **결정됨(2026-11-10, ★)** — ★ 단계 P2 v1에서 고른 P1 FR은 DEV_DESIGN 새 절 6-4(6-2와 같은 머리)에 두고, `check:fr-coverage`가 6-4를 "선택된 P1 FR" 집합으로 읽도록 확장(L0·L1 중 하나가 체커+자체 테스트 수정). → 반영: 절 번호는 6-6, 체커 확장은 L1. 대안: 채택 시 P0로 승격해 6-2에 넣음. 근거: G2 "선택한 P1 FR의 테스트 매핑 추가·통과"(`docs/04-dev-design/DEV_DESIGN.md:133`)를 지금 체커는 판정하지 못함(P0만 수집).
 8. **Q8 웹 문구** — **결정됨(2026-11-10, ★)** — ★ COPY_GAPS에 항목 추가 후 결정(봇 추가 버튼, 제거 확인 Dialog 제목·본문·확인 버튼, 추가 실패). 대안: 기존 「채널 나가기」 Dialog 문구 구조를 따라 Jarvis가 초안. 근거: 문구는 정본에서만 정함(`docs/04-dev-design/DEV_DESIGN.md:396`).

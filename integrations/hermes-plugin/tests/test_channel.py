@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from conftest import (BOT_ID, BOT_NAME, CHANNEL_ID, DM_ID, OTHER_ID, TOKEN, make_message, wait_for)
 
 UNKNOWN_ID = "00000000-0000-0000-0000-0000000003e7"
@@ -69,7 +71,7 @@ async def test_case1_dm_still_dm_chat_type_and_body_untouched(server, make_adapt
     assert adapter.events[0].text == f"@{BOT_NAME} /approve"
 
 
-# ---- 케이스 2: owner 비멘션 → 무시·백로그 0 ----
+# ---- 케이스 2: owner 비멘션 → 무시·백로그 0 (봇 스레드 답글은 예외, Q5 변경 2026-11-13) ----
 async def test_case2_channel_owner_without_mention_ignored_and_not_counted(server, make_adapter):
     _with_channel(server)
     adapter = await _connected(server, make_adapter)
@@ -77,9 +79,8 @@ async def test_case2_channel_owner_without_mention_ignored_and_not_counted(serve
     await server.push_live(root, CHANNEL_ID)
     await wait_for(lambda: len(adapter.events) == 1)
     plain = _ch("멘션 없는 최상위", mention=False)
-    reply = _ch("멘션 없는 답글(Q5: 답글도 멘션 필수)", mention=False, thread_root_id=root["id"])
     text_only = _ch(f"@{BOT_NAME} 본문에만 이름", mention=False)  # 판정은 서버 mention_user_ids만
-    for m in (plain, reply, text_only):
+    for m in (plain, text_only):
         await server.push_live(m, CHANNEL_ID)
     await server.drop_all()
     stale = _ch("오래된 비멘션", mention=False, age=16 * 60)
@@ -89,8 +90,118 @@ async def test_case2_channel_owner_without_mention_ignored_and_not_counted(serve
     assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == [root["id"]]
     assert adapter._backlog == {}
     assert _posts_ok(server) == []
-    for m in (plain, reply, text_only, stale):
+    for m in (plain, text_only, stale):
         assert m["id"] in adapter._recent  # 게이팅 탈락은 dedupe에 기록만(§5-7)
+
+
+async def test_case2_bot_thread_owner_reply_without_mention_continues_same_session(server, make_adapter):
+    _with_channel(server)
+    adapter = await _connected(server, make_adapter)
+    root = _ch(f"@{BOT_NAME} 시작")
+    await server.push_live(root, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    reply = _ch("멘션 없는 답글", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 2)
+    event = adapter.events[1]
+    assert event.message_id == reply["id"]
+    assert event.source.thread_id == root["id"]
+    assert event.text == "멘션 없는 답글"
+    assert server.replies_calls == []  # 이번 프로세스에서 넘긴 루트는 조회 없이 통과
+
+
+async def test_thread_follow_non_bot_thread_reply_ignored(server, make_adapter):
+    _with_channel(server)
+    adapter = await _connected(server, make_adapter)
+    root = _ch("봇 없는 대화", mention=False)
+    await server.push_live(root, CHANNEL_ID)
+    reply = _ch("그 스레드의 답글", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
+    assert reply["id"] in adapter._recent
+
+
+async def test_thread_follow_non_owner_reply_in_bot_thread_ignored(server, make_adapter):
+    _with_channel(server)
+    adapter = await _connected(server, make_adapter)
+    root = _ch(f"@{BOT_NAME} 시작")
+    await server.push_live(root, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    other = make_message(author=OTHER_ID, conv=CHANNEL_ID, body="끼어들기", thread_root_id=root["id"])
+    await server.push_live(other, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == [root["id"]]
+
+
+async def test_thread_follow_reply_mentioning_only_other_user_ignored(server, make_adapter):
+    _with_channel(server)
+    adapter = await _connected(server, make_adapter)
+    root = _ch(f"@{BOT_NAME} 시작")
+    await server.push_live(root, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    to_other = make_message(conv=CHANNEL_ID, body="@민수 확인해줘", mentions=[OTHER_ID],
+                            thread_root_id=root["id"])
+    await server.push_live(to_other, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == [root["id"]]
+    assert to_other["id"] in adapter._recent
+
+
+async def test_thread_follow_after_restart_resolves_root_via_replies(server, make_adapter):
+    _with_channel(server)
+    root = _ch(f"@{BOT_NAME} 재시작 전 지시")
+    server.add(root, CHANNEL_ID)  # 새 어댑터 인스턴스는 이 루트를 처리한 기억이 없다
+    adapter = await _connected(server, make_adapter)
+    reply = _ch("재시작 뒤 답글", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert adapter.events[0].message_id == reply["id"]
+    assert adapter.events[0].source.thread_id == root["id"]
+    reply2 = _ch("두 번째 답글", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply2, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 2)
+    assert server.replies_calls == [root["id"]]  # 확인된 루트는 집합에 들어가 재조회 없음
+
+
+async def test_thread_follow_restart_root_not_mentioning_bot_rejected(server, make_adapter):
+    _with_channel(server)
+    root = _ch("봇 멘션 없는 루트", mention=False)
+    server.add(root, CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    reply = _ch("답글", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
+    assert server.replies_calls == [root["id"]]
+
+
+@pytest.mark.parametrize("status", [404, 500])
+async def test_thread_follow_replies_lookup_failure_fails_closed_and_is_cached(server, make_adapter, status):
+    _with_channel(server)
+    server.replies_status = status
+    adapter = await _connected(server, make_adapter)
+    root_id = "00000000-0000-0000-0000-0000000004d2"
+    first = _ch("답글 1", mention=False, thread_root_id=root_id)
+    second = _ch("답글 2", mention=False, thread_root_id=root_id)
+    await server.push_live(first, CHANNEL_ID)
+    await server.push_live(second, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
+    assert server.replies_calls == [root_id]  # 음성·오류도 짧게 캐시 → 같은 루트 재조회 억제
+
+
+async def test_thread_follow_edited_reply_without_mention_not_executed(server, make_adapter):
+    _with_channel(server)
+    adapter = await _connected(server, make_adapter)
+    root = _ch(f"@{BOT_NAME} 시작")
+    await server.push_live(root, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    edited = _ch("수정된 답글", mention=False, thread_root_id=root["id"])
+    edited["edited_at"] = edited["created_at"]
+    await server.push_live(edited, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == [root["id"]]
 
 
 # ---- 케이스 3: 비owner 멘션 → 무시 ----
