@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
-import type { DataSource, Message, Space } from '../../data';
+import type { DataSource, Message, Space, UploadAttachmentOptions } from '../../data';
 import type { UploadFn } from '../conversation/attachments/composer-upload.js';
 import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useFocusOnLock, useMessageRoving, withDiscardFocus, MAIN_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
@@ -603,7 +603,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSend={(body, mentionUserIds, attachmentIds) => dataSource.send({ conversationId: space.id }, body, mentionUserIds, attachmentIds)}
       {...(dataSource.uploadAttachment === undefined
         ? {}
-        : { onUpload: (file: File) => dataSource.uploadAttachment?.(space.id, file) ?? Promise.resolve({ ok: false as const, status: 'network' as const }) })}
+        : {
+            onUpload: (file: File, options?: UploadAttachmentOptions) =>
+              dataSource.uploadAttachment?.(space.id, file, options) ?? Promise.resolve({ ok: false as const, status: 'network' as const }),
+          })}
       onRetry={retry}
       onDiscard={discard}
       itemActions={{

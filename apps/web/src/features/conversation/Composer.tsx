@@ -11,7 +11,7 @@ import type { DraftStore } from './drafts.js';
 import { MENTION_DRAFT_SUFFIX, filterCandidates, insertMention, mentionIdsIn, mentionQuery, parseSelections, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
 import { ComposerAttachments } from './attachments/ComposerAttachments.js';
 import { useComposerAttachments, type UploadFn } from './attachments/composer-upload.js';
-import { ATTACHMENT_COPY, COMPOSER_COPY, MENTION_EMPTY_TEXT, MENTION_POPOVER_COPY, overText, remainingText } from '../../ui/copy.js';
+import { COMPOSER_COPY, MENTION_EMPTY_TEXT, MENTION_POPOVER_COPY, overText, remainingText } from '../../ui/copy.js';
 import './composer-copy.css';
 
 export type MentionKey = 'Enter' | 'Tab' | 'Escape' | 'ArrowUp' | 'ArrowDown';
@@ -152,7 +152,7 @@ export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = f
   const sendable = !files.blocked && (imageOnly || canSend(text));
   const send = () => {
     if (!sendable) return;
-    const body = imageOnly ? ATTACHMENT_COPY.imageOnlyBody : text;
+    const body = imageOnly ? files.placeholderBody : text;
     const ids = mentionIdsIn(text, selected);
     const attachmentIds = files.ids;
     if (attachmentIds.length > 0) onSend(body, ids.length > 0 ? ids : undefined, attachmentIds);
@@ -285,6 +285,7 @@ export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = f
           onAdd={files.add}
           onRemove={files.remove}
           onRetry={files.retry}
+          onEmptied={() => area.current?.focus()}
         />
       )}
       {showHint && (

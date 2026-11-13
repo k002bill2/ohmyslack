@@ -40,9 +40,9 @@ function mount(upload: (f: File) => Promise<Result>) {
 }
 
 describe('Composer 이미지 첨부', () => {
-  it('파일 선택은 이미지 3종만(accept), 업로드 함수가 없으면 첨부 UI 없음', () => {
+  it('파일 선택 accept에 이미지 3종 확장자 포함(문서는 document-attachment.test), 업로드 함수가 없으면 첨부 UI 없음', () => {
     const { input } = mount(vi.fn());
-    expect(input.getAttribute('accept')?.split(',').sort()).toEqual(['image/jpeg', 'image/png', 'image/webp']);
+    expect(input.getAttribute('accept')?.split(',')).toEqual(expect.arrayContaining(['.png', '.jpg', '.jpeg', '.webp']));
     cleanup();
     render(<Composer label="메시지" onSend={vi.fn()} />);
     expect(screen.queryByRole('button', { name: ATTACHMENT_COPY.attach })).toBeNull();

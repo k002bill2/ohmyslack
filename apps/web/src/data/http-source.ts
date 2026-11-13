@@ -24,6 +24,7 @@ import type {
 import { createSendController, type PendingMessage, type PostResult } from '../features/conversation';
 import { adoptAccount, clearCheckpoints, readCheckpoint, writeCheckpoint, type SessionBus, type StorageLike } from '../features/sync';
 import { pushSubscriptionCreatedSchema, pushSubscriptionCreateSchema, vapidPublicKeyResponseSchema } from '../../../../packages/shared/src/push.js';
+import { ATTACHMENT_FILENAME_HEADER } from '../../../../packages/shared/src/attachments.js';
 import { createApi, HttpStatusError, isUnreachable, NetworkError, TimeoutError, type FetchLike } from './api.js';
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
@@ -1117,12 +1118,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         await api.del(`/api/push/subscriptions/${encodeURIComponent(id)}`);
       },
     },
-    uploadAttachment(conversationId, file) {
+    uploadAttachment(conversationId, file, options = {}) {
       return attempt(async () => {
+        const headers = options.filename === undefined ? undefined : { [ATTACHMENT_FILENAME_HEADER]: encodeURIComponent(options.filename) };
         const res = await api.upload<AttachmentUploadResponse>(
           `/api/attachments?conversation_id=${encodeURIComponent(conversationId)}`,
           file,
-          file.type,
+          options.type ?? file.type,
+          { ...(headers === undefined ? {} : { headers }), ...(options.signal === undefined ? {} : { signal: options.signal }) },
         );
         return res.attachment;
       });
