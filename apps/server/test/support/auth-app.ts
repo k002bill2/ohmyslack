@@ -43,6 +43,10 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     async listLiveSessions(userId, now) {
       return [...sessions.values()].filter((s) => s.userId === userId && s.revokedAt === null && s.expiresAt > now);
     },
+    async findUserSession(userId, id) {
+      const found = sessions.get(id);
+      return found?.userId === userId ? found : undefined;
+    },
   };
 }
 

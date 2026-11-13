@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { AuthStore, SessionRecord, UserRecord } from './store.js';
+import type { AuthStore, SessionListing, SessionRecord, UserRecord } from './store.js';
 
 /** auth 저장소의 pg 구현. 모든 SQL은 파라미터 바인딩만 쓴다. */
 interface UserRow {
@@ -27,6 +27,10 @@ const USER_SELECT = `SELECT u.id, u.email_norm, u.display_name, u.password_hash,
   FROM users u`;
 
 const SESSION_COLUMNS = 'id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at';
+
+interface SessionListingRow extends SessionRow {
+  device_label: string | null;
+}
 
 export class UserInvariantError extends Error {
   override readonly name = 'UserInvariantError';
@@ -71,10 +75,15 @@ export function createPgAuthStore(pool: pg.Pool): AuthStore {
       const res = await pool.query<UserRow>(`${USER_SELECT} WHERE u.id = $1`, [id]);
       return res.rows[0] === undefined ? undefined : toUser(res.rows[0]);
     },
-    async insertSession(s) {
+    async insertSession(s, deviceLabel) {
+      const values = [s.id, s.userId, s.tokenHash, s.createdAt, s.lastSeenAt, s.expiresAt, s.revokedAt];
+      if (deviceLabel === undefined) {
+        await pool.query(`INSERT INTO sessions (${SESSION_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7)`, values);
+        return;
+      }
       await pool.query(
-        `INSERT INTO sessions (${SESSION_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [s.id, s.userId, s.tokenHash, s.createdAt, s.lastSeenAt, s.expiresAt, s.revokedAt],
+        `INSERT INTO sessions (${SESSION_COLUMNS}, device_label) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [...values, deviceLabel],
       );
     },
     async findSessionByTokenHash(tokenHash) {
@@ -97,12 +106,16 @@ export function createPgAuthStore(pool: pg.Pool): AuthStore {
       );
     },
     async listLiveSessions(userId, now) {
-      const res = await pool.query<SessionRow>(
-        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2
+      const res = await pool.query<SessionListingRow>(
+        `SELECT ${SESSION_COLUMNS}, device_label FROM sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2
          ORDER BY last_seen_at DESC`,
         [userId, now],
       );
-      return res.rows.map(toSession);
+      return res.rows.map((row): SessionListing => ({ ...toSession(row), deviceLabel: row.device_label ?? null }));
+    },
+    async findUserSession(userId, id) {
+      const res = await pool.query<SessionRow>(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = $1 AND user_id = $2`, [id, userId]);
+      return res.rows[0] === undefined ? undefined : toSession(res.rows[0]);
     },
     async filterLiveSessionIds(ids, now, createdAfter) {
       if (ids.length === 0) return [];

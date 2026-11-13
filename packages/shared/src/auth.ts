@@ -22,13 +22,17 @@ export const meResponseSchema = z.object({
 
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
+/** 기기 세션 거친 라벨 길이 상한(code point, TRD §5-3 1항·DB CHECK `0006`). */
+export const SESSION_DEVICE_LABEL_MAX = 64;
+
+/** `GET /api/sessions`(TRD §3·§5-3 3항): 본인의 살아 있는 세션만. `device_label`은 모르면 null. */
 export const sessionsResponseSchema = z.object({
   sessions: z.array(
     z.object({
       id: z.uuid(),
+      device_label: z.string().min(1).max(SESSION_DEVICE_LABEL_MAX).nullable(),
       created_at: z.string(),
       last_seen_at: z.string(),
-      expires_at: z.string(),
       current: z.boolean(),
     }),
   ),
