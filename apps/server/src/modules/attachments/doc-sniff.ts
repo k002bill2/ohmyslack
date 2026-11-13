@@ -135,7 +135,12 @@ export function binaryMatches(b: Buffer, budget: SniffBudget): DocMatch[] {
 }
 
 const STRICT_UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-const TEXT_KINDS: Readonly<Record<string, AttachmentFileMime>> = Object.freeze({ txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' });
+/** 확장자는 사용자 입력이라 `Map`으로만 조회한다(일반 객체는 `constructor`·`__proto__` 같은 상속 속성이 걸린다). */
+const TEXT_KINDS: ReadonlyMap<string, AttachmentFileMime> = new Map([
+  ['txt', 'text/plain'],
+  ['md', 'text/markdown'],
+  ['csv', 'text/csv'],
+]);
 
 /** 텍스트 판정 ①②: 유효 UTF-8(BOM 허용, 잘린·과장·서로게이트 실패) + NUL 0. */
 export function isUtf8Text(b: Buffer): boolean {
@@ -158,7 +163,7 @@ export function classify(b: Buffer, ext: string, budget: SniffBudget): DocMatch 
   const [only] = matches;
   if (only !== undefined) return only;
   if (!isUtf8Text(b)) throw reject('no_match');
-  const mime = TEXT_KINDS[ext];
+  const mime = TEXT_KINDS.get(ext);
   if (mime === undefined) throw reject('text_extension');
   return file(mime, [ext], false);
 }

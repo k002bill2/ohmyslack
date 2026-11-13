@@ -125,7 +125,8 @@ function readHeader(b: Buffer): Header {
 
 /** 헤더 DIFAT 109칸 + DIFAT 체인(각 섹터 끝 칸 = 다음 DIFAT 섹터)에서 FAT 섹터 번호를 모은다. */
 function fatSectorIds(ctx: Ctx, h: Header): number[] {
-  if (h.numFat > ctx.fileSectors) throw reject('ole_fat_count');
+  // FAT 섹터 하나가 ss/4개 섹터를 담는다. 파일 섹터(끝의 부분 섹터 포함)를 다 덮는 데 필요한 수보다 많으면 거부.
+  if (h.numFat > Math.ceil((ctx.fileSectors + 1) / (ctx.ss / 4))) throw reject('ole_fat_count');
   const ids: number[] = [];
   for (let i = 0; i < Math.min(HEADER_DIFAT_SLOTS, h.numFat); i += 1) ids.push(ctx.b.readUInt32LE(0x4c + i * 4));
   const perSector = ctx.ss / 4 - 1;
@@ -140,14 +141,22 @@ function fatSectorIds(ctx: Ctx, h: Header): number[] {
     sid = ctx.b.readUInt32LE(off + perSector * 4);
   }
   if (ids.length < h.numFat) throw reject('ole_fat_count');
+  // 같은 섹터를 여러 번 참조하면 테이블만 부풀린다(할당 상한 우회) — 거부.
+  if (new Set(ids).size !== ids.length) throw reject('ole_fat_dup');
   return ids;
 }
 
-function readSectorTable(ctx: Ctx, sectors: readonly number[]): number[] {
+/**
+ * 섹터들을 번호 테이블로 복사한다. 항목은 `maxEntries`개까지만 만든다(그 뒤 번호는 체인 순회의 범위 검사로 어차피 쓸 수 없다).
+ * 섹터마다 단계 예산을 센다(단계 256개마다 deadline 확인, TRD §6-1-1 (2)).
+ */
+function readSectorTable(ctx: Ctx, sectors: readonly number[], maxEntries: number): number[] {
   const out: number[] = [];
   for (const sid of sectors) {
+    if (out.length >= maxEntries) break;
+    step(ctx);
     const off = sectorOffset(ctx, sid);
-    for (let i = 0; i < ctx.ss; i += 4) out.push(ctx.b.readUInt32LE(off + i));
+    for (let i = 0; i < ctx.ss && out.length < maxEntries; i += 4) out.push(ctx.b.readUInt32LE(off + i));
   }
   return out;
 }
@@ -239,7 +248,8 @@ function toEntries(raw: ReadonlyMap<number, RawEntry>, parents: ReadonlyMap<numb
 function readMiniFat(ctx: Ctx, h: Header, fat: readonly number[]): number[] {
   if (h.numMiniFat === 0 || h.firstMiniFat === ENDOFCHAIN) return [];
   if (h.numMiniFat > ctx.fileSectors) throw reject('ole_minifat_count');
-  return readSectorTable(ctx, walk(ctx, fat, h.firstMiniFat, ctx.fileSectors, h.numMiniFat, 'ole_minifat_count'));
+  // 미니 섹터는 일반 섹터 하나에 ss/64개 들어간다.
+  return readSectorTable(ctx, walk(ctx, fat, h.firstMiniFat, ctx.fileSectors, h.numMiniFat, 'ole_minifat_count'), ctx.fileSectors * (ctx.ss / MINI_SECTOR_BYTES));
 }
 
 export function listOle(b: Buffer, budget: SniffBudget): OleListing | undefined {
@@ -247,7 +257,8 @@ export function listOle(b: Buffer, budget: SniffBudget): OleListing | undefined 
   checkDeadline(budget);
   const h = readHeader(b);
   const ctx: Ctx = { b, budget, ss: h.ss, fileSectors: Math.floor((b.length - h.ss) / h.ss), steps: 0 };
-  const fat = readSectorTable(ctx, fatSectorIds(ctx, h));
+  // FAT 항목 수 ≤ 파일 섹터 수: 파일 밖 번호의 다음 칸은 sectorOffset 범위 검사로 어차피 쓰이지 않는다.
+  const fat = readSectorTable(ctx, fatSectorIds(ctx, h), ctx.fileSectors);
   const { raw, slots } = readDirectory(ctx, h, fat);
   const entries = toEntries(raw, assignParents(raw, slots));
   const miniFat = readMiniFat(ctx, h, fat);

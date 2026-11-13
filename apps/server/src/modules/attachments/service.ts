@@ -8,6 +8,7 @@ import {
   ATTACHMENT_UNBOUND_TTL_MS,
   DOC_SNIFF_DEADLINE_MS,
   isAttachmentFileMime,
+  ATTACHMENT_TEXT_MIMES,
   isAttachmentMime,
 } from '../../shared.js';
 import { DocSniffError } from './doc-budget.js';
@@ -87,6 +88,8 @@ export function judge(
   const decoded = filenameHeader === undefined ? undefined : decodeFilenameHeader(filenameHeader);
   if (filenameHeader !== undefined && decoded === undefined) throw new HttpError(400, 'invalid_request');
   const parsed = decoded === undefined ? undefined : parseFilename(decoded);
+  // 텍스트 계열은 확장자로 MIME을 확정하므로 파일명 헤더가 필수다 — 판정보다 먼저 400(TRD §6-1-1 (5)).
+  if (parsed === undefined && (ATTACHMENT_TEXT_MIMES as readonly string[]).includes(declared)) throw new HttpError(400, 'invalid_request');
   let match;
   try {
     match = classify(bytes, parsed?.ext ?? '', { now: sniffNow, deadline: sniffNow() + DOC_SNIFF_DEADLINE_MS });
@@ -102,7 +105,8 @@ export function judge(
     if (bytes.length > ATTACHMENT_MAX_BYTES) throw new HttpError(413, 'payload_too_large');
     return { mime: m.mime, filename: null, hasMacros: false, durationMs: m.durationMs, width: m.width, height: m.height };
   }
-  if (declared !== match.mime && declared !== 'application/octet-stream') throw unsupported();
+  // 선언은 declaredType이 소문자로 만든다. 표의 매크로 MIME(`macroEnabled.12`)도 소문자로 비교하고 저장은 표 그대로.
+  if (declared !== match.mime.toLowerCase() && declared !== 'application/octet-stream') throw unsupported();
   if (parsed === undefined) throw new HttpError(400, 'invalid_request');
   const ext = checkExtension(match, parsed.ext);
   if (!ext.ok) throw new HttpError(415, ext.code);
