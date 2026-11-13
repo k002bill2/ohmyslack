@@ -1,0 +1,4 @@
+docs/05-design-ref/DESIGN_REFERENCE.md
+docs/07-ui-spec/COPY_GAPS.md
+docs/07-ui-spec/UI_STATES.md
+dev/active/p2s1-ui-spec/** (commit 2, git add -f — dev/ is gitignored)
