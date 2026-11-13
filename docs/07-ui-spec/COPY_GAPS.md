@@ -622,7 +622,8 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 ### G-54 허용 형식 안내(415·사전 거부) ★
 - 위치: 작성기 칩 실패 — 형식(U §2-13). 지금 「지원하지 않는 형식입니다(PNG·JPEG·WebP)」(`ATTACHMENT_COPY.unsupported`).
 - 확정안: 「지원하지 않는 형식입니다(이미지 PNG·JPEG·WebP, 문서 PDF·Word·Excel·PowerPoint·한글)」
-  - 파일 선택 `accept`(문구 아님, 같은 목록): `.png,.jpg,.jpeg,.webp,.pdf,.docx,.docm,.xlsx,.xlsm,.pptx,.pptm,.doc,.xls,.ppt,.hwp,.hwpx`
+  - 파일 선택 `accept`(문구 아님, 같은 목록): `.png,.jpg,.jpeg,.webp,.pdf,.docx,.docm,.xlsx,.xlsm,.pptx,.pptm,.doc,.xls,.ppt,.hwp,.hwpx,.txt,.md,.csv`(텍스트 3종은 TRD §6-1-1 R3.6, ADR-002 §4-3 Q12 ★ — 2026-11-13 p2s1-canon-align)
+  - 서버 415 하위 코드 매핑(TRD §3): `unsupported_media_type`·`extension_mismatch`·`encrypted_document`·코드 없음·모르는 코드 → 이 문구. `macro_extension_mismatch`만 G-56. 전용 문구가 없는 코드에 새 문구를 만들지 않는다.
 - 근거: ADR-002 §4-2 허용 형식 표·§4-3 2(구형 Office 받음)·§4-3 1(매크로 확장자). 기존 문구의 괄호 목록 형식을 잇는다. 한 줄 상태 표시라 마침표 없음(톤 규칙 5).
 - 대안: 「이 형식은 보낼 수 없습니다」(목록 없음) — 무엇을 보낼 수 있는지 알 수 없어 택하지 않았다.
 - ★: 권장.
@@ -635,7 +636,7 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 - ★: 권장.
 
 ### G-56 매크로 문서 확장자 불일치(415 `macro_extension_mismatch`) ★
-- 위치: 작성기 칩 실패 — 매크로 확장자(U §2-13). 서버 오류 코드 구분이 전제(REPORT ④ 제안). 코드가 없으면 G-54로 대체.
+- 위치: 작성기 칩 실패 — 매크로 확장자(U §2-13). 서버 오류 코드 `macro_extension_mismatch`(TRD §3 415 하위 코드, R3.6). 코드가 없으면 G-54로 대체.
 - 확정안: 「매크로가 들어 있는 문서입니다. .docm·.xlsm·.pptm 확장자로 저장해 다시 보내 주세요.」
 - 근거: ADR-002 §4-3 1(매크로 감지 OOXML은 `.docm/.xlsm/.pptm`만, 불일치 415). 일반 형식 문구로는 원인을 알 수 없다. 원인 1문장 + 행동 1개(톤 규칙 4), 두 문장이라 마침표(규칙 5).
 - 대안: 「확장자가 내용과 맞지 않습니다.」 — 무엇으로 바꿔야 하는지 빠져 택하지 않았다.
@@ -659,7 +660,7 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 
 ### G-59 형식 표지 텍스트 ★
 - 위치: 문서 행·칩의 형식 표지(U §2-13). 색이 아닌 텍스트로 형식을 알린다(FR-CLIENT-07).
-- 확정안: 서버 판정 mime 기준 — 「PDF」 / 「Word」(`.docx`·`.docm`·`.doc`) / 「Excel」(`.xlsx`·`.xlsm`·`.xls`) / 「PowerPoint」(`.pptx`·`.pptm`·`.ppt`) / 「한글」(`.hwp`·`.hwpx`).
+- 확정안: 서버 판정 mime 기준 — 「PDF」 / 「Word」(`.docx`·`.docm`·`.doc`) / 「Excel」(`.xlsx`·`.xlsm`·`.xls`) / 「PowerPoint」(`.pptx`·`.pptm`·`.ppt`) / 「한글」(`.hwp`·`.hwpx`) / 텍스트 계열 「TXT」(`text/plain`)·「MD」(`text/markdown`)·「CSV」(`text/csv`)(2026-11-13 p2s1-canon-align, TRD §6-1-1 R3.6 — 제품 이름이 없는 일반 형식이라 확장자 대문자를 표지로 쓴다).
 - 근거: ADR-002 §4-1 형식 이름 그대로. 형식 이름 표기일 뿐 각 제품의 아이콘·색·로고는 쓰지 않는다(아이콘은 Lucide `file-text` 하나, CLEANROOM 2–4절·D §2-2 취지).
 - 대안: 확장자 대문자(「DOCX」·「HWPX」) — 확장자는 파일명 끝에 이미 항상 보이므로(U §2-13 말줄임 규칙) 중복이라 택하지 않았다.
 - ★: 권장.
@@ -742,7 +743,7 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
   - 제목: 「기기 로그아웃」
   - 본문: 「{기기 라벨} 기기가 5초 안에 로그아웃되고 그 기기의 알림도 꺼집니다. 그 기기에서 다시 쓰려면 다시 로그인해야 합니다.」
   - 버튼: 「로그아웃」(주 동작, danger) / 「취소」
-- 근거: T §5 :149(revoke 후 5초 안 WS close), T :66(세션 폐기 시 push 구독 CASCADE 삭제). 멤버 비활성화 Dialog 문구(「…5초 안에 로그아웃되며…」, D §4-3)와 같은 구조.
+- 근거: T §5 :149(revoke 후 5초 안 WS close), T §5-3 5(세션 폐기 시 그 세션 push 구독을 서비스가 삭제). 멤버 비활성화 Dialog 문구(「…5초 안에 로그아웃되며…」, D §4-3)와 같은 구조.
 - 대안: 본문 1문장 「이 기기를 로그아웃할까요?」 — 알림이 꺼진다는 결과가 빠져 택하지 않았다.
 - ★: 권장.
 
