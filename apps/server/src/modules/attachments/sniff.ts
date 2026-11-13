@@ -136,6 +136,9 @@ function sniffMp3(b: Buffer): Sniffed | undefined {
   return { mime: 'audio/mpeg', durationMs: mp3Duration(b, start, frame), width: null, height: null };
 }
 
+/** 미디어 판정기 4종(문서 판정의 단일 일치 규칙이 각각 돌린다, TRD §6-1-1 (1)). */
+export const MEDIA_SNIFFERS: readonly ((b: Buffer) => Sniffed | undefined)[] = Object.freeze([sniffPng, sniffJpeg, sniffWebp, sniffMp3]);
+
 /** 허용 4형식 중 하나로 판정되면 그 결과, 아니면 undefined(→ 415). */
 export function sniff(bytes: Buffer): Sniffed | undefined {
   return sniffPng(bytes) ?? sniffJpeg(bytes) ?? sniffWebp(bytes) ?? sniffMp3(bytes);

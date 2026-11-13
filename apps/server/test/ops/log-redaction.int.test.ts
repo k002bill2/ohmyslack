@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
+import { createPgAttachmentsStore } from '../../src/modules/attachments/repo.js';
 import { createPgAuthStore } from '../../src/modules/auth/index.js';
 import { SESSION_COOKIE } from '../../src/modules/auth/routes.js';
 import { createPgConversationsStore } from '../../src/modules/conversations/index.js';
@@ -16,6 +17,7 @@ import { createChannel, req } from '../conversations/conv-int-harness.js';
 import { closeAll, connect, connected, freePort, listen, subscribe, type WsClient } from '../realtime/ws-int-harness.js';
 import { HOST, ORIGIN, login, testApp } from '../support/auth-app.js';
 import type { TestSchema } from '../support/test-db.js';
+import { buildZip, docxEntries } from '../attachments/fixtures/zip-builder.js';
 
 /**
  * FR-OPS-03 앱 로그 카나리아 0건(DEV_DESIGN §2-2 B6, PRD §10).
@@ -35,7 +37,7 @@ afterEach(async () => {
   schema = undefined;
 });
 
-const CANARY = LOG_CANARIES as Readonly<Record<'body' | 'credential' | 'token' | 'cookie' | 'invite' | 'email', string>>;
+const CANARY = LOG_CANARIES as Readonly<Record<'body' | 'credential' | 'token' | 'cookie' | 'invite' | 'email' | 'filename', string>>;
 const ALLOWED_KEYS: ReadonlySet<string> = new Set<string>([
   ...LOG_ALLOWED_FIELDS,
   ...Object.values(METRIC_ALLOWLIST).flat(),
@@ -79,6 +81,7 @@ async function setup(lines: string[]): Promise<{ base: string }> {
     conversationsStore: createPgConversationsStore(schema.pool),
     messagesStore: createPgMessagesStore(schema.pool),
     syncStore: createPgSyncStore(schema.pool),
+    attachmentsStore: createPgAttachmentsStore(schema.pool),
   });
   registerCarelessProbe(app, logger);
   return { base: await listen(app, port) };
@@ -143,6 +146,34 @@ describe('FR-OPS-03 로그 redaction', () => {
     wsB.sendRaw(JSON.stringify({ type: 'nope', body: CANARY.body, token: CANARY.token }));
     await wsB.waitFor((f) => f.type === 'error');
     expect(await connect(base, { token: CANARY.cookie })).toBe('rejected');
+
+    // 첨부: 파일명 카나리아 문서 업로드(저장·확장자 불일치 415)·다운로드 — 파일명은 응답에만 있고 로그에는 0건(W-26).
+    const docHeaders = (name: string) => ({
+      host: HOST,
+      origin: ORIGIN,
+      cookie: `${SESSION_COOKIE}=${a.token}`,
+      'x-csrf-token': a.csrf,
+      'content-type': 'application/octet-stream',
+      'x-attachment-filename': encodeURIComponent(name),
+    });
+    const doc = await target.inject({
+      method: 'POST',
+      url: `/api/attachments?conversation_id=${cid}`,
+      headers: docHeaders(`${CANARY.filename}.docx`),
+      payload: buildZip(docxEntries()),
+    });
+    expect(doc.statusCode).toBe(201);
+    const docId = doc.json<{ attachment_id: string }>().attachment_id;
+    const docGet = await target.inject({ method: 'GET', url: `/api/attachments/${docId}`, headers: { host: HOST, cookie: `${SESSION_COOKIE}=${a.token}` } });
+    expect(docGet.statusCode).toBe(200);
+    expect(docGet.headers['content-disposition']).toContain(CANARY.filename);
+    const mismatch = await target.inject({
+      method: 'POST',
+      url: `/api/attachments?conversation_id=${cid}`,
+      headers: docHeaders(`${CANARY.filename}.xlsx`),
+      payload: buildZip(docxEntries()),
+    });
+    expect(mismatch.statusCode).toBe(415);
 
     // 판정: 로그가 실제로 기록됐고, 카나리아 0건, 허용 키만.
     expect(lines.length).toBeGreaterThan(10);

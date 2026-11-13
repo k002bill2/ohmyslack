@@ -45,7 +45,8 @@ describe('첨부(FR-OPS-05)', () => {
       [HTML, 'image/png', 415], // 선언만 허용 형식
       [png(), 'image/jpeg', 415], // 내용 PNG, 선언 JPEG
       [Buffer.concat([Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00', 'latin1'), HTML]), 'audio/mpeg', 415], // ID3 뒤 프레임 sync 없음
-      [Buffer.from('%PDF-1.7\n'), 'application/pdf', 415],
+      // W-26: PDF는 허용 문서가 됐고, 문서인데 X-Attachment-Filename이 없으면 400(TRD §6-1-1 (5)).
+      [Buffer.from('%PDF-1.7\n'), 'application/pdf', 400],
       [png(2, 3, ATTACHMENT_MAX_BYTES + 1 - png().length), 'image/png', 413],
     ];
     for (const [bytes, type, status] of rejected) {

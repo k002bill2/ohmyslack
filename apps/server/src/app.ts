@@ -189,7 +189,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   const attachments =
     messages === undefined || conversations === undefined || options.attachmentsStore === undefined
       ? undefined
-      : createAttachmentsService({ store: options.attachmentsStore, conversations, clock });
+      : createAttachmentsService({ store: options.attachmentsStore, conversations, clock, logger });
   app.decorate(
     'domainServices',
     options.authStore === undefined || conversations === undefined || messages === undefined || sync === undefined

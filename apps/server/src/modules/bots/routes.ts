@@ -1,15 +1,15 @@
-import type { FastifyInstance, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest, onRequestAsyncHookHandler, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { BOT_ROUTE_PREFIX, markBotGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
-import { historyQuerySchema, messageCreateRequestSchema, readStateRequestSchema, type BotMe, type HistoryResponse, type RepliesResponse, type SnapshotResponse, type SyncResponse } from '../../shared.js';
+import { ATTACHMENT_DOC_MAX_BYTES, historyQuerySchema, messageCreateRequestSchema, readStateRequestSchema, type BotMe, type HistoryResponse, type RepliesResponse, type SnapshotResponse, type SyncResponse } from '../../shared.js';
 import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService } from '../attachments/index.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import { editAs, historyOf, repliesOf, sendAs } from '../messages/routes.js';
 import type { MessagesService } from '../messages/service.js';
 import { conversationRefOf, markReadAs, snapshotOf, syncAs } from '../sync/routes.js';
 import type { SyncService } from '../sync/service.js';
-import type { BotRateKind, BotRateLimiter } from './rate-limit.js';
+import type { BotRateKind, BotRateLimiter, RateDecision } from './rate-limit.js';
 import type { BotService } from './service.js';
 
 /** 봇 리스너 라우트(정본: TRD §5-2 5·6항, DEV_DESIGN B9). 사람 라우트와 같은 shared 스키마·서비스·assertAccess를 쓴다. */
@@ -88,16 +88,50 @@ function rateGuard(limiter: BotRateLimiter, kind: BotRateKind): preHandlerAsyncH
   });
 }
 
-/** 첨부 업로드 상한(건수·바이트): 접근 판정 뒤, 저장 전에 본문 길이로 검사·기록한다. 초과는 429(저장 0). */
-function uploadRateGuard(limiter: BotRateLimiter): preHandlerAsyncHookHandler {
-  return markBotGuard(async (request, reply): Promise<void> => {
-    const bytes = Buffer.isBuffer(request.body) ? request.body.length : 0;
-    const decision = limiter.takeUpload(requireBot(request).tokenId, bytes);
-    if (!decision.ok) {
-      reply.header('retry-after', String(decision.retryAfterSeconds));
-      throw new HttpError(429, 'rate_limited');
+/** 업로드 상한에 기록할 선언 길이. 없으면(chunked) undefined, 상한 초과·형식 오류는 'invalid'(기록 없이 본문 파서의 413·400에 맡긴다). */
+function declaredUploadBytes(request: FastifyRequest): number | undefined | 'invalid' {
+  const raw = request.headers['content-length'];
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 && n <= ATTACHMENT_DOC_MAX_BYTES ? n : 'invalid';
+}
+
+function rejectRate(reply: FastifyReply, decision: RateDecision): void {
+  if (decision.ok) return;
+  reply.header('retry-after', String(decision.retryAfterSeconds));
+  throw new HttpError(429, 'rate_limited');
+}
+
+/**
+ * 봇 업로드 판정(TRD §5-2 7항, SR-D-01). `admit`(onRequest)은 25 MiB body를 버퍼에 쌓기 **전**에 토큰 → 대화 write 접근 →
+ * 업로드 상한(건수 + 선언 길이 바이트)을 판정한다(사람 경로 concurrentUploadGuard와 같은 위치). 미인증·비참여·상한 초과는
+ * body를 기다리지 않고 401·404·429. 길이를 모르는 chunked 업로드는 일일 바이트 잔여가 없으면 바로 429, 있으면 건수만 먼저
+ * 기록하고 바이트는 `settle`(preHandler)이 받은 길이로 판정한다.
+ * `settle`은 body 수신 뒤 토큰(폐기·봇 비활성화)과 대화 접근(채널 제거)을 **다시** 판정한다 — body를 기다리는 사이 권한이
+ * 회수되면 같은 401·404로 거부하고 저장 0. 이미 기록한 건수·선언 바이트는 되돌리지 않는다(413·415 거부와 같은 규칙).
+ */
+function botUploadGuards(deps: BotRouteDeps, token: preHandlerAsyncHookHandler): { admit: onRequestAsyncHookHandler; settle: preHandlerAsyncHookHandler } {
+  const access = accessGuard(deps, 'query', 'write');
+  const unsized = new WeakSet<FastifyRequest>();
+  const admit: onRequestAsyncHookHandler = async (request, reply) => {
+    await token.call(request.server, request, reply);
+    await access.call(request.server, request, reply);
+    const bytes = declaredUploadBytes(request);
+    if (bytes === 'invalid') return;
+    const tokenId = requireBot(request).tokenId;
+    if (bytes === undefined) {
+      unsized.add(request);
+      rejectRate(reply, deps.limiter.checkUploadBytes(tokenId, 1));
     }
+    rejectRate(reply, deps.limiter.takeUpload(tokenId, bytes ?? 0));
+  };
+  const settle = markBotGuard(async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    await token.call(request.server, request, reply);
+    await access.call(request.server, request, reply);
+    if (!unsized.has(request)) return;
+    rejectRate(reply, deps.limiter.takeUploadBytes(requireBot(request).tokenId, Buffer.isBuffer(request.body) ? request.body.length : 0));
   });
+  return { admit, settle };
 }
 
 /** 봇 첨부 라우트: 사람 라우트와 같은 처리 본문(uploadAs·downloadAs)과 같은 assertAccess 경계. */
@@ -105,6 +139,7 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
   const p = BOT_ROUTE_PREFIX;
   const token = botTokenGuard(deps.bots);
   const clock = deps.clock ?? Date.now;
+  const upload = botUploadGuards(deps, token);
   // 봇 가시성(§4-5 ⑦): 메시지에 묶인 첨부는 그 메시지 규칙, 미결합 첨부는 봇이 올린 것만.
   const attachmentAccess = markBotGuard(async (request: FastifyRequest): Promise<void> => {
     const botId = requireBot(request).botUserId;
@@ -116,7 +151,7 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
   registerUploadRoute(
     app,
     `${p}attachments`,
-    { access: 'bot', preHandler: [token, accessGuard(deps, 'query', 'write'), uploadRateGuard(deps.limiter)] },
+    { access: 'bot', onRequest: [upload.admit], preHandler: [upload.settle] },
     (request, reply) => uploadAs(attachments, requireBot(request).botUserId, request, reply, clock),
   );
   app.get(`${p}attachments/:id`, { config: { access: 'bot' }, preHandler: [token, attachmentAccess], onSend: attachmentCspOnSend }, (request, reply) => {
