@@ -117,8 +117,13 @@ class BotClient:
                 self._raise_for(resp.status, path, resp.headers.get("Retry-After"))
             return await resp.json()
 
-    async def _with_retry(self, call: Callable[[], Awaitable[T]], label: str) -> T:
-        """429(Retry-After)·5xx·연결 오류만 최대 MAX_SEND_ATTEMPTS회 다시 시도한다. 그 외 4xx·401은 즉시 올린다."""
+    async def _with_retry(self, call: Callable[[], Awaitable[T]], label: str, *,
+                          remaining: Optional[Callable[[], float]] = None) -> T:
+        """429(Retry-After)·5xx·연결 오류만 최대 MAX_SEND_ATTEMPTS회 다시 시도한다. 그 외 4xx·401은 즉시 올린다.
+
+        `remaining`(남은 시간 예산, 초)을 주면 재시도 대기가 그보다 길 때 기다리지 않고 마지막 오류를 올린다.
+        기본값 None은 기존 동작(상한까지 대기)이다.
+        """
         last_exc: Optional[Exception] = None
         for attempt in range(MAX_SEND_ATTEMPTS):
             try:
@@ -134,6 +139,8 @@ class BotClient:
                 last_exc = exc
                 delay = float(2 ** attempt)
             if attempt + 1 < MAX_SEND_ATTEMPTS:
+                if remaining is not None and delay >= remaining():
+                    break
                 logger.warning("ohmyslack: %s retry %d/%d in %.1fs", label, attempt + 1, MAX_SEND_ATTEMPTS, delay)
                 await self._sleep(delay)
         assert last_exc is not None
@@ -173,15 +180,17 @@ class BotClient:
         path = f"/conversations/{conversation_id}/messages"
         return await self._with_retry(lambda: self.request("POST", path, json=payload), "send")
 
-    async def upload_attachment(self, conversation_id: str, data: bytes, mime: str) -> dict:
+    async def upload_attachment(self, conversation_id: str, data: bytes, mime: str, *,
+                                remaining: Optional[Callable[[], float]] = None) -> dict:
         """원시 바이트 업로드 → 미결속 첨부(`attachment_id`). 재시도는 post_message와 같은 정책.
 
         업로드에는 멱등 키가 없어, 응답 유실 뒤 재시도하면 미결속 첨부가 하나 더 생길 수 있다 — 결속되지 않은 것은
         서버가 1시간 뒤 정리한다(ATTACHMENT_UNBOUND_TTL_MS). 메시지는 하나만 만들어진다.
+        `remaining`은 `_with_retry`와 같다(standalone 시간 예산용, 기본은 기존 동작).
         """
         return await self._with_retry(
             lambda: self.request("POST", "/attachments", params={"conversation_id": conversation_id},
-                                 data=data, content_type=mime), "upload")
+                                 data=data, content_type=mime), "upload", remaining=remaining)
 
     async def download_attachment(self, attachment_id: str, *, max_bytes: int = ATTACHMENT_MAX_BYTES) -> bytes:
         """첨부 바이트를 상한까지만 읽는다(Content-Length·누적 크기 모두 검사). 넘으면 BotApiError(413)."""
