@@ -776,12 +776,82 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return {"name": name, "type": kind, "chat_id": str(chat_id)}
 
 
+STANDALONE_TYPES = {**VOICE_TYPES, **IMAGE_TYPES}
+
+
+def _media_path(descriptor: Any) -> Any:
+    """Hermes `media_files` 원소: `(path, is_voice)` 튜플(base.extract_media) 또는 경로 문자열."""
+    if isinstance(descriptor, (list, tuple)):
+        return descriptor[0] if descriptor else None
+    return descriptor
+
+
+def _reject_reason(path: Any) -> str:
+    """read_attachment_file이 거절한 이유 분류(warnings용 enum). 형식 판정은 호출 전에 끝난다."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return "not_found"
+    except (OSError, TypeError, ValueError):
+        return "rejected"
+    if stat.S_ISREG(info.st_mode) and info.st_size > ATTACHMENT_MAX_BYTES:
+        return "too_large"
+    return "rejected"
+
+
+async def _upload_standalone_media(client: BotClient, chat_id: str,
+                                   media_files: Any) -> tuple[list[str], list[str], list[str]]:
+    """standalone 첨부 업로드 → (첨부 ID, 파일명, warnings). 실패는 파일마다 `"<basename>: <사유>"` 한 줄.
+
+    판정·상한은 라이브 `_send_attachment`와 같다(read_attachment_file, 음성·이미지 허용목록, 10 MiB).
+    경로 전체·본문·토큰은 warnings·로그에 남기지 않는다.
+    """
+    ids: list[str] = []
+    names: list[str] = []
+    warnings: list[str] = []
+    for descriptor in media_files or ():
+        path = _media_path(descriptor)
+        try:
+            name = os.path.basename(os.fspath(path))
+        except TypeError:
+            warnings.append("(invalid): rejected")
+            continue
+        mime = STANDALONE_TYPES.get(os.path.splitext(name)[1].lower())
+        if mime is None:
+            warnings.append(f"{name}: unsupported_type")
+            continue
+        if len(ids) >= ATTACHMENTS_PER_MESSAGE_MAX:
+            warnings.append(f"{name}: too_many")
+            continue
+        loaded = await asyncio.to_thread(read_attachment_file, path, STANDALONE_TYPES)
+        if loaded is None:
+            warnings.append(f"{name}: {_reject_reason(path)}")
+            continue
+        data, mime, _ = loaded
+        try:
+            uploaded = await client.upload_attachment(str(chat_id), data, mime)
+        except (BotApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning("ohmyslack: standalone upload failed (%s)",
+                           exc.status if isinstance(exc, BotApiError) else type(exc).__name__)
+            warnings.append(f"{name}: upload_failed")
+            continue
+        attachment_id = str(uploaded.get("attachment_id") or "")
+        if not _is_uuid(attachment_id):
+            warnings.append(f"{name}: upload_failed")
+            continue
+        ids.append(attachment_id)
+        names.append(name)
+    return ids, names, warnings
+
+
 async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Optional[str] = None,
                           media_files=None, force_document: bool = False,
                           session_factory: Callable[[], aiohttp.ClientSession] = new_session) -> dict:
-    """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·첨부는 쓰지 않는다.
+    """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·`force_document`는 쓰지 않는다.
 
-    홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 보내지 않는다.
+    홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 업로드도 하지 않는다.
+    첨부(ADR-002 1a): 음성·이미지는 업로드해 첫 청크에 결속(라이브 `_send_attachment`와 같은 규칙), 지원 밖·없는 파일·
+    상한 초과·업로드 실패는 파일마다 `warnings`에 싣고 텍스트는 보낸다. `success`는 텍스트 전송 결과를 따른다.
     """
     from gateway.platforms._shared import send_error
     extra = getattr(pconfig, "extra", None) or {}
@@ -800,11 +870,20 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
             kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
             if kinds.get(str(chat_id)) != "dm":
                 return send_error("ohmyslack standalone send: home channel must be the owner DM")
-            for chunk in BasePlatformAdapter.truncate_message(message or "", OhmySlackAdapter.MAX_MESSAGE_LENGTH):
-                res = await client.post_message(str(chat_id), chunk)
+            attachment_ids, names, warnings = await _upload_standalone_media(client, str(chat_id), media_files)
+            text = message or (names[0] if names else "")
+            chunks = BasePlatformAdapter.truncate_message(text, OhmySlackAdapter.MAX_MESSAGE_LENGTH)
+            for i, chunk in enumerate(chunks):
+                res = await client.post_message(str(chat_id), chunk,
+                                                attachment_ids=attachment_ids if i == 0 and attachment_ids else None)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except BotApiError as exc:
             return send_error(f"ohmyslack standalone send: HTTP {exc.status}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             return send_error(f"ohmyslack standalone send: {type(exc).__name__}")
-    return {"success": True, "message_id": ids[-1] if ids else None}
+    out: dict[str, Any] = {"success": True, "message_id": ids[-1] if ids else None}
+    if warnings:
+        out["warnings"] = warnings
+    elif attachment_ids:
+        out["media_delivered"] = True  # Hermes generic 경로가 "MEDIA attachments were omitted"를 붙이지 않게
+    return out
