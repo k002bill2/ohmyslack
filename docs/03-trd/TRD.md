@@ -107,7 +107,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/sync/snapshot?conversation_id=&before_seq=&limit=` | cursor 만료(410) 또는 새 기기 초기화. 응답에 요청 시작점의 `snapshot_cursor`, 선택 대화의 현재 메시지 상태 페이지, `has_more`와 `next_before_seq` 포함 |
 | `PUT /api/read-state` | `{conversation_id,thread_root_id?,last_read_seq}`; 유효 위치 검사 후 단조 병합 |
 | `GET /api/healthz` | 비민감 상태만 공개 |
-| `POST /api/attachments?conversation_id=` | conversation write. 원시 바이트 body + `Content-Type`; 미결속 `attachment_id` 반환(§6-1) |
+| `POST /api/attachments?conversation_id=` | conversation write. 원시 바이트 body + `Content-Type`; 미결속 `attachment_id` 반환(§6-1). 문서는 `X-Attachment-Filename` 필수(§6-1-1) |
 | `GET /api/attachments/{id}` | `access: attachment`(첨부의 대화 read 검사). HTTP Range(206) 지원, 응답 헤더는 §6-1 |
 | `GET /api/push/vapid-public-key` | account. VAPID 공개키; push 비활성 시 404(§6-2) |
 | `POST /api/push/subscriptions`, `DELETE /api/push/subscriptions/{id}` | account. 현재 세션 기기의 구독 등록·해제(§6-2) |
@@ -118,7 +118,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 
 새 기기에 저장된 sync checkpoint가 없으면 먼저 현재 conversation list와 read snapshot을 읽고, 활성 대화별 `GET /api/sync/snapshot?conversation_id=...`에서 최근 100개 메시지 단위의 현재 상태를 채웁니다. 오래된 이력은 일반 messages paging으로 요청합니다. 첫 snapshot 응답의 `snapshot_cursor` 이후 모든 대화 snapshot 완료까지 `/api/sync?after=snapshot_cursor`로 다시 catch-up하고, conversation list/read snapshot을 한 번 더 읽은 뒤 catch-up watermark를 기기 checkpoint로 저장합니다. cursor 만료(410)도 같은 절차를 사용합니다. 체크포인트는 기기별 숫자 metadata만 저장할 수 있고 메시지 본문·인증 응답은 지속 저장하지 않습니다. 이 절차가 끝날 때까지 UI는 최신으로 표시하지 않습니다.
 
-상태 코드는 400 입력/범위 오류, 401 인증 또는 비활성 계정, 403 참여자가 관리자 권한/타인 메시지 쓰기를 요청한 경우, 404 비멤버가 대화 단위 자원에 접근한 경우(존재 은폐), 409 멱등 충돌, 410 만료 cursor, 413 첨부 상한 초과(§6-1), 415 허용목록 밖 첨부 형식(§6-1), 429 로그인 제한·봇 rate limit(§5-2), 5xx 일반 오류입니다. 모든 route에 schema와 payload 상한 검증을 적용합니다.
+상태 코드는 400 입력/범위 오류, 401 인증 또는 비활성 계정, 403 참여자가 관리자 권한/타인 메시지 쓰기를 요청한 경우, 404 비멤버가 대화 단위 자원에 접근한 경우(존재 은폐), 409 멱등 충돌, 410 만료 cursor, 413 첨부 상한 초과(§6-1), 415 허용목록 밖 첨부 형식(§6-1), 429 로그인 제한·봇 rate limit(§5-2)·사람 동시 업로드 상한(§6-1-1), 5xx 일반 오류입니다. 모든 route에 schema와 payload 상한 검증을 적용합니다.
 
 ## 4. WebSocket·동기화
 
@@ -233,7 +233,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 
 | 형식 | 저장 확장자 | 저장 MIME | 판정 규칙(모두 만족) |
 |---|---|---|---|
-| PDF | `.pdf` | `application/pdf` | 오프셋 0이 `%PDF-` |
+| PDF | `.pdf` | `application/pdf` | 오프셋 0이 `%PDF-` + 파일 끝 65,557바이트 안에 ZIP EOCD 서명 `PK\x05\x06`이 없음(있으면 PDF+ZIP 이중 해석으로 보고 415) |
 | Word (OOXML) | `.docx` / 매크로 시 `.docm` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` / `application/vnd.ms-word.document.macroEnabled.12` | ZIP 컨테이너(아래) + `[Content_Types].xml` 엔트리 + `word/document.xml` 엔트리 |
 | Excel (OOXML) | `.xlsx` / 매크로 시 `.xlsm` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` / `application/vnd.ms-excel.sheet.macroEnabled.12` | ZIP 컨테이너 + `[Content_Types].xml` + `xl/workbook.xml` |
 | PowerPoint (OOXML) | `.pptx` / 매크로 시 `.pptm` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` / `application/vnd.ms-powerpoint.presentation.macroEnabled.12` | ZIP 컨테이너 + `[Content_Types].xml` + `ppt/presentation.xml` |
@@ -246,7 +246,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 - **읽는 범위(불변식):** ZIP은 EOCD·중앙 디렉터리 **목록만**, OLE는 헤더·FAT/DIFAT·디렉터리 엔트리 **목록만** 읽습니다. 예외는 두 곳의 고정 길이 읽기뿐입니다: HWPX `mimetype`(무압축 저장 엔트리 19바이트), HWP `FileHeader` 첫 32바이트(미니 스트림 경유 가능). **압축 해제·XML 파싱·형식 변환·미리보기·썸네일·텍스트 추출은 서버에서 0입니다**(ADR-002 §5-7).
 - **ZIP 컨테이너 규칙:** 오프셋 0이 로컬 헤더 `PK\x03\x04`. EOCD(`PK\x05\x06`)는 파일 끝에서 22+주석 길이 위치에 정확히 하나이고 그 뒤 잔여 바이트 0. `cd_offset + cd_size = EOCD 오프셋`. 분할(다중 디스크)·ZIP64(`PK\x06\x06`/`PK\x06\x07`)·암호화 플래그(general purpose bit 0) 엔트리는 415. 엔트리 이름 중복·NUL 포함은 415.
 - **OLE 컨테이너 규칙:** 오프셋 0이 `D0 CF 11 E0 A1 B1 1A E1`, 바이트 순서 `FE FF`, 메이저 버전 3(섹터 512B) 또는 4(섹터 4,096B)만. 섹터 번호는 파일 섹터 수 미만이어야 하고 체인 순환은 방문 표식으로 즉시 415. 루트에 `EncryptionInfo`·`EncryptedPackage`가 있으면(암호 걸린 OOXML) 415.
-- **단일 일치 규칙(폴리글랏 차단):** 모든 판정기(§6-1 미디어 4종 + 위 9종)를 돌려 **정확히 하나**만 일치해야 저장합니다. 0개 또는 2개 이상(예: `%PDF-`로 시작하면서 끝에 유효한 ZIP EOCD·중앙 디렉터리, ZIP 안에 `word/document.xml`과 `xl/workbook.xml` 동시 존재)은 415입니다.
+- **단일 일치 규칙(폴리글랏 차단):** 모든 판정기(§6-1 미디어 4종 + 위 9종)를 돌려 **정확히 하나**만 일치해야 저장합니다. 0개 또는 2개 이상(예: ZIP 안에 `word/document.xml`과 `xl/workbook.xml` 동시 존재)은 415입니다. ZIP 판정은 오프셋 0 `PK\x03\x04`를 요구하므로 `%PDF-`로 시작하고 끝에 ZIP을 붙인 파일은 PDF 행의 EOCD 서명 검사로 415가 됩니다.
 - **선언 값:** 업로드 `Content-Type`은 판정 결과 MIME 또는 `application/octet-stream`일 때만 통과(그 밖은 415). 브라우저마다 문서 MIME 선언이 달라 미디어(§6-1, 선언=판정 일치 필수)보다 완화하되, 저장·응답 MIME은 항상 판정 결과입니다.
 - **확장자-형식 일치(415):** 원 파일명의 마지막 확장자(대소문자 무시)가 판정 형식의 허용 확장자여야 합니다. 매크로가 감지된 OOXML은 `.docm/.xlsm/.pptm`만 허용(`.docx` 등으로 오면 415 — ADR-002 §4-3-1). 매크로가 없는 OOXML은 `x`·`m` 두 확장자 모두 허용하고 원래 확장자를 유지합니다. 그 밖의 형식은 표의 확장자 1개만.
 
@@ -269,7 +269,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 **(3) 매크로 감지 → `has_macros`**
 
 - OOXML: 엔트리 이름이 `vbaProject.bin`으로 끝나는 것(대소문자 무시, 예 `word/vbaProject.bin`) 또는 `xl/macrosheets/` 아래 엔트리 → `has_macros = true`.
-- OLE(.doc/.xls/.ppt/.hwp): 디렉터리 어디든 `Macros`·`_VBA_PROJECT_CUR`·`VBA` 저장소 → `true`. ★ HWP는 `Scripts` 저장소(스크립트 매크로)도 `true`, HWPX는 `Scripts/` 아래 엔트리도 `true`.
+- OLE(.doc/.xls/.ppt/.hwp): 디렉터리 어디든 `Macros`·`_VBA_PROJECT_CUR`·`VBA` 저장소 → `true`. ★ HWP는 `Scripts` 저장소(스크립트 매크로)도 `true`, HWPX는 `Scripts/` 아래 엔트리도 `true`. 주의(확인 필요): 일반 HWP 저장본에도 `Scripts` 저장소(`DefaultJScript`·`JScriptVersion`)가 기본으로 들어 있을 수 있어, 그렇다면 사실상 「`.hwp`는 항상 `true`」(아래 `.xls`·`.ppt`와 같은 거짓 양성)가 됩니다. 1b S1이 매크로 없는 표본으로 확인한 뒤 스트림 크기 기준 등으로 좁힐지 정합니다.
 - ★ **목록으로 판정할 수 없는 경우 보수 표시:** `.xls`(Excel 4.0 매크로 시트는 `Workbook` 스트림 안)와 `.ppt`(VBA 저장소가 `PowerPoint Document` 스트림 안에 압축 저장)는 목록만으로 매크로 부재를 증명할 수 없으므로 항상 `has_macros = true`로 저장합니다(거짓 양성 수용).
 - PDF는 `has_macros = false`(PDF 능동 콘텐츠는 파싱하지 않음 — 다운로드 전용으로만 완화, THREAT_MODEL TM-ATT-07).
 - 응답 projection에 `has_macros`를 싣고 웹은 첨부 행에 텍스트 표지를 표시합니다(문구는 UI 명세·COPY_GAPS 소관).
@@ -289,7 +289,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 
 **(5) 원 파일명 저장·정규화**
 
-- 마이그레이션 ★`0005_attachment_documents.sql`: `attachments.mime` CHECK에 위 9종 MIME 추가, `byte_size` CHECK를 `BETWEEN 1 AND 26214400`으로(미디어 10 MiB는 서비스 검사), 컬럼 `filename text NULL`(기존 미디어 행은 NULL), `has_macros boolean NOT NULL DEFAULT false` 추가, `CHECK ((mime IN (<문서 9종>)) = (filename IS NOT NULL))`, `CHECK (filename IS NULL OR (char_length(filename) BETWEEN 1 AND 200 AND octet_length(filename) <= 255))`.
+- 현재 `attachments`에는 파일명 컬럼이 없습니다(`apps/server/migrations/0003_attachments.sql:5-27`, 마지막 번호 `0004_push.sql`). 마이그레이션 ★`0005_attachment_documents.sql`: `attachments.mime` CHECK에 위 9종 MIME 추가, `byte_size` CHECK를 `BETWEEN 1 AND 26214400`으로(미디어 10 MiB는 서비스 검사), 컬럼 `filename text NULL`(기존 미디어 행은 NULL), `has_macros boolean NOT NULL DEFAULT false` 추가, `CHECK ((mime IN (<문서 9종>)) = (filename IS NOT NULL))`, `CHECK (filename IS NULL OR (char_length(filename) BETWEEN 1 AND 200 AND octet_length(filename) <= 255))`.
 - 전달: ★ 요청 헤더 `X-Attachment-Filename`에 UTF-8 퍼센트 인코딩 값(인코딩 후 ≤ 1,024바이트, 초과·잘못된 UTF-8은 400). 쿼리 문자열은 프록시·이력에 남을 수 있어 쓰지 않습니다. 문서인데 헤더가 없으면 400.
 - ★ 정규화(서버, 순서대로): ① 퍼센트 디코드 → 유효 UTF-8 ② NFC ③ 마지막 `/`·`\` 뒤만 남김(basename) ④ C0(U+0000–001F)·DEL·C1(U+0080–009F)·양방향 제어(U+061C, U+200E–200F, U+202A–202E, U+2066–2069) 제거 ⑤ 앞뒤 공백·점 제거 ⑥ 확장자 분리 후 확장자는 판정 형식의 소문자 정규형으로 교체(예 `보고서.PDF` → `보고서.pdf`) ⑦ 줄기(stem)를 code point 경계에서 잘라 전체 ≤ 200 code point·≤ 255 UTF-8 바이트 ⑧ 줄기가 비면 `document`.
 - 파일명은 첨부 projection(`attachments[]`의 `filename`)에만 싣고 로그·계측·push payload에는 넣지 않습니다(B6, TR-SEC-15). 로그 카나리아(`check:log-leak`)에 합성 파일명을 추가합니다.
@@ -297,20 +297,20 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 **(6) 다운로드 응답(문서)**
 
 - `Content-Disposition: attachment; filename="<ASCII 대체>"; filename*=UTF-8''<퍼센트 인코딩>`(RFC 6266 §4.3 순서, RFC 5987 `attr-char` 밖은 모두 `%XX`). ASCII 대체는 정규화 이름에서 출력 가능 ASCII 밖 문자와 `"` `\` `%` `;`를 `_`로 바꾼 값입니다. 헤더 값에 원문 문자열을 그대로 넣지 않습니다(CR·LF 주입 불가).
-- `Content-Type`은 저장된 판정 MIME, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` 유지. **문서는 `inline` 금지**(형식 분기 누락을 테스트로 고정). Range(206)는 §6-1 그대로.
+- `Content-Type`은 저장된 판정 MIME, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` 유지. **문서는 `inline` 금지**(현재 다운로드는 형식과 무관하게 `inline` 고정 — `apps/server/src/modules/attachments/routes.ts:99`. 형식 분기 누락을 테스트로 고정). Range(206)는 §6-1 그대로.
 - SW 우회(`/api/attachments/**`)·지속 캐시 0 유지(FR-CLIENT-04).
 
 **(7) 보존·삭제·백업**
 
 - 문서 보존 **90일**(`ATTACHMENT_RETENTION_DAYS`에 `document: 90` 추가): 경과 시 바이트 삭제, 메타는 「만료된 첨부」 자리표시자(파일명·크기 표시는 UI 명세가 정함). 메시지 삭제 시 같은 트랜잭션에서 즉시 바이트 삭제(§6-1 규칙 재사용). 미결속 1시간 삭제 유지.
-- 백업·복원 드릴(FR-OPS-02) 측정 항목(1b 레인, 격리 테스트 DB·합성 데이터만): ① 합성 문서 0 / 0.5 / 1 GiB 적재 시 `pg_dump -Fc` 시간·덤프 크기 ② `pg_restore` 시간 ③ 드릴 대조 항목에 첨부 메타 수·`attachment_blobs` 바이트 합·sha256 표본 일치 추가 ④ 결과는 기록만(합격 임계는 확인 필요). 현재 드릴 합성 시드는 첨부 행이 0입니다.
+- 백업·복원 드릴(FR-OPS-02) 측정 항목(1b 레인, 격리 테스트 DB·합성 데이터만): ① 합성 문서 0 / 0.5 / 1 GiB 적재 시 `pg_dump -Fc` 시간·덤프 크기 ② `pg_restore` 시간 ③ 드릴 대조 항목에 첨부 메타 수·`attachment_blobs` 바이트 합·sha256 표본 일치 추가 ④ 결과는 기록만(합격 임계는 확인 필요). 현재 드릴 합성 시드는 첨부 행이 0입니다(`tools/restore-drill/sql.ts:31-59`).
 
 **(8) 방향과 Hermes 경계**
 
-- **봇 → 사람:** Hermes가 어댑터 `send_document(chat_id, file_path, caption, file_name, reply_to, metadata)`를 호출하면 어댑터는 기존 업로드 경로(`O_NOFOLLOW`·일반 파일·1B–25 MiB 읽기 → `POST /api/bot/v1/attachments` + `X-Attachment-Filename`(= `file_name` 또는 `file_path` basename) → 메시지 생성 `attachment_ids`)를 씁니다. 415·413·429는 텍스트 대체 + 실패를 Hermes 결과(`success=False` 또는 `warnings`)로 올립니다(1a와 같은 원칙). 본문은 caption, 없으면 정규화 파일명(TRD §2 본문 필수 규칙).
+- **봇 → 사람:** Hermes가 어댑터 `send_document(chat_id, file_path, caption, file_name, reply_to, metadata)`를 호출하면 어댑터는 현재 `send_document`가 텍스트 대체뿐이므로(`integrations/hermes-plugin/ohmyslack/adapter.py:759-761`) 기존 음성·이미지 업로드 경로(`O_NOFOLLOW`·일반 파일 읽기 `adapter.py:80-117`, 상한만 25 MiB로; 1B–25 MiB 읽기 → `POST /api/bot/v1/attachments` + `X-Attachment-Filename`(= `file_name` 또는 `file_path` basename) → 메시지 생성 `attachment_ids`)를 씁니다. 415·413·429는 텍스트 대체 + 실패를 Hermes 결과(`success=False` 또는 `warnings`)로 올립니다(1a와 같은 원칙). 본문은 caption, 없으면 정규화 파일명(TRD §2 본문 필수 규칙).
 - **사람 → 봇:** 웹 업로드 → 메시지 결속 → 어댑터가 owner 작성 메시지(TM-BOT-04 allowlist)의 문서 첨부만 `GET /api/bot/v1/attachments/{id}`로 받습니다(상한 25 MiB, 만료·삭제 첨부는 건너뜀) → Hermes 문서 캐시에 저장 → 세션에는 파일 경로 안내만 전달합니다.
-- **어댑터 문서 캐시 경계:** Hermes 문서 캐시 디렉터리(0700)만 사용하고 어댑터 자체 디렉터리를 만들지 않습니다. 파일 이름은 Hermes가 붙이는 무작위 접두사 + 정규화 파일명이며 서버가 정한 확장자를 씁니다. 삭제 시점은 Hermes 미디어 캐시 정리(약 24시간 + 정리 주기)이고, ★ 어댑터는 같은 메시지가 삭제(`message.deleted`)되면 해당 캐시 파일을 즉시 지웁니다. 캐시 파일은 서버 90일 보존보다 짧아야 합니다.
-- **Hermes 측 처리:** 받은 문서는 텍스트 추출만 하고 Office 앱 실행·매크로 실행·형식 변환을 하지 않습니다. 추출 입력 상한 = 25 MiB. HWP/HWPX 추출기는 현재 없음(확인 필요 — 경로 안내만). 추출 텍스트는 신뢰할 수 없는 입력으로 다룹니다(THREAT_MODEL TM-ATT-09).
+- **어댑터 문서 캐시 경계:** 현재 어댑터 인바운드는 이미지만 넘깁니다(`adapter.py:545-569`). Hermes 문서 캐시 디렉터리(0700, `~/.hermes/hermes-agent/gateway/platforms/base.py:567-598`·`:724`)만 사용하고 어댑터 자체 디렉터리를 만들지 않습니다. 파일 이름은 Hermes가 붙이는 무작위 접두사 + 정규화 파일명이며(`base.py:1417-1430`; 이 함수는 크기 검사를 하지 않으므로 어댑터 상한이 유일한 크기 통제) 서버가 정한 확장자를 씁니다. 삭제 시점은 Hermes 미디어 캐시 정리(약 24시간 + 정리 주기, `~/.hermes/hermes-agent/agent/provider_media.py:25`)이고, ★ 어댑터는 같은 메시지가 삭제(`message.deleted`)되면 해당 캐시 파일을 즉시 지웁니다. 캐시 파일은 서버 90일 보존보다 짧아야 합니다.
+- **Hermes 측 처리:** 받은 문서는 텍스트 추출만 하고 Office 앱 실행·매크로 실행·형식 변환을 하지 않습니다. 추출 입력 상한 = 25 MiB. HWP/HWPX 추출기는 현재 없음(Hermes 코드 검색 기준, 확인 필요 — 경로 안내만). Hermes 추출 경로가 추출 패키지를 실행 시점에 설치할 수 있으므로(`~/.hermes/hermes-agent/tools/read_extract.py:59-90`) 인바운드 문서 처리 전 설치 상태를 고정하는지 확인 필요입니다. 추출 텍스트는 신뢰할 수 없는 입력으로 다룹니다(THREAT_MODEL TM-ATT-09).
 
 ### 6-2. Web Push (R3.3, ADR-001 §3-i, PRD FR-CLIENT-05)
 
