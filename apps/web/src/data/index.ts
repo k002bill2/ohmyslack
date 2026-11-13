@@ -92,6 +92,13 @@ export interface Snapshot {
 /** `timedOut`: 응답 없음 중 시간 상한 초과(REQUEST_TIMEOUT_MS) — 서버 동작 여부를 확인하지 못했다(`ERROR_COPY.timeout`). */
 export type ActionFailure = { readonly status: number; readonly code?: string } | { readonly status: 'network'; readonly timedOut?: true };
 
+/** 첨부 업로드 옵션: 문서·텍스트는 원 파일명(`X-Attachment-Filename`, 퍼센트 인코딩)·선언 형식, `signal`은 취소. */
+export interface UploadAttachmentOptions {
+  readonly filename?: string;
+  readonly type?: string;
+  readonly signal?: AbortSignal;
+}
+
 /** 공간 진입 동작 결과. */
 export type ActionResult<T> = { readonly ok: true; readonly value: T } | ({ readonly ok: false } & ActionFailure);
 
@@ -164,7 +171,7 @@ export interface DataSource extends SpacesApi, MembershipApi {
   /** Web Push 구독 API(W-23, CMP-30). 없으면 PushSettings를 렌더하지 않는다. */
   readonly push?: PushServerApi;
   /** `POST /api/attachments?conversation_id=`(원시 바이트, W-21). 성공하면 미결속 첨부 — `send`의 `attachmentIds`로 결속한다. */
-  uploadAttachment?(conversationId: string, file: Blob): Promise<ActionResult<AttachmentView>>;
+  uploadAttachment?(conversationId: string, file: Blob, options?: UploadAttachmentOptions): Promise<ActionResult<AttachmentView>>;
   /** 현재 대화가 바뀔 때 호출(구독·이력 로드). 메모리 구현은 없음. */
   open?(conversationId: string | null): void;
   /** 스레드를 열거나(root id) 닫을 때(null) 호출 — 기존 답글 조회. 메모리 구현은 없음. */

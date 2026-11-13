@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { ATTACHMENT_COPY } from '../../../ui/copy.js';
-import { COMPOSER_ACCEPT, formatBytes, type ComposerChip } from './composer-upload.js';
+import { formatBytes, type ComposerChip } from './composer-upload.js';
+import { COMPOSER_ACCEPT, composerKindLabel } from './file-kinds.js';
 import './attachments.css';
 
 export interface ComposerAttachmentsProps {
@@ -10,11 +11,28 @@ export interface ComposerAttachmentsProps {
   readonly onAdd: (files: readonly File[]) => void;
   readonly onRemove: (key: number) => void;
   readonly onRetry: (key: number) => void;
+  /** 마지막 칩이 사라졌을 때 포커스 대상(작성기 입력란, UI_STATES §2-13 「사라진 트리거」). */
+  readonly onEmptied?: () => void;
 }
 
-/** Composer 첨부(이미지 업로드): 파일 선택 버튼 + 칩(파일명·크기·제거) + 실패 알림 1개(`role="alert"`). Jarvis ★ 임시 결정(Q-H3). */
-export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, onRetry }: ComposerAttachmentsProps) {
+/**
+ * Composer 첨부(이미지·문서 업로드, UI_STATES §2-6·§2-13): 「파일 첨부」 버튼(G-53) + 칩(형식 표지·파일명·크기·제거) + 실패 알림 1개(`role="alert"`).
+ * 제거 뒤 포커스: 다음 칩의 「첨부 제거」 → 없으면 이전 칩 → 없으면 입력란.
+ */
+export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, onRetry, onEmptied }: ComposerAttachmentsProps) {
   const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLUListElement>(null);
+  const removeAndRefocus = (key: number) => {
+    const index = chips.findIndex((c) => c.key === key);
+    const target = chips[index + 1] ?? chips[index - 1];
+    onRemove(key);
+    if (target === undefined) {
+      onEmptied?.();
+      return;
+    }
+    // 다음 렌더 뒤에도 남는 칩의 제거 버튼(키로 찾는다).
+    queueMicrotask(() => list.current?.querySelector<HTMLButtonElement>(`[data-chip-key="${target.key}"]`)?.focus());
+  };
   const failed = chips.filter((c) => c.status === 'failed');
   const lastFailed = failed[failed.length - 1];
   return (
@@ -32,7 +50,7 @@ export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, o
           e.target.value = '';
         }}
       />
-      {/* R4 시안: 작성기 아래 줄 아이콘 버튼(접근 이름·툴팁 = 기존 「이미지 첨부」). */}
+      {/* R4 시안: 작성기 아래 줄 아이콘 버튼(`paperclip`, 접근 이름·툴팁 = 「파일 첨부」 G-53). */}
       <button
         type="button"
         className="composer-tool composer-attach"
@@ -41,31 +59,51 @@ export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, o
         disabled={full}
         onClick={() => input.current?.click()}
       >
-        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
-          <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="2.5" width="12" height="11" rx="2" />
-            <circle cx="6" cy="6.5" r="1.25" />
-            <path d="m14 11-3.5-3.5L4 14" />
-          </g>
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <path
+            d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </button>
       {chips.length > 0 && (
-        <ul className="composer-chips" aria-busy={uploading}>
-          {chips.map((c) => (
-            <li key={c.key} className={`composer-chip composer-chip-${c.status}`}>
-              <span className="composer-chip-name">{c.file.name}</span>
-              <span className="composer-chip-size">{formatBytes(c.file.size)}</span>
-              {c.status === 'uploading' && <span className="composer-chip-state">{ATTACHMENT_COPY.uploading}</span>}
-              <button type="button" className="msg-action" aria-label={`${ATTACHMENT_COPY.remove}: ${c.file.name}`} onClick={() => onRemove(c.key)}>
-                {ATTACHMENT_COPY.remove}
-              </button>
-            </li>
-          ))}
+        <ul ref={list} className="composer-chips" aria-busy={uploading}>
+          {chips.map((c) => {
+            const label = composerKindLabel(c.file.name);
+            return (
+              <li key={c.key} className={`composer-chip composer-chip-${c.status}`} aria-busy={c.status === 'uploading'}>
+                {label !== null && <span className="composer-chip-kind">{label}</span>}
+                <span className="composer-chip-name" title={c.file.name}>
+                  {c.file.name}
+                </span>
+                <span className="composer-chip-size">{formatBytes(c.file.size)}</span>
+                {c.status === 'uploading' && (
+                  <span className="composer-chip-state">
+                    <span className="composer-chip-progress" aria-hidden="true" />
+                    {ATTACHMENT_COPY.uploading}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="msg-action"
+                  data-chip-key={c.key}
+                  aria-label={`${ATTACHMENT_COPY.remove}: ${c.file.name}`}
+                  onClick={() => removeAndRefocus(c.key)}
+                >
+                  {ATTACHMENT_COPY.remove}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {lastFailed !== undefined && (
         <div className="composer-attach-error" role="alert">
-          <span>{lastFailed.error ?? ATTACHMENT_COPY.uploadFailed}</span>
+          <span>{lastFailed.error ?? ATTACHMENT_COPY.unsupported}</span>
           {lastFailed.retryable !== false && (
             <button type="button" className="msg-action" onClick={() => onRetry(lastFailed.key)}>
               {ATTACHMENT_COPY.retry}
