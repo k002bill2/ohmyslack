@@ -14,6 +14,7 @@ import { DocSniffError } from './doc-budget.js';
 import { checkExtension, classify } from './doc-sniff.js';
 import { decodeFilenameHeader, finalizeFilename, parseFilename } from './filename.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
+import type { OpsLogger } from '../ops/logger.js';
 import type { AttachmentMeta, AttachmentsStore, RetentionResult } from './repo.js';
 
 /** 첨부 서비스(정본: TRD §6-1, DEV_DESIGN B10). 사람·봇 라우트가 같은 인스턴스를 쓴다(TRD §5-2 6항). */
@@ -23,6 +24,8 @@ export interface AttachmentsServiceDeps {
   readonly clock: () => number;
   /** 판정기 벽시계 보조 상한용 시계(기본 performance.now). 테스트는 가짜 시계를 주입한다. */
   readonly sniffClock?: () => number;
+  /** 판정 벽시계 상한 초과 기록용(TRD §6-1-1 (2) `reason=sniff_deadline`). 본문·파일명은 넘기지 않는다(B6). */
+  readonly logger?: OpsLogger;
 }
 
 export interface Download {
@@ -62,13 +65,23 @@ interface Judged {
   readonly height: number | null;
 }
 
+const SNIFF_DEADLINE_REASON = 'sniff_deadline';
+/** 허용 필드 목록(B6)에 `reason`이 없으므로 `error_code`에 담는다. 본문·파일명·ID는 넣지 않는다. */
+const SNIFF_DEADLINE_LOG = Object.freeze({ event: 'attachment_sniff_deadline', error_code: SNIFF_DEADLINE_REASON });
+
 const unsupported = (): HttpError => new HttpError(415, 'unsupported_media_type');
 
 /**
  * TRD §6-1-1 (4) 순서: body 상한 413 → 0바이트 400 → 판정 415 → 종류별 상한(미디어 10 MiB 413) → 확장자 415 → 저장.
  * 파일명 헤더 형식 오류·문서인데 헤더 없음은 400.
  */
-export function judge(declared: string, bytes: Buffer, filenameHeader: string | undefined, sniffNow: () => number): Judged {
+export function judge(
+  declared: string,
+  bytes: Buffer,
+  filenameHeader: string | undefined,
+  sniffNow: () => number,
+  onDeadline: () => void = () => undefined,
+): Judged {
   if (bytes.length > ATTACHMENT_DOC_MAX_BYTES) throw new HttpError(413, 'payload_too_large');
   if (bytes.length === 0) throw new HttpError(400, 'invalid_request');
   const decoded = filenameHeader === undefined ? undefined : decodeFilenameHeader(filenameHeader);
@@ -79,6 +92,7 @@ export function judge(declared: string, bytes: Buffer, filenameHeader: string | 
     match = classify(bytes, parsed?.ext ?? '', { now: sniffNow, deadline: sniffNow() + DOC_SNIFF_DEADLINE_MS });
   } catch (error) {
     if (!(error instanceof DocSniffError)) throw error;
+    if (error.reason === SNIFF_DEADLINE_REASON) onDeadline();
     // 파일명 없는 UTF-8 본문은 텍스트 계열로 확정할 수 없어 형식 밖(415 unsupported_media_type) — 기존 HTML 415 기대값 유지.
     throw new HttpError(415, error.code);
   }
@@ -102,10 +116,11 @@ export function isExpired(meta: AttachmentMeta, now: number): boolean {
 export function createAttachmentsService(deps: AttachmentsServiceDeps): AttachmentsService {
   const { store, conversations, clock } = deps;
   const sniffNow = deps.sniffClock ?? (() => performance.now());
+  const onDeadline = (): void => deps.logger?.log(SNIFF_DEADLINE_LOG);
   return {
     async upload(uploaderId, conversationId, declared, bytes, filenameHeader) {
       // 형식은 내용으로만 판정한다. 선언 Content-Type은 판정 결과와 비교만 한다(TRD §6-1·§6-1-1).
-      const sniffed = judge(declared, bytes, filenameHeader, sniffNow);
+      const sniffed = judge(declared, bytes, filenameHeader, sniffNow, onDeadline);
       const now = clock();
       return store.insert({
         id: randomUUID(),
