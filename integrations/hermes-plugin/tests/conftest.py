@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Hermes 진입 부트스트랩(`gateway.run` 등이 import)은 의존성 준비·프로세스 재실행(execv)을 한다 — 테스트 프로세스에서는
 # 절대 돌지 않게 빈 모듈로 막는다(Hermes 본체는 수정하지 않는다).
 sys.modules.setdefault("hermes_bootstrap", types.ModuleType("hermes_bootstrap"))
+# Hermes 체크아웃은 읽기 전용: import한 Hermes 모듈의 .pyc를 그 안 `__pycache__`에 쓰지 않는다.
+sys.dont_write_bytecode = True
 
 FIXTURE_BEARER = "omsb_fixture-1"  # 가짜 서버 전용 fixture 값(실제 토큰 아님)
 TOKEN = FIXTURE_BEARER
