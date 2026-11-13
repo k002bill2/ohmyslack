@@ -51,12 +51,12 @@ export function LeaveChannelControl({ onLeave, renderTrigger }: LeaveChannelCont
       )}
       {open &&
         createPortal(
-          <Dialog title={LEAVE_CHANNEL_COPY.title} onClose={close}>
+          <Dialog title={LEAVE_CHANNEL_COPY.title} onClose={close} busy={busy}>
             <div className="dialog-form">
               <p>{LEAVE_CHANNEL_COPY.body}</p>
               {failure !== null && <ErrorState message={failureText(failure)} />}
               <div className="dialog-actions">
-                <button type="button" className="btn btn-secondary" onClick={close}>
+                <button type="button" className="btn btn-secondary" disabled={busy} onClick={close}>
                   {CANCEL_LABEL}
                 </button>
                 <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void confirm()}>

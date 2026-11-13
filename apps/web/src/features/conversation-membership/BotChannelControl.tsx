@@ -127,12 +127,12 @@ export function useBotChannelMenu(control: BotChannelControlProps | undefined, s
     removing === null
       ? null
       : createPortal(
-          <Dialog title={title} onClose={close}>
+          <Dialog title={title} onClose={close} busy={busy}>
             <div className="dialog-form">
               <p>{BOT_CHANNEL_COPY.body}</p>
               {removeFailure !== null && <ErrorState message={failureText(removeFailure)} />}
               <div className="dialog-actions">
-                <button type="button" className="btn btn-secondary" onClick={close}>
+                <button type="button" className="btn btn-secondary" disabled={busy} onClick={close}>
                   {CANCEL_LABEL}
                 </button>
                 <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void confirm(removing)}>

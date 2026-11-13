@@ -186,18 +186,21 @@ describe('채널 나가기 — 요청 중·실패 뒤 포커스', () => {
     return { dialog: screen.getByRole('dialog'), more };
   }
 
-  it('요청 중 Dialog 안 → Esc로 닫힘·「대화 더보기」 복귀', async () => {
+  // action-timeout C2: 요청 중 Esc는 닫지 않는다(닫아도 요청은 취소되지 않음 — PR 26 QA §4-1). 응답 뒤 Esc로 닫힘.
+  it('요청 중 Dialog 안 → Esc로 닫히지 않고, 응답 뒤 Esc로 닫힘·「대화 더보기」 복귀', async () => {
     const pending = deferred<{ status: number }>();
     const { dialog, more } = await open(pending.promise);
     await pressConfirm(dialog, LEAVE_CHANNEL_COPY.confirm);
     expectFocusInside(dialog);
     escape();
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(document.activeElement).toBe(more);
-    // 닫은 뒤 늦게 온 결과는 버린다(attempt 무효화 — 기존 규칙).
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expectFocusInside(dialog);
     pending.resolve({ status: 500 });
     await settle();
+    expect(within(dialog).getByRole('alert')).toBeTruthy();
+    escape();
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(more);
   });
 
   it('실패 뒤에도 Dialog 안 → Esc로 닫힘', async () => {
@@ -229,10 +232,16 @@ describe('봇 제거 — 요청 중·실패 뒤 포커스', () => {
     return { dialog: screen.getByRole('dialog', { name: BOT_CHANNEL_COPY.title(BOT.displayName) }), pending };
   }
 
-  it('요청 중 Dialog 안 → Esc로 닫힘', async () => {
-    const { dialog } = await open();
+  // action-timeout C2: 요청 중 Esc는 닫지 않는다. 응답 뒤 Esc로 닫힘.
+  it('요청 중 Dialog 안 → Esc로 닫히지 않고, 응답 뒤 Esc로 닫힘', async () => {
+    const { dialog, pending } = await open();
     await pressConfirm(dialog, BOT_CHANNEL_COPY.confirm);
     expectFocusInside(dialog);
+    escape();
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expectFocusInside(dialog);
+    pending.resolve({ ok: false, status: 'network' });
+    await settle();
     escape();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).not.toBe(document.body);
@@ -272,10 +281,16 @@ describe('메시지 삭제 — 요청 중·실패 뒤 포커스', () => {
     return { dialog: screen.getByRole('dialog', { name: DELETE_MESSAGE_COPY.title }), pending, trigger };
   }
 
-  it('요청 중 Dialog 안 → Esc로 닫힘·트리거 복귀', async () => {
-    const { dialog, trigger } = await open();
+  // action-timeout C2: 요청 중 Esc는 닫지 않는다. 응답 뒤 Esc로 닫힘.
+  it('요청 중 Dialog 안 → Esc로 닫히지 않고, 응답 뒤 Esc로 닫힘·트리거 복귀', async () => {
+    const { dialog, pending, trigger } = await open();
     await pressConfirm(dialog, DELETE_MESSAGE_COPY.confirm);
     expectFocusInside(dialog);
+    escape();
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expectFocusInside(dialog);
+    pending.resolve({ ok: false, status: 'network' });
+    await settle();
     escape();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(trigger);

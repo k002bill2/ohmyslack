@@ -33,11 +33,11 @@ export function DeleteMessageDialog({ onConfirm, onClose, onDeleted }: DeleteMes
 
   // 앱 전체를 inert로 — 메시지 목록 안에 렌더하면 형제만 막힌다(W-10h와 같은 portal).
   return createPortal(
-    <Dialog title={DELETE_MESSAGE_COPY.title} onClose={onClose}>
+    <Dialog title={DELETE_MESSAGE_COPY.title} onClose={onClose} busy={busy}>
       <p>{DELETE_MESSAGE_COPY.body}</p>
       {failure !== null && <ErrorState message={failure.text} {...(failure.retryable ? { onRetry: () => void confirm() } : {})} />}
       <div className="dialog-actions">
-        <button type="button" className="btn btn-secondary" onClick={onClose}>
+        <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose}>
           {CANCEL_LABEL}
         </button>
         {(failure === null || failure.retryable) && (
