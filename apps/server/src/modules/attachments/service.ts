@@ -42,7 +42,7 @@ export interface AttachmentsService {
   upload(uploaderId: string, conversationId: string, declared: string, bytes: Buffer, filenameHeader?: string, check?: InTxCheck): Promise<AttachmentMeta>;
   /**
    * `attachment` 메타 라우트의 접근 판정(B2): 첨부 ID로 대화를 해석한 뒤 `conversations.service.assertAccess` **하나**로 판정한다.
-   * 없는 첨부는 존재를 숨기고 404.
+   * 없는 첨부는 존재를 숨기고 404. 미결속 첨부는 업로더 외에는 404(SR-D-04).
    */
   resolveAccess(userId: string, attachmentId: string, action: AccessAction): Promise<AttachmentMeta>;
   /** 바이트 읽기. 삭제·만료(expired)는 404. */
@@ -157,6 +157,8 @@ export function createAttachmentsService(deps: AttachmentsServiceDeps): Attachme
       const meta = await store.get(attachmentId);
       if (meta === undefined) throw notFound();
       await conversations.assertAccess(userId, meta.conversationId, action);
+      // 미결속 첨부는 업로더만(SR-D-04, 봇 경로와 같은 규칙). 다른 멤버에게는 없는 첨부와 같은 404로 존재를 숨긴다.
+      if (meta.messageId === null && meta.uploaderId !== userId) throw notFound();
       return meta;
     },
     async read(meta) {
