@@ -799,16 +799,45 @@ def _reject_reason(path: Any) -> str:
     return "rejected"
 
 
-async def _upload_standalone_media(client: BotClient, chat_id: str,
-                                   media_files: Any) -> tuple[list[str], list[str], list[str]]:
+# standalone 업로드 전체가 쓰는 공유 시간 예산(초). Hermes는 standalone 전송 전체를 기본 60초
+# (`cron.standalone_send_timeout_seconds`)에 끊는다 — 넘으면 텍스트·warnings 모두 사라진다. `/me` 조회·텍스트 게시
+# (청크·재시도)와 여유를 남기려고 업로드에는 35초만 쓴다.
+STANDALONE_UPLOAD_BUDGET_S = 35.0
+
+
+async def _upload_one(client: BotClient, chat_id: str, data: bytes, mime: str,
+                      remaining: Callable[[], float]) -> tuple[Optional[str], str]:
+    """업로드 1건 → (첨부 ID, 실패 사유). 남은 예산으로 감싸고, 예산보다 긴 재시도 대기는 하지 않는다."""
+    try:
+        uploaded = await asyncio.wait_for(client.upload_attachment(chat_id, data, mime, remaining=remaining),
+                                          timeout=max(remaining(), 0.0))
+    except (BotApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        logger.warning("ohmyslack: standalone upload failed (%s)",
+                       exc.status if isinstance(exc, BotApiError) else type(exc).__name__)
+        timed_out = isinstance(exc, asyncio.TimeoutError) and remaining() <= 0
+        return None, "budget_exceeded" if timed_out else "upload_failed"
+    attachment_id = str(uploaded.get("attachment_id") or "")
+    return (attachment_id, "") if _is_uuid(attachment_id) else (None, "upload_failed")
+
+
+async def _upload_standalone_media(client: BotClient, chat_id: str, media_files: Any, *,
+                                   budget: float = STANDALONE_UPLOAD_BUDGET_S,
+                                   clock: Callable[[], float] = time.monotonic,
+                                   ) -> tuple[list[str], list[str], list[str]]:
     """standalone 첨부 업로드 → (첨부 ID, 파일명, warnings). 실패는 파일마다 `"<basename>: <사유>"` 한 줄.
 
     판정·상한은 라이브 `_send_attachment`와 같다(read_attachment_file, 음성·이미지 허용목록, 10 MiB).
-    경로 전체·본문·토큰은 warnings·로그에 남기지 않는다.
+    시도는 지원 형식 앞 ATTACHMENTS_PER_MESSAGE_MAX개까지(성공 여부 무관), 전체는 `budget`초(단조 `clock`) 안에서만 —
+    예산이 다 되면 남은 파일은 업로드하지 않고 `budget_exceeded`. 경로 전체·본문·토큰은 warnings·로그에 남기지 않는다.
     """
+    deadline = clock() + budget
+
+    def remaining() -> float:
+        return deadline - clock()
     ids: list[str] = []
     names: list[str] = []
     warnings: list[str] = []
+    attempts = 0
     for descriptor in media_files or ():
         path = _media_path(descriptor)
         try:
@@ -816,28 +845,24 @@ async def _upload_standalone_media(client: BotClient, chat_id: str,
         except TypeError:
             warnings.append("(invalid): rejected")
             continue
-        mime = STANDALONE_TYPES.get(os.path.splitext(name)[1].lower())
-        if mime is None:
+        if STANDALONE_TYPES.get(os.path.splitext(name)[1].lower()) is None:
             warnings.append(f"{name}: unsupported_type")
             continue
-        if len(ids) >= ATTACHMENTS_PER_MESSAGE_MAX:
+        attempts += 1
+        if attempts > ATTACHMENTS_PER_MESSAGE_MAX:
             warnings.append(f"{name}: too_many")
+            continue
+        if remaining() <= 0:
+            warnings.append(f"{name}: budget_exceeded")
             continue
         loaded = await asyncio.to_thread(read_attachment_file, path, STANDALONE_TYPES)
         if loaded is None:
             warnings.append(f"{name}: {_reject_reason(path)}")
             continue
         data, mime, _ = loaded
-        try:
-            uploaded = await client.upload_attachment(str(chat_id), data, mime)
-        except (BotApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.warning("ohmyslack: standalone upload failed (%s)",
-                           exc.status if isinstance(exc, BotApiError) else type(exc).__name__)
-            warnings.append(f"{name}: upload_failed")
-            continue
-        attachment_id = str(uploaded.get("attachment_id") or "")
-        if not _is_uuid(attachment_id):
-            warnings.append(f"{name}: upload_failed")
+        attachment_id, reason = await _upload_one(client, str(chat_id), data, mime, remaining)
+        if attachment_id is None:
+            warnings.append(f"{name}: {reason}")
             continue
         ids.append(attachment_id)
         names.append(name)
@@ -846,12 +871,15 @@ async def _upload_standalone_media(client: BotClient, chat_id: str,
 
 async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Optional[str] = None,
                           media_files=None, force_document: bool = False,
-                          session_factory: Callable[[], aiohttp.ClientSession] = new_session) -> dict:
+                          session_factory: Callable[[], aiohttp.ClientSession] = new_session,
+                          upload_budget: float = STANDALONE_UPLOAD_BUDGET_S,
+                          clock: Callable[[], float] = time.monotonic) -> dict:
     """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·`force_document`는 쓰지 않는다.
 
     홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 업로드도 하지 않는다.
     첨부(ADR-002 1a): 음성·이미지는 업로드해 첫 청크에 결속(라이브 `_send_attachment`와 같은 규칙), 지원 밖·없는 파일·
-    상한 초과·업로드 실패는 파일마다 `warnings`에 싣고 텍스트는 보낸다. `success`는 텍스트 전송 결과를 따른다.
+    상한 초과·업로드 실패·시간 예산 초과는 파일마다 `warnings`에 싣고 텍스트는 보낸다. `success`는 텍스트 전송 결과를 따른다.
+    업로드는 `upload_budget`초(단조 `clock`) 안에서만 한다 — Hermes 전체 상한 안에 텍스트·warnings가 나가야 하므로.
     """
     from gateway.platforms._shared import send_error
     extra = getattr(pconfig, "extra", None) or {}
@@ -870,7 +898,8 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
             kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
             if kinds.get(str(chat_id)) != "dm":
                 return send_error("ohmyslack standalone send: home channel must be the owner DM")
-            attachment_ids, names, warnings = await _upload_standalone_media(client, str(chat_id), media_files)
+            attachment_ids, names, warnings = await _upload_standalone_media(client, str(chat_id), media_files,
+                                                                            budget=upload_budget, clock=clock)
             text = message or (names[0] if names else "")
             chunks = BasePlatformAdapter.truncate_message(text, OhmySlackAdapter.MAX_MESSAGE_LENGTH)
             for i, chunk in enumerate(chunks):

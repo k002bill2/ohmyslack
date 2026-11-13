@@ -143,3 +143,97 @@ async def test_non_dm_target_refused_before_upload(server, tmp_path):
     out = await standalone_send(_cfg(server), CHANNEL_ID, "브리핑", media_files=[(path, True)])
     assert "error" in out
     assert server.uploads == [] and _ok_posts(server) == []
+
+
+# ---- Codex r1 P1: Hermes 전체 상한(기본 60초) 안에서 텍스트·warnings가 반드시 나가야 한다 ----
+
+class FakeClock:
+    """단조 시계 대역. 가짜 sleep이 시계를 앞당긴다(실제 대기 0)."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, delay: float) -> None:
+        self.sleeps.append(delay)
+        self.now += delay
+
+
+async def _send_clocked(server, message, media_files, clock, monkeypatch, **kwargs):
+    import ohmyslack.adapter as adapter_mod
+    monkeypatch.setattr(adapter_mod, "BotClient", functools.partial(adapter_mod.BotClient, sleep=clock.sleep))
+    return await adapter_mod.standalone_send(_cfg(server), DM_ID, message, media_files=media_files,
+                                             clock=clock, **kwargs)
+
+
+async def test_upload_429_with_retry_after_beyond_budget_gives_up_at_once(server, tmp_path, monkeypatch):
+    from ohmyslack.adapter import STANDALONE_UPLOAD_BUDGET_S
+    clock = FakeClock()
+    start = clock.now
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    server.upload_status = [429]
+    server.upload_retry_after = "60"
+    out = await _send_clocked(server, "아침 브리핑", [(path, True)], clock, monkeypatch)
+    assert out["success"] is True
+    assert out["warnings"] == ["briefing.mp3: upload_failed"]
+    assert len(server.uploads) == 1 and clock.sleeps == []  # 남은 예산보다 긴 Retry-After는 기다리지 않는다
+    assert clock.now - start <= STANDALONE_UPLOAD_BUDGET_S
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and "attachment_ids" not in posts[0]
+
+
+async def test_slow_upload_exhausting_budget_skips_rest_as_budget_exceeded(server, tmp_path, monkeypatch):
+    import ohmyslack.adapter as adapter_mod
+    clock = FakeClock()
+    real_upload = adapter_mod.BotClient.upload_attachment
+    calls: list[str] = []
+
+    async def slow_upload(self, *args, **kwargs):
+        calls.append("upload")
+        res = await real_upload(self, *args, **kwargs)
+        clock.now += adapter_mod.STANDALONE_UPLOAD_BUDGET_S + 1  # 첫 업로드가 예산을 다 쓴다
+        return res
+    monkeypatch.setattr(adapter_mod.BotClient, "upload_attachment", slow_upload)
+    real_read = adapter_mod.read_attachment_file
+    reads: list[str] = []
+
+    def counting_read(path, *args):
+        reads.append(Path(path).name)
+        return real_read(path, *args)
+    monkeypatch.setattr(adapter_mod, "read_attachment_file", counting_read)
+    paths = [(_write(tmp_path, f"p{i}.png", PNG), False) for i in range(3)]
+    out = await _send_clocked(server, "차트", paths, clock, monkeypatch)
+    assert out["success"] is True
+    assert out["warnings"] == ["p1.png: budget_exceeded", "p2.png: budget_exceeded"]
+    assert len(server.uploads) == 1 and calls == ["upload"]  # 예산 소진 뒤에는 업로드를 시작하지도 않는다
+    assert reads == ["p0.png"]  # 파일도 읽지 않는다
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and posts[0]["attachment_ids"] == [server.uploads[0]["attachment_id"]]
+
+
+async def test_hanging_upload_is_cut_at_budget_and_text_still_sent(server, tmp_path):
+    from ohmyslack.adapter import standalone_send
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    other = _write(tmp_path, "chart.png", PNG)
+    server.upload_delay = 0.3  # 예산(0.05초)보다 충분히 길게, teardown 대기는 짧게
+    out = await standalone_send(_cfg(server), DM_ID, "아침 브리핑", media_files=[(path, True), other],
+                                upload_budget=0.05)
+    assert out["success"] is True
+    assert out["warnings"] == ["briefing.mp3: budget_exceeded", "chart.png: budget_exceeded"]
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and "attachment_ids" not in posts[0]
+
+
+async def test_upload_attempts_capped_at_per_message_max_regardless_of_success(server, tmp_path, monkeypatch):
+    clock = FakeClock()
+    paths = [(_write(tmp_path, f"p{i}.png", PNG), False) for i in range(6)]
+    server.upload_status = [413] * 5
+    out = await _send_clocked(server, "차트", paths, clock, monkeypatch)
+    assert out["success"] is True
+    assert len(server.uploads) <= 4
+    assert out["warnings"] == [f"p{i}.png: upload_failed" for i in range(4)] + ["p4.png: too_many",
+                                                                                 "p5.png: too_many"]
+    assert "attachment_ids" not in _ok_posts(server)[0]

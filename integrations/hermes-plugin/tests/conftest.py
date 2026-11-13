@@ -85,6 +85,8 @@ class FakeBotServer:
         self.display_name = BOT_NAME
         self.uploads: list[dict] = []  # 업로드 요청 기록(content_type·conversation_id·size·status)
         self.upload_status: list[int] = []  # 다음 업로드 응답 상태를 순서대로 강제(예: [429], [413])
+        self.upload_retry_after = "1"  # 업로드 429 응답의 Retry-After 값
+        self.upload_delay = 0.0  # 업로드 응답 전 실제 대기(초) — 업로드가 걸린 상황 재현용
         self.blobs: dict[str, tuple[str, bytes]] = {}  # 다운로드용 첨부 id → (mime, bytes)
         self.downloads: list[str] = []
         self.replies_status: Optional[int] = None  # 강제 응답 상태(예: 404·500). None이면 changes에서 루트를 찾는다
@@ -186,10 +188,12 @@ class FakeBotServer:
         data = await request.read()
         rec = {"content_type": request.headers.get("Content-Type"), "size": len(data),
                "conversation_id": request.query.get("conversation_id")}
+        if self.upload_delay:
+            await asyncio.sleep(self.upload_delay)
         if self.upload_status:
             status = self.upload_status.pop(0)
             self.uploads.append({**rec, "_status": status})
-            headers = {"Retry-After": "1"} if status == 429 else {}
+            headers = {"Retry-After": self.upload_retry_after} if status == 429 else {}
             return web.json_response({"error": "error"}, status=status, headers=headers)
         aid = str(uuid.uuid4())
         self.uploads.append({**rec, "_status": 201, "attachment_id": aid})
