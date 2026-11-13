@@ -153,25 +153,35 @@ export function registerUploadRoute(
 
 /**
  * 사람 계정 동시 업로드 상한(TRD §6-1-1 (2) ★, 초과 429). body를 버퍼에 쌓기 **전**(onRequest)에 세션을 확인하고 자리를 잡는다.
- * 자리는 응답 소켓이 닫힐 때(정상·중단 모두) 돌려준다. 메모리 상태(단일 프로세스).
+ * 종료 감시는 비동기 인증 **전**에 건다: 인증 대기 중 연결이 닫히면 자리를 배정하지 않는다. 배정한 자리는 응답 소켓이 닫힐 때
+ * (정상·오류·중단·타임아웃 모두 `close`) 정확히 1회 돌려준다. 메모리 상태(단일 프로세스).
  */
 export function concurrentUploadGuard(auth: AuthService, max: number = ATTACHMENT_HUMAN_CONCURRENT_UPLOADS): onRequestAsyncHookHandler {
   const active = new Map<string, number>();
   const authenticate = accountGuard(auth);
+  const giveBack = (userId: string): void => {
+    const left = (active.get(userId) ?? 1) - 1;
+    if (left <= 0) active.delete(userId);
+    else active.set(userId, left);
+  };
   return async (request, reply) => {
+    let closed = false;
+    let heldBy: string | undefined;
+    reply.raw.once('close', () => {
+      closed = true;
+      if (heldBy === undefined) return;
+      const userId = heldBy;
+      heldBy = undefined;
+      giveBack(userId);
+    });
     await authenticate.call(request.server, request, reply);
     const userId = requireAuth(request).user.id;
+    // 인증을 기다리는 사이 클라이언트가 끊었으면 자리를 잡지 않는다(잡으면 `close`가 다시 오지 않아 영구 누수).
+    if (closed || request.raw.socket?.destroyed === true) throw new HttpError(400, 'invalid_request');
     const used = active.get(userId) ?? 0;
     if (used >= max) throw new HttpError(429, 'rate_limited');
     active.set(userId, used + 1);
-    let released = false;
-    reply.raw.once('close', () => {
-      if (released) return;
-      released = true;
-      const left = (active.get(userId) ?? 1) - 1;
-      if (left <= 0) active.delete(userId);
-      else active.set(userId, left);
-    });
+    heldBy = userId;
   };
 }
 
