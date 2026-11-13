@@ -811,6 +811,11 @@ STANDALONE_TOTAL_DEADLINE_S = 50.0
 STANDALONE_TEXT_RESERVE_S = 10.0
 
 
+# 단조 시계 — 호출 시점에 모듈 속성에서 읽는다(Hermes는 sender에 `clock=`을 넘길 수 없어, 실제 진입점 테스트가
+# 이 속성을 바꿔 주입한다. `time.monotonic` 전역 교체는 asyncio 루프 시계까지 바꾸므로 쓰지 않는다).
+_clock: Callable[[], float] = time.monotonic
+
+
 class _DeadlineExceeded(Exception):
     """standalone 전체 deadline 소진(Hermes 취소 전에 send_error로 끝내기 위한 내부 신호)."""
 
@@ -846,8 +851,8 @@ async def _upload_one(client: BotClient, chat_id: str, data: bytes, mime: str,
 
 
 async def _upload_standalone_media(client: BotClient, chat_id: str, media_files: Any, *,
-                                   budget: float = STANDALONE_UPLOAD_BUDGET_S,
-                                   clock: Callable[[], float] = time.monotonic,
+                                   budget: Optional[float] = None,
+                                   clock: Optional[Callable[[], float]] = None,
                                    ) -> tuple[list[str], list[str], list[str]]:
     """standalone 첨부 업로드 → (첨부 ID, 파일명, warnings). 실패는 파일마다 `"<basename>: <사유>"` 한 줄.
 
@@ -855,7 +860,8 @@ async def _upload_standalone_media(client: BotClient, chat_id: str, media_files:
     시도는 지원 형식 앞 ATTACHMENTS_PER_MESSAGE_MAX개까지(성공 여부 무관), 전체는 `budget`초(단조 `clock`) 안에서만 —
     예산이 다 되면 남은 파일은 업로드하지 않고 `budget_exceeded`. 경로 전체·본문·토큰은 warnings·로그에 남기지 않는다.
     """
-    deadline = clock() + budget
+    clock = clock or _clock
+    deadline = clock() + (STANDALONE_UPLOAD_BUDGET_S if budget is None else budget)
 
     def remaining() -> float:
         return deadline - clock()
@@ -902,8 +908,8 @@ async def _upload_standalone_media(client: BotClient, chat_id: str, media_files:
 async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Optional[str] = None,
                           media_files=None, force_document: bool = False,
                           session_factory: Callable[[], aiohttp.ClientSession] = new_session,
-                          upload_budget: float = STANDALONE_UPLOAD_BUDGET_S,
-                          clock: Callable[[], float] = time.monotonic) -> dict:
+                          upload_budget: Optional[float] = None,
+                          clock: Optional[Callable[[], float]] = None) -> dict:
     """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·`force_document`는 쓰지 않는다.
 
     홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 업로드도 하지 않는다.
@@ -923,6 +929,8 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
         base = resolve_bot_url(extra)
     except ValueError as exc:
         return send_error(f"ohmyslack standalone send: {exc}")
+    clock = clock or _clock  # 기본값은 호출 시점의 모듈 속성(진입점 테스트 주입 훅)
+    upload_budget = STANDALONE_UPLOAD_BUDGET_S if upload_budget is None else upload_budget
     started = clock()
 
     def left() -> float:
