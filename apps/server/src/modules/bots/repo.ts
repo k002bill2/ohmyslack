@@ -131,6 +131,29 @@ export async function disableBotRows(client: pg.PoolClient, botUserId: string, a
   return res.rows.map((r) => r.id);
 }
 
+export type UploadGrant = 'ok' | 'unauthenticated' | 'not_found';
+
+/**
+ * 봇 업로드 저장 트랜잭션 안 권한 재확인 + 잠금(W-26 Codex r3). 호출자의 트랜잭션 client로만 실행한다.
+ * 회수 쿼리(토큰 폐기·봇 비활성화·채널 제거)는 모두 NO KEY UPDATE라서 FOR SHARE와 충돌한다 — 여기서 잡은 잠금은 COMMIT까지
+ * 회수를 기다리게 하고, 먼저 진행 중이던 회수는 커밋 뒤 WHERE 재평가로 0행이 되어 거부된다.
+ * 잠금 순서는 disableBot(users → bot_tokens)·joinIn(conversations → conversation_members)과 같은 방향으로 고정한다(교착 방지).
+ * 문장을 나누는 이유: JOIN … FOR SHARE는 실행 계획이 잠금 순서를 정한다.
+ */
+export async function lockUploadGrant(
+  client: pg.PoolClient,
+  grant: { readonly botUserId: string; readonly tokenId: string; readonly conversationId: string },
+): Promise<UploadGrant> {
+  const one = async (sql: string, params: readonly unknown[]): Promise<boolean> => ((await client.query(sql, [...params])).rowCount ?? 0) > 0;
+  if (!(await one("SELECT 1 FROM users WHERE id = $1 AND kind = 'bot' AND status = 'active' FOR SHARE", [grant.botUserId]))) return 'unauthenticated';
+  if (!(await one('SELECT 1 FROM bot_tokens WHERE id = $1 AND bot_user_id = $2 AND revoked_at IS NULL FOR SHARE', [grant.tokenId, grant.botUserId]))) {
+    return 'unauthenticated';
+  }
+  if (!(await one('SELECT 1 FROM conversations WHERE id = $1 FOR KEY SHARE', [grant.conversationId]))) return 'not_found';
+  const member = 'SELECT 1 FROM conversation_members WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL FOR SHARE';
+  return (await one(member, [grant.conversationId, grant.botUserId])) ? 'ok' : 'not_found';
+}
+
 /** 봇 목록. 토큰 해시·라벨은 조회하지 않고 미폐기 개수만 센다. */
 export async function listBotRows(db: Db): Promise<readonly BotRow[]> {
   const res = await db.query<{ id: string; email_norm: string; display_name: string; status: 'active' | 'disabled'; live: number }>(

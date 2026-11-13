@@ -1,6 +1,6 @@
 import { request as httpRequest, type ClientRequest } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BOT_UPLOAD_BYTES_PER_DAY, createBotRateLimiter } from '../../src/modules/bots/index.js';
+import { BOT_RATE_LIMITS, BOT_UPLOAD_BYTES_PER_DAY, createBotRateLimiter, type BotRateLimiter, type BotUploadProbe } from '../../src/modules/bots/index.js';
 import { as, createChannel, req } from '../conversations/conv-int-harness.js';
 import { count, setupBotListener, teardownBotListener, type BotListenerContext } from '../bots/bot-listener-harness.js';
 import { png } from './att-harness.js';
@@ -9,6 +9,8 @@ import { png } from './att-harness.js';
  * W-26 Codex r2: 봇 업로드 선행 인증(onRequest)의 빈틈.
  * ① 본문을 기다리는 사이 토큰 폐기·봇 비활성화·채널 제거가 일어나면 본문 수신 뒤 다시 판정해 401·404, 저장 0.
  * ② Content-Length 없는(chunked) 요청도 일일 바이트를 다 쓴 토큰이면 본문을 기다리지 않고 429.
+ * W-26 Codex r3: 재판정(settle) 뒤·INSERT 전 회수는 저장 트랜잭션 안 잠금 재확인으로 거부하고, 잠금 뒤 회수는 업로드 커밋을 기다린다.
+ * 순서는 sleep이 아니라 업로드 단계 신호(입장·재판정·잠금)로 고정한다.
  */
 let lc: BotListenerContext | undefined;
 
@@ -17,10 +19,80 @@ afterEach(async () => {
   lc = undefined;
 });
 
-const SETTLE_MS = 300;
 const EARLY_MS = 2000;
+const LOCK_WAIT_MS = 5000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const stored = (ctx: BotListenerContext) => count(ctx, 'SELECT count(*)::int AS n FROM attachments WHERE uploader_id = $1', [ctx.bot.botUserId]);
+const blobs = (ctx: BotListenerContext) => count(ctx, 'SELECT count(*)::int AS n FROM attachment_blobs', []);
+
+interface Deferred {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+}
+
+function deferred(): Deferred {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+type PausePoint = 'recheck' | 'lock';
+
+/** 업로드 단계 신호. `pauseAt`이면 그 지점에 **처음** 도달한 요청을 `release()`까지 멈춘다. 해제는 테스트 finally에서 반드시 한다. */
+interface UploadProbe {
+  readonly hooks: BotUploadProbe;
+  readonly admitted: Promise<void>;
+  readonly reached: Promise<void>;
+  release(): void;
+}
+
+function uploadProbe(pauseAt?: PausePoint): UploadProbe {
+  const admitted = deferred();
+  const reached = deferred();
+  const gate = deferred();
+  let paused = false;
+  const pause = (point: PausePoint) => async (): Promise<void> => {
+    if (point !== pauseAt || paused) return;
+    paused = true;
+    reached.resolve();
+    await gate.promise;
+  };
+  return {
+    hooks: { admitted: () => admitted.resolve(), afterRecheck: pause('recheck'), afterLock: pause('lock') },
+    admitted: admitted.promise,
+    reached: reached.promise,
+    release: () => gate.resolve(),
+  };
+}
+
+/** 다른 세션이 행 잠금을 기다리는 상태가 되면 'blocked'. 회수가 먼저 끝나면 'done'. 둘 다 아니면 'timeout'. */
+async function lockWaitOrDone(ctx: BotListenerContext, work: Promise<unknown>): Promise<'blocked' | 'done' | 'timeout'> {
+  let settled = false;
+  const done = work.then(() => {
+    settled = true;
+    return 'done' as const;
+  });
+  const poll = (async () => {
+    const until = Date.now() + LOCK_WAIT_MS;
+    while (!settled && Date.now() < until) {
+      const waiting = await count(ctx, "SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype IN ('transactionid', 'tuple')", []);
+      if (waiting > 0) return 'blocked' as const;
+      await sleep(10);
+    }
+    return 'timeout' as const;
+  })();
+  return Promise.race([done, poll]);
+}
+
+/** 거부돼도 입장 때 기록한 건수 1·선언 바이트는 되돌리지 않는다(413·415 거부와 같은 규칙). */
+function expectUsageKept(limiter: BotRateLimiter, tokenId: string, declaredBytes: number): void {
+  expect(limiter.checkUploadBytes(tokenId, BOT_UPLOAD_BYTES_PER_DAY - declaredBytes).ok).toBe(true);
+  expect(limiter.checkUploadBytes(tokenId, BOT_UPLOAD_BYTES_PER_DAY - declaredBytes + 1).ok).toBe(false);
+  for (let i = 1; i < BOT_RATE_LIMITS.upload; i += 1) expect(limiter.takeUpload(tokenId, 0).ok).toBe(true);
+  expect(limiter.takeUpload(tokenId, 0).ok).toBe(false);
+}
 
 interface PendingUpload {
   /** 본문을 보내고 응답 상태를 돌려준다. */
@@ -52,11 +124,11 @@ function startUpload(ctx: BotListenerContext, conversationId: string, bytes: Buf
   return { req, status };
 }
 
-/** 유효한 헤더만 먼저 보내고(onRequest 판정 통과) 본문은 `finish()` 때 보낸다. */
-async function delayedUpload(ctx: BotListenerContext, conversationId: string): Promise<PendingUpload> {
+/** 유효한 헤더만 먼저 보내고 입장(onRequest) 통과 신호를 기다린 뒤, 본문은 `finish()` 때 보낸다. */
+async function delayedUpload(ctx: BotListenerContext, conversationId: string, admitted: Promise<void>): Promise<PendingUpload> {
   const bytes = png();
   const { req, status } = startUpload(ctx, conversationId, bytes, false);
-  await sleep(SETTLE_MS);
+  await admitted;
   return {
     finish: () => {
       req.end(bytes);
@@ -73,39 +145,135 @@ async function botChannel(ctx: BotListenerContext): Promise<{ channel: string; r
   return { channel, remove: async () => (await req(app, 'DELETE', `/api/conversations/${channel}/bots/${ctx.bot.botUserId}`, owner)).statusCode };
 }
 
+/** 고정 시계 limiter + 업로드 신호로 리스너를 띄운다(사용량 단언용). */
+async function setupProbed(pauseAt?: PausePoint): Promise<{ ctx: BotListenerContext; probe: UploadProbe; limiter: BotRateLimiter }> {
+  const limiter = createBotRateLimiter(() => 0);
+  const probe = uploadProbe(pauseAt);
+  const ctx = await setupBotListener({ limiter, uploadProbe: probe.hooks });
+  return { ctx, probe, limiter };
+}
+
 describe('봇 업로드 — 본문 수신 뒤 권한 재판정', () => {
   it('본문 대기 중 토큰을 폐기하면 본문 완료 시 401이고 저장 0', async () => {
-    lc = await setupBotListener();
-    const pending = await delayedUpload(lc, lc.bot.dmConversationId);
+    const { ctx, probe, limiter } = await setupProbed();
+    lc = ctx;
+    const pending = await delayedUpload(lc, lc.bot.dmConversationId, probe.admitted);
     expect((await lc.service.revokeToken(lc.tokenId)).revoked).toBe(true);
     expect(await pending.finish()).toBe(401);
     expect(await stored(lc)).toBe(0);
+    expectUsageKept(limiter, lc.tokenId, png().length);
   });
 
   it('본문 대기 중 봇을 비활성화하면 본문 완료 시 401이고 저장 0', async () => {
-    lc = await setupBotListener();
-    const pending = await delayedUpload(lc, lc.bot.dmConversationId);
+    const { ctx, probe, limiter } = await setupProbed();
+    lc = ctx;
+    const pending = await delayedUpload(lc, lc.bot.dmConversationId, probe.admitted);
     await lc.service.disableBot(lc.bot.botUserId);
     expect(await pending.finish()).toBe(401);
     expect(await stored(lc)).toBe(0);
+    expectUsageKept(limiter, lc.tokenId, png().length);
   });
 
   it('본문 대기 중 채널에서 봇을 제거하면 본문 완료 시 404이고 저장 0', async () => {
-    lc = await setupBotListener();
+    const { ctx, probe, limiter } = await setupProbed();
+    lc = ctx;
     const room = await botChannel(lc);
-    const pending = await delayedUpload(lc, room.channel);
+    const pending = await delayedUpload(lc, room.channel, probe.admitted);
     expect(await room.remove()).toBe(204);
     expect(await pending.finish()).toBe(404);
     expect(await stored(lc)).toBe(0);
+    expectUsageKept(limiter, lc.tokenId, png().length);
   });
 
   it('권한이 그대로면 지연된 본문도 201로 저장된다(회귀)', async () => {
-    lc = await setupBotListener();
+    const { ctx, probe } = await setupProbed();
+    lc = ctx;
     const room = await botChannel(lc);
-    const pending = await delayedUpload(lc, room.channel);
+    const pending = await delayedUpload(lc, room.channel, probe.admitted);
     expect(await pending.finish()).toBe(201);
     expect(await stored(lc)).toBe(1);
   });
+});
+
+interface Revocation {
+  readonly name: string;
+  readonly status: 401 | 404;
+  /** 회수 실행. 반환 promise는 회수 커밋 뒤 끝난다. */
+  revoke(ctx: BotListenerContext, room: { remove: () => Promise<number> }): Promise<void>;
+}
+
+const REVOCATIONS: readonly Revocation[] = [
+  {
+    name: '토큰 폐기',
+    status: 401,
+    revoke: async (ctx) => {
+      expect((await ctx.service.revokeToken(ctx.tokenId)).revoked).toBe(true);
+    },
+  },
+  {
+    name: '봇 비활성화',
+    status: 401,
+    revoke: async (ctx) => {
+      expect((await ctx.service.disableBot(ctx.bot.botUserId)).revokedTokenIds).toEqual([ctx.tokenId]);
+    },
+  },
+  {
+    name: '채널에서 봇 제거',
+    status: 404,
+    revoke: async (_ctx, room) => {
+      expect(await room.remove()).toBe(204);
+    },
+  },
+];
+
+describe('봇 업로드 — 재판정 뒤·INSERT 전 권한 회수 경쟁(저장 트랜잭션 안 잠금)', () => {
+  for (const r of REVOCATIONS) {
+    it(`재판정 완료 뒤 ${r.name}가 커밋되면 ${r.status}이고 메타·바이트 저장 0, 사용량은 유지`, async () => {
+      const { ctx, probe, limiter } = await setupProbed('recheck');
+      lc = ctx;
+      const room = await botChannel(lc);
+      const bytes = png();
+      const { req, status } = startUpload(lc, room.channel, bytes, false);
+      req.end(bytes);
+      try {
+        await probe.reached;
+        await r.revoke(lc, room);
+      } finally {
+        probe.release();
+      }
+      expect(await status).toBe(r.status);
+      expect(await stored(lc)).toBe(0);
+      expect(await blobs(lc)).toBe(0);
+      expectUsageKept(limiter, lc.tokenId, bytes.length);
+    });
+
+    it(`잠금 획득 뒤 들어온 ${r.name}는 업로드 커밋까지 기다리고, 업로드 201 뒤에 적용된다`, async () => {
+      const { ctx, probe } = await setupProbed('lock');
+      lc = ctx;
+      const room = await botChannel(lc);
+      const bytes = png();
+      const { req, status } = startUpload(lc, room.channel, bytes, false);
+      req.end(bytes);
+      let revoking: Promise<void> | undefined;
+      try {
+        await probe.reached;
+        revoking = r.revoke(lc, room);
+        expect(await lockWaitOrDone(lc, revoking)).toBe('blocked');
+        expect(await stored(lc)).toBe(0); // 아직 커밋 전
+      } finally {
+        probe.release();
+      }
+      expect(await status).toBe(201);
+      await revoking;
+      expect(await stored(lc)).toBe(1);
+      expect(await blobs(lc)).toBe(1);
+      // 회수는 업로드 커밋 뒤에 적용됐다: 같은 토큰의 다음 업로드는 거부.
+      const after = startUpload(lc, room.channel, bytes, false);
+      after.req.end(bytes);
+      expect(await after.status).toBe(r.status);
+      expect(await stored(lc)).toBe(1);
+    });
+  }
 });
 
 describe('봇 업로드 — chunked 요청의 일일 바이트 선행 판정', () => {

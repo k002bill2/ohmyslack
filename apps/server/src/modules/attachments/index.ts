@@ -8,6 +8,7 @@ export {
   type AttachmentProjectionRow,
   type AttachmentsStore,
   type BindResult,
+  type InTxCheck,
 } from './repo.js';
 export { createAttachmentsService, startRetentionTimer, type AttachmentsService } from './service.js';
 export {

@@ -21,5 +21,5 @@ export {
   BOT_UPLOAD_BYTES_WINDOW_MS,
   type BotRateLimiter,
 } from './rate-limit.js';
-export { requireBot, type BotContext } from './routes.js';
+export { requireBot, type BotContext, type BotUploadProbe } from './routes.js';
 export { BOT_WS_PATH, BOT_WS_SWEEP_MS, BOT_WS_END_REASON, type BotRealtimeDeps } from './ws.js';

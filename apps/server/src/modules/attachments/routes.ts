@@ -15,7 +15,7 @@ import { accountGuard, requireAuth } from '../auth/guards.js';
 import type { AuthService } from '../auth/service.js';
 import type { ConversationsService } from '../conversations/service.js';
 import { conversationRefGuard } from '../sync/routes.js';
-import type { AttachmentMeta } from './repo.js';
+import type { AttachmentMeta, InTxCheck } from './repo.js';
 import { isExpired, type AttachmentsService } from './service.js';
 import { attachmentDisposition } from './filename.js';
 import { declaredType } from './sniff.js';
@@ -68,13 +68,14 @@ export async function uploadAs(
   request: FastifyRequest,
   reply: FastifyReply,
   now: () => number,
+  check?: InTxCheck,
 ): Promise<AttachmentUploadResponse> {
   const query = attachmentUploadQuerySchema.safeParse(request.query);
   if (!query.success) throw new HttpError(400, 'invalid_request');
   const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
   const rawName = request.headers[ATTACHMENT_FILENAME_HEADER];
   if (Array.isArray(rawName)) throw new HttpError(400, 'invalid_request');
-  const meta = await service.upload(uploaderId, query.data.conversation_id, declaredType(request.headers['content-type']), body, rawName);
+  const meta = await service.upload(uploaderId, query.data.conversation_id, declaredType(request.headers['content-type']), body, rawName, check);
   reply.code(201);
   return { attachment_id: meta.id, attachment: toAttachmentView(meta, now()) };
 }

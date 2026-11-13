@@ -16,7 +16,7 @@ import { checkExtension, classify } from './doc-sniff.js';
 import { decodeFilenameHeader, finalizeFilename, parseFilename } from './filename.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import type { OpsLogger } from '../ops/logger.js';
-import type { AttachmentMeta, AttachmentsStore, RetentionResult } from './repo.js';
+import type { AttachmentMeta, AttachmentsStore, InTxCheck, RetentionResult } from './repo.js';
 
 /** 첨부 서비스(정본: TRD §6-1, DEV_DESIGN B10). 사람·봇 라우트가 같은 인스턴스를 쓴다(TRD §5-2 6항). */
 export interface AttachmentsServiceDeps {
@@ -35,8 +35,11 @@ export interface Download {
 }
 
 export interface AttachmentsService {
-  /** 접근 판정은 호출자의 assertAccess 가드가 먼저 한다. 판정 실패는 415·413이며 저장 0. */
-  upload(uploaderId: string, conversationId: string, declared: string, bytes: Buffer, filenameHeader?: string): Promise<AttachmentMeta>;
+  /**
+   * 접근 판정은 호출자의 assertAccess 가드가 먼저 한다. 판정 실패는 415·413이며 저장 0.
+   * `check`가 있으면 저장 트랜잭션 안에서 INSERT 전에 실행한다(봇 경로 전용 — 권한 재확인 + 잠금 유지).
+   */
+  upload(uploaderId: string, conversationId: string, declared: string, bytes: Buffer, filenameHeader?: string, check?: InTxCheck): Promise<AttachmentMeta>;
   /**
    * `attachment` 메타 라우트의 접근 판정(B2): 첨부 ID로 대화를 해석한 뒤 `conversations.service.assertAccess` **하나**로 판정한다.
    * 없는 첨부는 존재를 숨기고 404.
@@ -122,11 +125,11 @@ export function createAttachmentsService(deps: AttachmentsServiceDeps): Attachme
   const sniffNow = deps.sniffClock ?? (() => performance.now());
   const onDeadline = (): void => deps.logger?.log(SNIFF_DEADLINE_LOG);
   return {
-    async upload(uploaderId, conversationId, declared, bytes, filenameHeader) {
+    async upload(uploaderId, conversationId, declared, bytes, filenameHeader, check) {
       // 형식은 내용으로만 판정한다. 선언 Content-Type은 판정 결과와 비교만 한다(TRD §6-1·§6-1-1).
       const sniffed = judge(declared, bytes, filenameHeader, sniffNow, onDeadline);
       const now = clock();
-      return store.insert({
+      const row = {
         id: randomUUID(),
         conversationId,
         uploaderId,
@@ -141,7 +144,8 @@ export function createAttachmentsService(deps: AttachmentsServiceDeps): Attachme
         createdAt: new Date(now),
         expiresAt: new Date(now + retentionMs(sniffed.mime)),
         bytes,
-      });
+      };
+      return check === undefined ? store.insert(row) : store.insert(row, check);
     },
     async resolveAccess(userId, attachmentId, action) {
       const meta = await store.get(attachmentId);

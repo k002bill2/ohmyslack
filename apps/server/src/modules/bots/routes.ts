@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { BOT_ROUTE_PREFIX, markBotGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
 import { ATTACHMENT_DOC_MAX_BYTES, historyQuerySchema, messageCreateRequestSchema, readStateRequestSchema, type BotMe, type HistoryResponse, type RepliesResponse, type SnapshotResponse, type SyncResponse } from '../../shared.js';
-import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService } from '../attachments/index.js';
+import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService, type InTxCheck } from '../attachments/index.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import { editAs, historyOf, repliesOf, sendAs } from '../messages/routes.js';
 import type { MessagesService } from '../messages/service.js';
@@ -22,6 +22,15 @@ export interface BotRouteDeps {
   /** 있으면 첨부 라우트(§5-2 6항)를 등록한다. 사람 라우트와 같은 서비스 인스턴스. */
   readonly attachments?: AttachmentsService;
   readonly clock?: () => number;
+  /** 테스트 전용 관측·배리어(운영 주입 없음). 경쟁 순서를 sleep 없이 고정한다. */
+  readonly uploadProbe?: BotUploadProbe;
+}
+
+/** 봇 업로드 단계 신호: 입장(onRequest) 통과 → 재판정(preHandler) 완료 → 저장 트랜잭션 안 잠금 획득. */
+export interface BotUploadProbe {
+  admitted?(): void;
+  afterRecheck?(): Promise<void>;
+  afterLock?(): Promise<void>;
 }
 
 /** 인증된 봇 컨텍스트. 사람 `request.auth`와 별개 필드다(세션·쿠키를 봇 인증에 쓰지 않는다). */
@@ -124,14 +133,28 @@ function botUploadGuards(deps: BotRouteDeps, token: preHandlerAsyncHookHandler):
       rejectRate(reply, deps.limiter.checkUploadBytes(tokenId, 1));
     }
     rejectRate(reply, deps.limiter.takeUpload(tokenId, bytes ?? 0));
+    deps.uploadProbe?.admitted?.();
   };
   const settle = markBotGuard(async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     await token.call(request.server, request, reply);
     await access.call(request.server, request, reply);
-    if (!unsized.has(request)) return;
-    rejectRate(reply, deps.limiter.takeUploadBytes(requireBot(request).tokenId, Buffer.isBuffer(request.body) ? request.body.length : 0));
+    if (unsized.has(request)) rejectRate(reply, deps.limiter.takeUploadBytes(requireBot(request).tokenId, Buffer.isBuffer(request.body) ? request.body.length : 0));
+    await deps.uploadProbe?.afterRecheck?.();
   });
   return { admit, settle };
+}
+
+/**
+ * `settle`과 저장 트랜잭션 사이의 틈(W-26 Codex r3): 저장 트랜잭션 **안**에서 토큰·봇·멤버십을 다시 확인하고 그 행들을 COMMIT까지
+ * 잠근다. 그 사이 회수가 커밋됐으면 같은 401·404(롤백 — 메타·바이트 저장 0), 잠근 뒤 들어온 회수는 업로드 커밋을 기다린다.
+ */
+function botUploadCheck(deps: BotRouteDeps, bot: BotContext): InTxCheck {
+  return async (client, conversationId) => {
+    const grant = await deps.bots.holdUploadGrant(client, { botUserId: bot.botUserId, tokenId: bot.tokenId, conversationId });
+    if (grant === 'unauthenticated') throw new HttpError(401, 'unauthenticated');
+    if (grant === 'not_found') throw new HttpError(404, 'not_found');
+    await deps.uploadProbe?.afterLock?.();
+  };
 }
 
 /** 봇 첨부 라우트: 사람 라우트와 같은 처리 본문(uploadAs·downloadAs)과 같은 assertAccess 경계. */
@@ -152,7 +175,7 @@ function registerBotAttachmentRoutes(app: FastifyInstance, deps: BotRouteDeps, a
     app,
     `${p}attachments`,
     { access: 'bot', onRequest: [upload.admit], preHandler: [upload.settle] },
-    (request, reply) => uploadAs(attachments, requireBot(request).botUserId, request, reply, clock),
+    (request, reply) => uploadAs(attachments, requireBot(request).botUserId, request, reply, clock, botUploadCheck(deps, requireBot(request))),
   );
   app.get(`${p}attachments/:id`, { config: { access: 'bot' }, preHandler: [token, attachmentAccess], onSend: attachmentCspOnSend }, (request, reply) => {
     if (request.attachmentAccess === undefined) throw new HttpError(404, 'not_found');
