@@ -95,7 +95,7 @@ ohmyslack/
 | B7 | 웹은 대화 본문·인증 응답을 Cache Storage·IndexedDB·localStorage·sessionStorage에 넣지 않습니다. 예외는 두 파일뿐입니다: `features/pwa/sw.ts`(Cache Storage에 해시된 앱 셸 정적 자원만), `features/sync/checkpoint.ts`(localStorage에 **숫자 sync checkpoint만** — 근거 TRD:103). | FR-CLIENT-04, TR-SEC-08 | `check:no-persist-cache`(5-1 정의) |
 | B8 | 웹 기능 폴더끼리는 `index.ts` 공개 API로만 참조합니다. | 결합도 제한 | eslint import 규칙 |
 | B9 | 봇 리스너는 별도 Fastify 인스턴스로 `/api/bot/v1/**`만 등록하며 서비스 계층(`assertAccess` 포함)은 사람 라우트와 공유합니다. 메인 리스너는 `Authorization` 헤더를 읽지 않습니다(R3.3, 정본: TRD §5-2). | 봇 토큰 경계, 접근 검사 단일화 | FR-BOT-02 지정 테스트·보조 `bot-listener-bind.int.test.ts`(루프백 전용·`/api/bot/v1/**` 외 404), FR-CONV-04 레지스트리에 봇 리스너 포함 |
-| B10 | 첨부 바이트는 `attachments` 모듈만 읽고 씁니다. 다른 모듈은 메타데이터만 참조합니다(R3.3, 정본: TRD §6-1). | 형식 판정·응답 헤더·보존 삭제를 한 곳에서 보장 | FR-OPS-05 지정 테스트·보조 `attachment-headers.int.test.ts` |
+| B10 | 첨부 바이트는 `attachments` 모듈만 읽고 씁니다. 다른 모듈은 메타데이터만 참조합니다(R3.3, 정본: TRD §6-1). 문서·텍스트 판정기도 `attachments` 모듈 안에 두며 서버 어디서도 압축 해제·XML 파싱·변환은 0입니다(R3.5, TRD §6-1-1). | 형식 판정·응답 헤더·보존 삭제를 한 곳에서 보장 | FR-OPS-05 지정 테스트·보조 `attachment-headers.int.test.ts` |
 
 ### 2-3. 요청 흐름 (정본: TRD §3–4. 아래는 구현 순서 요약이며 필드를 새로 정하지 않습니다)
 
@@ -112,7 +112,7 @@ ohmyslack/
 | `access` | 대화 해석 방법 | 해당 라우트·동작(TRD §3–4) | 매트릭스 검증 |
 |---|---|---|---|
 | `public` | — | `POST /api/auth/login`, `POST /api/invites/accept`, `GET /api/healthz` | 응답에 대화·멤버 정보 0건. `invites/accept`는 `member` 역할만 생성(owner 생성 경로 없음 — BOOT-01) |
-| `account` | 대화 없음 또는 서버가 membership으로 필터 | `POST /api/auth/logout`, `GET /api/me`, `GET /api/sessions`, `GET /api/members`, `GET /api/conversations`, `GET /api/conversations/discover`, `POST /api/dms`, `GET /api/sync` | `/api/sync`: 비참여 대화의 변경이 payload에 0건(커서는 전진). `discover`: 미참여 공개 채널만, 메시지·멤버 정보 0건(PRD FR-CONV-04 예외는 이것뿐). `/api/conversations`: 나간·비참여 대화 0건 |
+| `account` | 대화 없음 또는 서버가 membership으로 필터 | `POST /api/auth/logout`, `GET /api/me`, `GET /api/sessions`, `DELETE /api/sessions/{id}`(R3.5, 1c), `GET /api/members`, `GET /api/conversations`, `GET /api/conversations/discover`, `POST /api/dms`, `GET /api/sync` | `/api/sync`: 비참여 대화의 변경이 payload에 0건(커서는 전진). `discover`: 미참여 공개 채널만, 메시지·멤버 정보 0건(PRD FR-CONV-04 예외는 이것뿐). `/api/conversations`: 나간·비참여 대화 0건 |
 | `admin` | — | `POST /api/invites`, `POST /api/admin/members/{user_id}/deactivate`, `POST /api/conversations` | 일반 멤버 403, DB 변화 0 |
 | `conversation` | 경로 `{id}`, 쿼리 `conversation_id`, 본문 `conversation_id` 중 선언한 위치 | `POST /api/conversations/{id}/join`·`DELETE …/membership`·`POST …/bots`·`DELETE …/bots/{bot_user_id}`(action `manage_bots`, P1 FR FR-BOT-08)·`GET …/members`·`GET …/messages`·`POST …/messages`, `GET /api/sync/snapshot`, `PUT /api/read-state`, WS `conversation.subscribe` | 비참여자·나간 사용자 404·이벤트 0·데이터 변화 0, 비활성 401. `join`은 공개 채널 비참여자가 허용 대상(DM은 404) |
 | `message` | 메시지 ID·원문 ID → `messages.service`가 대화 해석 | `GET /api/messages/{root_id}/replies`, `PATCH /api/messages/{id}`, `DELETE /api/messages/{id}` | 비참여자 404, 참여 비작성자의 수정·삭제 403, 비활성 401 |
@@ -174,6 +174,12 @@ ohmyslack/
 | W-22 | **웹-첨부(H2):** `features/conversation/attachments/`(CMP-27 `AttachmentList`·CMP-28 `AudioAttachment`·CMP-29 `ImageAttachment`, 이미지 업로드), SW 첨부 경로 우회 확인 | Developer | W-21 | OPS-05 보조 컴포넌트 테스트·`check:no-persist-cache` 통과, `QA-FR-OPS-05`(iPhone PWA mp3 재생)는 W-24 | OPS-05 | M |
 | W-23 | **Web Push(H3, ADR-001 D-3):** 마이그레이션 `0004_push.sql`, `modules/push/`, `bin/vapid-keygen.ts`, 웹 구독 설정(CMP-30 `PushSettings`)·SW push 핸들러 | Developer | W-18, **선행 실기 시험: tailnet `*.ts.net` origin에서 iOS 홈 화면 PWA push 수신 확인(D-3, TRD §6-2 확인 필요 항목) — 실패 시 착수 전 Jarvis에 반환** | CLIENT-05 지정 테스트(본문 없는 payload·endpoint 허용목록·404/410 구독 삭제)·보조 SW 테스트 통과, `QA-FR-CLIENT-05`는 W-24 | CLIENT-05 | L |
 | W-24 | **QA 병행 운영·전환 판정(H1–H4):** 수동 증거 `QA-FR-BOT-02`·`QA-FR-BOT-04`·`QA-FR-BOT-06`·`QA-FR-OPS-05`·`QA-FR-CLIENT-05`, 전환 기록 `qa/manual/QA-HERMES-CUTOVER.md`. 읽기 전용, 테스트 코드 미작성 | QA | W-20(H1)·W-22(H2)·W-23(H3) 머지 + 영환님의 어댑터 배포·게이트웨이 재시작 | ADR-001 §7 전환 기준 항목별 증거(7일 연속 브리핑 수신·유실 0·승인 왕복·푸시 수신). 실행하지 않은 항목은 "미검증" | BOT-*, OPS-05, CLIENT-05 | M |
+| W-25 | **1a standalone 첨부(ADR-002 §3 1a):** 어댑터 standalone 전송 경로에서 첨부 업로드·결속, 실패는 파일마다 `warnings` | Developer | 전환 판정 + G1 | **구현 완료·미배포**(브랜치 `k002bill2/p2s1-standalone-attach`, `ec55851`·`cdde7f9`, 2026-11-13 기준 Codex 리뷰 중). 배포·게이트웨이 재시작은 영환님 | (BOT-05 보강) | S |
+| W-26 | **1b-S1 서버 문서 판정기·저장(ADR-002 §3 1b):** `packages/shared` 문서 첨부 상수·스키마(`filename`·`has_macros`), `modules/attachments/` 문서·텍스트 판정기(B10), 415 하위 코드(TRD §3), 마이그레이션 `0005_attachment_documents.sql`, 다운로드 `attachment` 헤더, 드릴 합성 첨부·`check:log-leak` 파일명 카나리아 | Developer | W-25, TRD §6-1-1(R3.5·R3.6) | 6-6 FR-OPS-09 지정·보조 테스트 통과, 2-4 접근 매트릭스 유지, 드릴 측정 기록(TRD §6-1-1 (7)) | OPS-09 | L |
+| W-27 | **1b-A1 어댑터 `send_document`·인바운드 문서:** `integrations/hermes-plugin/` — 25 MiB 업로드·`X-Attachment-Filename`, owner 문서만 Hermes 문서 캐시, `message.deleted` 시 캐시 삭제 | Developer | W-26 머지, W-25 | 어댑터 pytest(THREAT_MODEL TM-ATT-09–11 검증 열) 통과(`pnpm verify` 밖). 배포·게이트웨이 재시작은 영환님 | OPS-09 | M |
+| W-28 | **1b-W1 웹 문서 표시:** CMP-32 `DocumentAttachment`·작성기 칩·`accept` 확장(UI_STATES §2-13, COPY_GAPS G-53–G-62) | Developer | W-26 shared 스키마 | UI-AC-01–11 컴포넌트 테스트 통과, `QA-FR-OPS-09`(iPhone PWA 저장·열기)는 QA | OPS-09 | M |
+| W-29 | **1c 서버 기기 세션:** 마이그레이션 `0006_session_device_label.sql`, 로그인 시 라벨 생성(TRD §5-3 표), `GET /api/sessions` 응답 변경, `DELETE /api/sessions/{id}`(2-4 매트릭스 `account`) | Developer | W-25(1b와 병렬 가능) | 6-6 FR-AUTH-04 지정 테스트 통과, 접근 매트릭스에 새 라우트 포함 | AUTH-04 | S |
+| W-30 | **1c 웹 로그인한 기기:** CMP-22 `SessionList`(`/settings/sessions`, UI_STATES §2-14, COPY_GAPS G-63–G-72) | Developer | W-29 shared 스키마 | UI-AC-12–20 컴포넌트 테스트 통과, 두 기기 실기 확인(UI-AC-19)은 QA | AUTH-04 | S |
 
 - **Slice 순서의 이유:** 초기 owner → 인증 → 접근 검사 → 메시지 → 동기화 → UI입니다. 보안 경계(FR-CONV-04)가 메시지 기능보다 먼저 서야, 이후 추가하는 모든 라우트가 처음부터 레지스트리 매트릭스에 걸립니다.
 - **R3.3 Hermes 연동 순서(ADR-001 §7):** W-18 단독 선행 → W-19 ∥ W-20 ∥ W-21 병렬 → W-22·W-23 → W-24. H1 = W-18–W-20, H2 = W-21·W-22(+ W-20 첨부 확장), H3 = W-23, H4 전환 판정은 영환님.
@@ -343,7 +349,7 @@ TR-SEC 항목의 정본은 TRD §5 TR-SEC 표(TR-SEC-01–10)와 §5-1 R3.2 추�
 | TR-SEC-11 | `TR-SEC-11 세션 쿠키는 HttpOnly·Secure·SameSite=Lax·Path=/이고 Domain 속성이 없으며 운영 설정에서 Secure를 끌 수 없다` | 통합 `apps/server/test/auth/cookie-attrs.int.test.ts`(Set-Cookie 단언, THREAT_MODEL NC-08) | PR | — |
 | TR-SEC-12 | → FR-AUTH-06 | 로그인 제한(TRD §5-1 S1) | — | — |
 | TR-SEC-13 | → FR-BOT-02 | 봇 토큰 경계(TRD §5-2) | — | — |
-| TR-SEC-14 | → FR-OPS-05 | 첨부 형식 판정·응답 헤더(TRD §6-1) | — | — |
+| TR-SEC-14 | → FR-OPS-05 | 첨부 형식 판정·응답 헤더(TRD §6-1). 문서·텍스트 계열은 FR-OPS-09(6-6, TRD §6-1-1 — 다운로드 헤더 보조 `document-headers.int.test.ts`) | — | — |
 | TR-SEC-15 | → FR-CLIENT-05 | push payload 무본문·endpoint 허용목록(TRD §6-2) | — | — |
 
 ### 6-4. FR-MSG-08 이벤트 순서 사례 (지정 테스트가 모두 포함)
@@ -378,6 +384,8 @@ PRD:89는 "DB 저장 → 다른 기기 **표시**"를 요구합니다. 수신 �
 | FR-BOT-09 | `FR-BOT-09 채널에 추가된 봇은 참여 이후 메시지만 이력·답글·snapshot·sync·WS replay·WS 실시간·첨부로 받고 참여 전 루트에 달린 새 답글과 루트 재전송도 받지 않으며 추가·제거 때 봇 연결에 멤버십 변화 프레임이 한 번 온다` | 통합 `apps/server/test/bots/bot-channel-scope.int.test.ts` | PR | 단위 `apps/server/test/bots/bots.unit.test.ts`: `/me` 대화 종류 projection | — |
 | FR-BOT-10 | `FR-BOT-10 채널에서 owner가 봇을 멘션하면 봇이 받는 message.created의 mention_user_ids에 봇 ID가 있고 멘션 없는 글과 비참여 봇에는 없다` | 통합 `apps/server/test/bots/bot-channel-mention.int.test.ts` | PR | — | `QA-FR-BOT-10`(어댑터 pytest `integrations/hermes-plugin/tests/test_channel.py` BOT_CHANNEL_SPEC §5-9 케이스 1–8 결과 첨부 + 실기 채널 멘션 왕복 1회) |
 | FR-BOT-11 | `FR-BOT-11 채널 헤더 봇 컨트롤은 owner에게만 보이고 봇을 추가하면 멘션 후보에 봇 배지와 함께 나타난다` | 컴포넌트 `apps/web/test/conv-bots/bot-channel-control.test.tsx` | PR | — | — |
+| FR-OPS-09 | `FR-OPS-09 허용 문서 9종은 내용으로 판정해 저장하고 허용목록 밖·다중 형식 일치·암호화·확장자 불일치는 415로 저장되지 않는다` | 통합 `apps/server/test/attachments/documents.int.test.ts` | PR | 단위 `apps/server/test/attachments/doc-sniff.unit.test.ts`, `apps/server/test/attachments/doc-sniff-limits.unit.test.ts`, `apps/server/test/attachments/doc-macro.unit.test.ts`, `apps/server/test/attachments/filename-normalize.unit.test.ts`, 통합 `apps/server/test/attachments/document-limits.int.test.ts`, `apps/server/test/attachments/document-headers.int.test.ts`, 컴포넌트 `apps/web/test/conversation/attachments/document-attachment.test.tsx`(텍스트 계열 3종·415 하위 코드 포함) | `QA-FR-OPS-09` |
+| FR-AUTH-04 | `FR-AUTH-04 본인 세션 목록은 거친 기기 라벨만 싣고 원격 로그아웃은 본인 세션만 폐기해 5초 안에 그 세션의 WS를 닫고 push 구독을 지우며 남의 세션과 없는 세션은 같은 404다` | 통합 `apps/server/test/auth/sessions-remote-logout.int.test.ts` | PR | 통합 `apps/server/test/conversations/access-matrix.int.test.ts`: `DELETE /api/sessions/{id}` × {본인, 다른 계정, 미인증}, 컴포넌트 `apps/web/test/sessions/session-list.test.tsx` | — |
 
 - FR-BOT-03 지정 테스트(6-2)는 바꾸지 않습니다.
 
@@ -452,6 +460,7 @@ PRD:89는 "DB 저장 → 다른 기기 **표시**"를 요구합니다. 수신 �
 | R3.2 (NC-01) | 2026-11-07 | THREAT_MODEL NC-01·TRD R3.2 반영: 6-3을 `TR-SEC-01`–`12` 5열 표로 바꾸고(자체 지정 02·06·11, 나머지 `→ FR` 참조), 5-1 `check:fr-coverage` 입력에 6-3 추가 |
 | R3.3 (ADR-001) | 2026-11-08 | ADR-001 D-1–D-7 ★ 채택 반영: 모듈 bots·attachments·push, 경계 규칙 B9·B10, access 메타 `attachment`·`bot`, G1 P0 42개·Hermes 증거, 6-2 9행(FR-BOT-01–06·FR-MSG-10·FR-OPS-05·FR-CLIENT-05)·6-3 3행(TR-SEC-13–15, `check:fr-coverage` ID 집합 15), WBS W-18–W-24, R-12 |
 | R3.4 (BOT_CHANNEL_SPEC) | 2026-11-10 | 봇 채널 참여 P1 FR(영환님 결정, BOT_CHANNEL_SPEC §10-1 Q1–Q8 ★ 채택): 2-4 `conversation` 메타 예시에 봇 추가·제거 라우트, 단계 P2 v1 후보에 FR-BOT-08–11, 새 절 6-6 P1 선택 FR 매핑(4행). 6-2·6-3·P0 42개 불변 |
+| R3.5 (ADR-002 정합) | 2026-11-13 | ADR-002 1단계 정본 정합(p2s1-canon-align): 6-6에 FR-OPS-09·FR-AUTH-04 행, WBS W-25–W-30(1a 구현 완료·미배포, 1b S1·A1·W1, 1c 서버·웹), B10 문서 판정기 한 줄, 6-3 TR-SEC-14에 FR-OPS-09 참조. 6-2·P0 42개 불변 |
 
 ### R3.1 Jarvis 정합 (2026-11-07)
 - §5-1 `pnpm -r test -- --coverage` → `pnpm -r test --coverage` (pnpm 10.30.2는 `--`를 vitest에 넘겨 커버리지가 꺼짐, G0 레인 실측).
