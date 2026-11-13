@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ActionFailure, ActionResult, Invite, Member } from '../../data';
+import { settleAction, type ActionFailure, type ActionResult, type Invite, type Member } from '../../data';
 import { FORBIDDEN_TEXT, MEMBER_ADMIN_COPY, MEMBER_DEACTIVATE_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { failureText, isRetryable } from '../spaces';
@@ -108,7 +108,7 @@ export function MemberAdmin({ account, load, createInvite, deactivate, origin = 
     const target = pending.member;
     const mine = confirmRound.current;
     setPending({ member: target, busy: true, failure: null });
-    const res = await deactivate(target.id);
+    const res = await settleAction(() => deactivate(target.id));
     // 성공은 확인창이 닫혔어도 행에 반영한다. 확인창 상태는 같은 차수일 때만 바꾼다.
     if (res.ok) setInactive((prev) => new Set([...prev, target.id]));
     if (confirmRound.current !== mine) return;

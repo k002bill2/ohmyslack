@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { ActionFailure, ActionResult } from '../../data';
+import { settleAction, type ActionFailure, type ActionResult } from '../../data';
 import { CANCEL_LABEL, LEAVE_CHANNEL_COPY, LEFT_CHANNEL_COPY } from '../../ui/copy.js';
 import { Dialog } from '../../ui/Dialog.js';
 import { ErrorState } from '../../ui/ErrorState.js';
@@ -33,7 +33,7 @@ export function LeaveChannelControl({ onLeave, renderTrigger }: LeaveChannelCont
     const mine = ++attempt.current;
     setBusy(true);
     setFailure(null);
-    const res = await onLeave();
+    const res = await settleAction(onLeave);
     if (mine !== attempt.current) return;
     setBusy(false);
     if (res.ok) setOpen(false);
@@ -51,12 +51,12 @@ export function LeaveChannelControl({ onLeave, renderTrigger }: LeaveChannelCont
       )}
       {open &&
         createPortal(
-          <Dialog title={LEAVE_CHANNEL_COPY.title} onClose={close}>
+          <Dialog title={LEAVE_CHANNEL_COPY.title} onClose={close} busy={busy}>
             <div className="dialog-form">
               <p>{LEAVE_CHANNEL_COPY.body}</p>
               {failure !== null && <ErrorState message={failureText(failure)} />}
               <div className="dialog-actions">
-                <button type="button" className="btn btn-secondary" onClick={close}>
+                <button type="button" className="btn btn-secondary" disabled={busy} onClick={close}>
                   {CANCEL_LABEL}
                 </button>
                 <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void confirm()}>

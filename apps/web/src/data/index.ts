@@ -89,10 +89,23 @@ export interface Snapshot {
 }
 
 /** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */
-export type ActionFailure = { readonly status: number; readonly code?: string } | { readonly status: 'network' };
+/** `timedOut`: 응답 없음 중 시간 상한 초과(REQUEST_TIMEOUT_MS) — 서버 동작 여부를 확인하지 못했다(`ERROR_COPY.timeout`). */
+export type ActionFailure = { readonly status: number; readonly code?: string } | { readonly status: 'network'; readonly timedOut?: true };
 
 /** 공간 진입 동작 결과. */
 export type ActionResult<T> = { readonly ok: true; readonly value: T } | ({ readonly ok: false } & ActionFailure);
+
+/**
+ * 확인 Dialog의 동작 결과를 받는다. 분류 체계 밖 예외도 일반 실패(`{ status: 'network' }`, ERROR_COPY.network)로 바꿔
+ * busy가 반드시 풀리게 한다 — 요청 중 닫기 차단이 영구 잠금이 되지 않게(action-timeout Codex r1 P1).
+ */
+export async function settleAction<T>(run: () => Promise<ActionResult<T>>): Promise<ActionResult<T>> {
+  try {
+    return await run();
+  } catch {
+    return { ok: false, status: 'network' };
+  }
+}
 
 export interface DiscoverChannel {
   readonly id: string;

@@ -22,7 +22,7 @@ export interface FailureView {
 /** 수정·삭제 실패 → ErrorState 원인 1문장(G-19). 403·404는 재시도 불가 안내(UI_STATES §2-8). */
 export function failureView(failure: ActionFailure): FailureView {
   const { status } = failure;
-  if (status === 'network') return { text: ERROR_COPY.network, retryable: true };
+  if (status === 'network') return { text: failure.timedOut === true ? ERROR_COPY.timeout : ERROR_COPY.network, retryable: true };
   if (status === 403 || status === 404) return { text: ERROR_COPY.notFound, retryable: false };
   if (status === 429) return { text: ERROR_COPY.rateLimited, retryable: true };
   if (status >= 500) return { text: ERROR_COPY.server, retryable: true };

@@ -30,6 +30,20 @@ async function errorCode(res: Response): Promise<string | undefined> {
 export class NetworkError extends Error {}
 
 /**
+ * 요청 시간 상한 초과(action-timeout). 응답을 받지 못했다는 점에서 네트워크 오류의 한 종류라 기존 처리
+ * (끊김 판정·복귀 재시도·읽음 백오프)를 그대로 따른다. 서버 쪽 동작은 이미 일어났을 수 있다 —
+ * 화면 문구는 「확인하지 못했습니다」(`ERROR_COPY.timeout`)이고 자동 재전송은 하지 않는다.
+ */
+export class TimeoutError extends NetworkError {}
+
+/**
+ * 요청 1건의 시간 상한. fetch 표준에는 기본 타임아웃이 없어 서버가 응답하지 않으면 요청이 끝나지 않는다.
+ * 지연이 큰 모바일 망에서도 정상 액션·목록 조회는 수 초 안에 끝나고, 20초를 넘으면 사용자는 이미 실패로 본다.
+ * 첨부 업로드(원시 바이트)는 파일 크기·망 속도에 비례해 길어질 수 있어 제외한다.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
  * 리버스 프록시(Tailscale Serve)가 서버에 닿지 못했을 때의 게이트웨이 응답. 앱 서버는 이 코드를 내지 않으므로
  * 끊김 판정(UI_STATES C6)에서는 네트워크 오류와 같이 센다(W-16 F-8). 전송 결과 판정(4xx·5xx → 실패)은 그대로다.
  */
@@ -38,6 +52,19 @@ const GATEWAY_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
 /** 서버에 닿지 못한 실패: 네트워크 오류 또는 게이트웨이 응답(F-8). */
 export function isUnreachable(e: unknown): boolean {
   return e instanceof NetworkError || (e instanceof HttpStatusError && GATEWAY_STATUSES.has(e.status));
+}
+
+/** 2xx — `Response.ok`와 같은 기준. */
+const isOkStatus = (status: number): boolean => status >= 200 && status <= 299;
+
+/** 요청 1건의 전송 문맥. `onStatus`: 헤더(상태) 수신 — 이후 시간 초과는 그 상태로 끝낸다. */
+interface SendContext {
+  readonly body: unknown;
+  readonly raw?: { readonly bytes: Blob; readonly type: string };
+  readonly signal?: AbortSignal;
+  readonly isTimedOut: () => boolean;
+  readonly notify: (ok: boolean) => void;
+  readonly onStatus: (status: number) => void;
 }
 
 export interface ApiDeps {
@@ -52,6 +79,39 @@ export function createApi(deps: ApiDeps) {
 
   /** `raw`: JSON 대신 원시 바이트(첨부 업로드, TRD §3 `POST /api/attachments`) — `Content-Type`은 파일 형식. */
   const request = async <T>(method: string, path: string, body?: unknown, raw?: { readonly bytes: Blob; readonly type: string }): Promise<T> => {
+    // 네트워크 결과 알림(onNetwork)은 요청당 최대 1회 — 헤더 수신과 시간 초과를 실패 두 건으로 세지 않는다(Codex r1 P2).
+    let notified = false;
+    const notify = (ok: boolean) => {
+      if (notified) return;
+      notified = true;
+      deps.onNetwork?.(ok);
+    };
+    if (raw !== undefined) return send<T>(method, path, { body, raw, notify, isTimedOut: () => false, onStatus: () => undefined });
+    // 상한에 닿으면 fetch를 abort하고 끝낸다. signal을 무시하는 fetch여도 race로 끝난다.
+    // 헤더 전이면 TimeoutError, 오류 상태 헤더를 이미 받았으면 그 상태의 HttpStatusError(코드 미상)다(Codex r1 P2).
+    const controller = new AbortController();
+    let timedOut = false;
+    let status: number | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        notify(false);
+        reject(status !== undefined && !isOkStatus(status) ? new HttpStatusError(status) : new TimeoutError('timeout'));
+      }, REQUEST_TIMEOUT_MS);
+    });
+    const ctx: SendContext = { body, notify, signal: controller.signal, isTimedOut: () => timedOut, onStatus: (s) => (status = s) };
+    try {
+      return await Promise.race([send<T>(method, path, ctx), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /** `isTimedOut`: 상한 초과 뒤 늦게 끝난 결과는 알림(onNetwork·onUnauthorized)을 내지 않는다 — 결과는 이미 정해졌다. */
+  const send = async <T>(method: string, path: string, ctx: SendContext): Promise<T> => {
+    const { body, raw, signal, isTimedOut, notify } = ctx;
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (raw !== undefined) headers['Content-Type'] = raw.type;
     else if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -63,19 +123,29 @@ export function createApi(deps: ApiDeps) {
         credentials: 'same-origin',
         headers,
         ...(raw !== undefined ? { body: raw.bytes } : body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(signal === undefined ? {} : { signal }),
       });
     } catch {
-      deps.onNetwork?.(false);
+      if (isTimedOut()) throw new TimeoutError('timeout');
+      notify(false);
       throw new NetworkError('network');
     }
-    deps.onNetwork?.(!GATEWAY_STATUSES.has(res.status));
+    if (isTimedOut()) throw new TimeoutError('timeout');
+    ctx.onStatus(res.status);
+    notify(!GATEWAY_STATUSES.has(res.status));
     if (res.status === 401) {
       csrf = null;
       deps.onUnauthorized();
       throw new HttpStatusError(401);
     }
     if (!res.ok) throw new HttpStatusError(res.status, await errorCode(res));
-    return (res.status === 204 ? undefined : await res.json()) as T;
+    if (res.status === 204) return undefined as T;
+    // 성공 상태 본문을 끝까지 받지 못했으면 결과를 확인하지 못한 것 — 네트워크 오류로 분류한다(Codex r1 P1).
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw isTimedOut() ? new TimeoutError('timeout') : new NetworkError('network');
+    }
   };
 
   return {

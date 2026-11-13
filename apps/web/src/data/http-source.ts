@@ -24,7 +24,7 @@ import type {
 import { createSendController, type PendingMessage, type PostResult } from '../features/conversation';
 import { adoptAccount, clearCheckpoints, readCheckpoint, writeCheckpoint, type SessionBus, type StorageLike } from '../features/sync';
 import { pushSubscriptionCreatedSchema, pushSubscriptionCreateSchema, vapidPublicKeyResponseSchema } from '../../../../packages/shared/src/push.js';
-import { createApi, HttpStatusError, isUnreachable, NetworkError, type FetchLike } from './api.js';
+import { createApi, HttpStatusError, isUnreachable, NetworkError, TimeoutError, type FetchLike } from './api.js';
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
 import { createRealtimeClient, type SocketLike } from './realtime.js';
@@ -974,6 +974,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     try {
       return { ok: true, value: await run() };
     } catch (e) {
+      if (e instanceof TimeoutError) return { ok: false, status: 'network', timedOut: true };
       if (e instanceof NetworkError) return { ok: false, status: 'network' };
       if (e instanceof HttpStatusError) return e.code === undefined ? { ok: false, status: e.status } : { ok: false, status: e.status, code: e.code };
       throw e;

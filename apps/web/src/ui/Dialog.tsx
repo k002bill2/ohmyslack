@@ -6,6 +6,11 @@ export interface DialogProps {
   readonly title: string;
   /** Esc·닫기(x)·완료 시 호출. 소유자가 Dialog를 언마운트하면 트리거로 포커스가 돌아간다. */
   readonly onClose: () => void;
+  /**
+   * 요청 진행 중(파괴적 확인 Dialog). true면 Esc(상자·문서 수준)·「닫기」로 닫히지 않고 상자에 `aria-busy`.
+   * 닫아도 요청은 취소되지 않으므로 결과(성공·실패·시간 초과)를 볼 때까지 붙잡는다 — 요청 시간 상한(REQUEST_TIMEOUT_MS)이 끝을 보장한다.
+   */
+  readonly busy?: boolean;
   readonly children: ReactNode | ((ids: { readonly titleId: string }) => ReactNode);
 }
 
@@ -135,7 +140,7 @@ function observeLostFocus(box: HTMLElement): () => void {
  * - 포커스가 BODY·배경에 있어도 Tab·Shift+Tab·Esc가 가장 위 Dialog에 닿음(문서 수준 keydown)
  * 마운트 = 열림. 소유자는 `{open && <Dialog …/>}`로 렌더한다.
  */
-export function Dialog({ title, onClose, children }: DialogProps) {
+export function Dialog({ title, onClose, busy = false, children }: DialogProps) {
   const titleId = useId();
   const parent = useContext(ParentDialog);
   const box = useRef<HTMLDivElement>(null);
@@ -143,8 +148,10 @@ export function Dialog({ title, onClose, children }: DialogProps) {
   const [entry] = useState<OpenBox>(() => ({ parent, box }));
   // 마운트 effect가 한 번만 걸리므로 최신 onClose를 ref로 읽는다(문서 수준 Esc).
   const latestClose = useRef(onClose);
+  const latestBusy = useRef(busy);
   useEffect(() => {
     latestClose.current = onClose;
+    latestBusy.current = busy;
   });
 
   useEffect(() => {
@@ -161,7 +168,9 @@ export function Dialog({ title, onClose, children }: DialogProps) {
     );
     siblings.forEach((el) => (el.inert = true));
     const releaseFocusGuard = box.current === null ? null : observeLostFocus(box.current);
-    const releaseKeyTrap = box.current === null ? null : trapOutsideKeys(entry, box.current, siblings, () => latestClose.current());
+    const releaseKeyTrap = box.current === null ? null : trapOutsideKeys(entry, box.current, siblings, () => {
+          if (!latestBusy.current) latestClose.current();
+        });
     return () => {
       releaseKeyTrap?.();
       releaseFocusGuard?.();
@@ -176,7 +185,7 @@ export function Dialog({ title, onClose, children }: DialogProps) {
     if (e.key === 'Escape') {
       if (isComposingKey(e.nativeEvent)) return;
       e.stopPropagation();
-      onClose();
+      if (!busy) onClose();
       return;
     }
     if (e.key === 'Tab' && box.current !== null && trapTab(box.current, e.shiftKey)) e.preventDefault();
@@ -184,12 +193,12 @@ export function Dialog({ title, onClose, children }: DialogProps) {
 
   return (
     <div className="dialog-backdrop">
-      <div ref={box} className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onKeyDown}>
+      <div ref={box} className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} aria-busy={busy ? true : undefined} onKeyDown={onKeyDown}>
         <div className="dialog-header">
           <h2 id={titleId} className="dialog-title">
             {title}
           </h2>
-          <button type="button" className="dialog-close" onClick={onClose}>
+          <button type="button" className="dialog-close" disabled={busy} onClick={onClose}>
             {DIALOG_CLOSE_LABEL}
           </button>
         </div>

@@ -14,12 +14,12 @@ export interface DeactivateDialogProps {
 /** CMP-18 멤버 비활성화 확인(UI_STATES §2-8): 정본 본문 + 「취소」·「멤버 비활성화」, 오류 → ErrorState. */
 export function DeactivateDialog({ busy, failure, onConfirm, onCancel }: DeactivateDialogProps) {
   return (
-    <Dialog title={DIALOG_TITLES.deactivateMember} onClose={onCancel}>
+    <Dialog title={DIALOG_TITLES.deactivateMember} onClose={onCancel} busy={busy}>
       <div className="dialog-form">
         <p>{MEMBER_ADMIN_COPY.deactivateBody}</p>
         {failure !== null && <ErrorState message={failureText(failure)} />}
         <div className="dialog-actions">
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onCancel}>
             {CANCEL_LABEL}
           </button>
           <button type="button" className="btn btn-danger" disabled={busy} onClick={onConfirm}>
