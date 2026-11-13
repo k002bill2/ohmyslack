@@ -38,11 +38,11 @@
 | CMP-15 | `ConnectionBanner` | 상단 고정 연결 상태 띠 | §5 | D §6-2, §6-4 |
 | CMP-16 | `StatusRegion` | 시각적으로 숨긴 `aria-live` 영역 | §4-4 | D §6-2, §7-1 |
 | CMP-17 | `EmptyState` / `ErrorState` / `Skeleton` | 공통 5상태 프리미티브 | §2-1 | D §6-1, §6-2 |
-| CMP-18 | `Dialog` | APG modal dialog(용도 8종) | §2-8 | D §6-2, §7-2 |
+| CMP-18 | `Dialog` | APG modal dialog(용도 9종 — 기기 로그아웃 확인 추가) | §2-8 | D §6-2, §7-2 |
 | CMP-19 | `LoginForm` / `InviteAccept` | 로그인 / 프래그먼트 토큰 초대 수락 | §2-9 | D §6-2, §4-2 |
 | CMP-20 | `InstallHint` | PWA 설치 안내 | §2-10 | D §6-2, §9 |
 | CMP-21 | `Avatar` | 이니셜 원형, neutral 5 고정 | §2-10 | D §6-2, §7-5 |
-| CMP-22 | `SessionList`(P1) | 기기별 세션·원격 로그아웃 | §2-10 (P1, 범위 밖) | D §6-2 |
+| CMP-22 | `SessionList` | 로그인한 기기 목록·다른 기기 로그아웃(`/settings/sessions`, ADR-002 1c) | §2-14 | D §6-2, §6-6, P FR-AUTH-04 |
 | CMP-23 | `ChannelBrowser` | 미참여 공개 채널 목록 + 「참여」 | §2-11 | D §6-2, §10-2 |
 | CMP-24 | `DmStarter` | 멤버 콤보박스 → 「DM 시작」 | §2-11 | D §6-2, §10-2 |
 | CMP-25 | `MemberAdmin`(관리자) | 멤버 목록·「초대 링크 만들기」·비활성화 | §2-12 | D §6-2, §10-2 |
@@ -51,6 +51,9 @@
 | CMP-28 | `AudioAttachment` | 오디오(mp3) 플레이어 | §2-5(첨부 표시) | D §6-2, P FR-OPS-05 |
 | CMP-29 | `ImageAttachment` | 이미지 썸네일·확대 | §2-5(첨부 표시) | D §6-2, P FR-OPS-05 |
 | CMP-30 | `PushSettings` | 설정의 이 기기 알림 구독 카드 | §2-10 | D §6-2, P FR-CLIENT-05 |
+| CMP-32 | `DocumentAttachment` | 메시지 안 문서 행(형식 표지·파일명·크기·「매크로 포함」·「받기」) + 작성기 문서 칩(ADR-002 1b) | §2-13 | D §6-2, §6-5, P FR-OPS-09 |
+
+- CMP-31은 2단계 `ProcessingStatus`(Jarvis 처리 상태, Claude-Fable §5-1 후보 ID) 자리로 비워 둔다. Claude-Fable §5-1의 후보 CMP-33 `SessionList`는 쓰지 않고 기존 CMP-22를 구체화한다(REPORT UI-D1).
 
 화면 단위(SCR-01–12)와 포함 컴포넌트는 D §10-1을 그대로 따른다. 이 문서는 SCR ID를 §6 시나리오 표에서만 쓴다.
 
@@ -175,7 +178,7 @@
 | 자기 멘션 | 응답·이벤트의 `mention_user_ids`에 내 ID(T §4:122) | 배경 `accent-bg` + 왼쪽 선 `accent-solid` + 라벨 「나를 멘션」(§9 결정 3), `@이름`은 `accent-text` | — | 모두 | 수정으로 내 ID 제거 → 해제 |
 | 스레드 답글 수 | 원문의 `root_reply_count > 0`(T §4, 삭제 답글 제외) | CMP-14 「↳ 답글 3」 형식(§2-7) | 버튼 | 스레드 열기 | 답글 수 0 → 숨김 |
 | 봇 작성자 | projection `author_kind = 'bot'`(서버 결정값, P FR-BOT-03) | 작성자 이름 옆 CMP-26 배지. 텍스트 포함, **색만으로 구분 금지**. 배지 문구·모양 — (정본 없음 → §8 Q-H1) | 배지 텍스트가 메시지의 접근 가능한 이름에 포함 | 답글(스레드 열기). 봇 메시지의 수정·삭제 버튼 없음(작성자 아님) | 없음 |
-| 첨부 포함 | `attachments.length > 0` | 본문 아래 CMP-27, 첨부별 CMP-28·CMP-29(아래 「첨부 표시」) | CMP-27 `role="list"` | 재생·확대·다운로드 | 첨부 만료 → 만료 자리표시자 |
+| 첨부 포함 | `attachments.length > 0` | 본문 아래 CMP-27, 첨부별 CMP-28·CMP-29(아래 「첨부 표시」)·CMP-32(문서, §2-13) | CMP-27 `role="list"` | 재생·확대·다운로드 | 첨부 만료 → 만료 자리표시자 |
 
 **전이 규칙(D §6-3 1–4 + Jarvis 결정)**
 
@@ -234,6 +237,8 @@
 | 업로드 실패 — 형식 | 415 | 같은 형식 + 허용 형식 안내 — (정본 없음 → §8 Q-H2) | `role="alert"` 1회 | 제거 | 제거 |
 | 업로드 실패 — 기타 | 네트워크 오류·5xx | 칩 danger + 「다시 시도」 | `role="alert"` 1회 | 「다시 시도」·제거 | 2xx → 첨부 대기 |
 
+- 문서(PDF·Office·한글) 선택·업로드·실패 흐름은 §2-13 「작성기 문서 칩」이 이 표를 확장한다(같은 칩 컴포넌트, 형식별 상한·문구만 다름).
+
 **MentionPicker** (APG combobox, 후보원 `GET /api/conversations/{id}/members`)
 
 | 상태 | 진입 조건 | 표시 | 가능한 동작 | 탈출 조건 |
@@ -285,6 +290,7 @@
 | 멤버 비활성화 확인 | 「이 멤버의 모든 기기가 5초 안에 로그아웃되며 다시 로그인할 수 없습니다」 | 오류 → `ErrorState` |
 | 메시지 삭제 확인 | 확인 본문 문구 → §8 Q-1 | 403·404 → 재시도 불가 안내 |
 | 단축키 안내 | `Ctrl/⌘+/`로 열림. 내용 = D §7-3 키맵 | — |
+| 기기 로그아웃 확인(ADR-002 1c) | COPY_GAPS G-69 | 요청 중 busy(닫기 차단)·오류·404 → §2-14 |
 
 ### 2-9. CMP-19 `LoginForm` / `InviteAccept` (D §6-2, §4-2; 제한 수치 T §5)
 
@@ -304,7 +310,7 @@
 - CMP-16 `StatusRegion`: 시각적으로 숨긴 `aria-live="polite"`. 고유 상태 없음. 내보내는 문구는 §4-4.
 - CMP-20 `InstallHint`: 기본 = iOS 안내(공유 → 홈 화면에 추가) / macOS 분기(D §10-1 SCR-07). `display-mode: standalone`이면 **숨김**. 안내 문장 원문은 D에 없음 → §8 Q-1. iOS에서 알림을 받으려면 홈 화면 설치가 필요하다는 안내로 CMP-30 「홈 화면 미설치(iOS)」 상태에서 연결된다(연결 문구 → §8 Q-H4).
 - CMP-21 `Avatar`: 이니셜 원형, neutral 5 고정, `alt` 대신 `aria-label` 이름(D §7-5). 상태 없음.
-- CMP-22 `SessionList`: P1(FR-AUTH-04). 이번 명세 범위 밖.
+- CMP-22 `SessionList`: §2-14(ADR-002 1c, FR-AUTH-04).
 
 **CMP-30 `PushSettings`** (P FR-CLIENT-05, ADR-001 §3-i, 전송 경로·키 관리 T §6-2). 카드 문구는 전부 — (정본 없음 → §8 Q-H4), 위치도 Q-H4.
 
@@ -344,6 +350,72 @@
 | 비활성화 완료 | `POST /api/admin/members/{user_id}/deactivate` 2xx | 행 muted + 「비활성」 라벨 | — | — |
 | 오류 | 네트워크 오류·5xx | `ErrorState` + 「다시 시도」 | 「다시 시도」 | 2xx |
 | 로딩 | 목록 요청 중 | `Skeleton` | — | 응답 |
+
+### 2-13. CMP-32 `DocumentAttachment` — 문서 첨부 (ADR-002 §3 1b·§4, P FR-OPS-09, 문구 COPY_GAPS G-53–G-62)
+
+- 범위: PDF·Word·Excel·PowerPoint·한글(구형 Office 포함)을 **다운로드 전용**으로 주고받는다(ADR-002 §4-1, 인라인 미리보기 없음). 형식 판정·상한·보존은 서버 정본(ADR-002 §4-2·§4-3 → TRD §6-1 개정 대상, REPORT ④)이며 이 절은 값을 인용만 한다: 문서 25 MiB/파일, 이미지 10 MiB 유지, 메시지당 4개(T §6-1), 보존 90일.
+- 데이터원(제안, REPORT ④): 첨부 projection에 `file_name`·`has_macros`가 추가된다고 가정한다. 현재 projection(T §4 `attachments[{id,mime,byte_size,…,expires_at,expired}]`)에는 둘 다 없다.
+- 봇이 보낸 문서와 사람이 보낸 문서는 **같은 행**으로 그린다. 봇 구분은 작성자 이름 옆 CMP-26 배지뿐이며 문서 행에는 봇 전용 표시·색이 없다(UI-D9).
+
+**작성기 문서 칩** (CMP-11 확장, §2-6 「Composer 첨부」와 같은 칩)
+
+| 상태 | 진입 조건 | 표시(문구는 「」) | 접근성(이름·스크린리더) | 포커스 | 가능한 동작 | 탈출 조건 |
+|---|---|---|---|---|---|---|
+| 선택 대기 | 작성기의 첨부 버튼(`paperclip`) | 버튼 이름 「파일 첨부」(G-53). 숨은 `<input type="file" multiple>`의 `accept`는 이미지 3종 + 문서 확장자 목록(G-54) | 아이콘 단독 버튼 `aria-label="파일 첨부"` | 버튼 | 탭 → OS 파일 선택 | 파일 선택 / 취소(변화 없음, 포커스 버튼 유지) |
+| 사전 거부 | 선택 직후 클라이언트 검사: 확장자가 허용 목록 밖, 또는 크기 > 형식별 상한(문서 25 MiB·이미지 10 MiB) | 칩 생성 + danger 선 + 문구: 형식 → 「지원하지 않는 형식입니다(…)」(G-54) / 크기 → 「파일이 너무 큽니다(최대 25MB)」(G-55, 이미지는 기존 「…(최대 10MB)」) | `role="alert"` 1회 | 버튼 유지 | 「첨부 제거」 | 제거 |
+| 업로드 중 | 사전 검사 통과 → `POST /api/attachments?conversation_id=`(원시 바이트) 응답 전 | 칩: 형식 표지(G-59) + 파일명(말줄임 규칙은 아래 문서 행과 같음) + 크기 + 「업로드 중」(재사용) + **비결정 진행 표시**(퍼센트 없음, UI-D3). 전송 버튼 비활성 | 칩 `aria-busy="true"`, 진행 표시는 텍스트 「업로드 중」이 이름 | 변화 없음(입력란 유지) | 「첨부 제거」 = 요청 취소(abort) + 칩 제거 | 2xx → 첨부 대기 / 오류 → 실패 / 제거 |
+| 첨부 대기 | 업로드 2xx | 칩: 형식 표지 + 파일명 + 크기 + 「첨부 제거」 | 칩 이름 = 전체 파일명, 상태 변화는 StatusRegion 없이 칩 텍스트로 | 변화 없음(입력란 유지) | 제거, 전송. 본문이 비면 「[문서]」(G-58)로 채워 보냄(T 메시지 본문 필수 규칙) | 전송 → §2-5 메시지 상태 흐름 |
+| 실패 — 크기 | 413 | danger 선 + G-55 | `role="alert"` 1회 | 변화 없음 | 「첨부 제거」(다시 시도 없음 — 같은 파일은 다시 실패) | 제거 |
+| 실패 — 형식 | 415(내용 판정 불일치) | danger 선 + G-54 | `role="alert"` 1회 | 변화 없음 | 「첨부 제거」 | 제거 |
+| 실패 — 매크로 확장자 | 415 + 오류 코드 `macro_extension_mismatch`(제안, REPORT ④) — 매크로가 든 OOXML을 `.docx/.xlsx/.pptx`로 올림 | danger 선 + 「매크로가 들어 있는 문서입니다. .docm·.xlsm·.pptm 확장자로 저장해 다시 보내 주세요.」(G-56). 코드가 오지 않으면 실패 — 형식 문구로 대체 | `role="alert"` 1회 | 변화 없음 | 「첨부 제거」 | 제거 |
+| 실패 — 네트워크·5xx | 응답 없음·5xx | danger 선 + 「업로드하지 못했습니다.」 + 원인 1문장(`ERROR_COPY.network`·`server` 재사용, G-57) + 「다시 시도」 | `role="alert"` 1회 | 변화 없음 | 「다시 시도」(같은 파일 재업로드)·제거 | 2xx → 첨부 대기 |
+
+- 시간 초과 상태는 **없다.** 원시 바이트 업로드는 20초 요청 상한(`REQUEST_TIMEOUT_MS`, PR #31 C1)에서 면제되어 있고 이 면제를 유지한다(UI-D4). 느린 회선은 「업로드 중」이 길어질 뿐이며 사용자는 「첨부 제거」로 끊는다.
+- 제거·취소 후 포커스: **작성기 입력란**. 칩이 여러 개면 다음 칩의 「첨부 제거」, 없으면 입력란(I-4와 같은 "사라진 트리거" 규칙).
+- 실패 알림은 칩마다 `role="alert"` 1회만. 같은 칩의 같은 상태를 다시 읽지 않는다.
+- 문서와 이미지를 한 메시지에 섞어 보낼 수 있다(메시지당 4개 상한 공통, T §6-1). 4개 초과 선택은 기존 규칙을 따른다.
+
+**메시지 안 문서 행** (CMP-27 `AttachmentList`의 `listitem` 하나)
+
+| 상태 | 진입 조건 | 표시(문구는 「」) | 접근성(이름·스크린리더) | 포커스 | 가능한 동작 | 탈출 조건 |
+|---|---|---|---|---|---|---|
+| 준비 | 문서 mime, `expired = false` | 한 행: `file-text` 아이콘(장식) + **형식 표지 텍스트**(G-59, 예: 「PDF」·「한글」) + 파일명(아래 말줄임 규칙) + 크기(예: 「2.4MB」, 기존 `formatBytes`) + 「받기」 버튼(`download` + 텍스트, G-62) | `listitem`. 「받기」 버튼 이름 = 「{전체 파일명} 받기, {형식}, {크기}」(G-62). 아이콘 `aria-hidden="true"` | 「받기」 버튼 1개만 탭 정류장(행 자체는 포커스 대상 아님) | 「받기」 = `<a href="/api/attachments/{id}" download>` 일반 링크(서버 `Content-Disposition: attachment`), JS fetch·blob 없음(UI-D5) | 만료 |
+| 준비 · 매크로 포함 | 위 + `has_macros = true` | 위 + 파일명 줄 아래(compact) 또는 크기 뒤(medium·wide)에 **「매크로 포함」 텍스트 표지**(G-60) — `--warning-text`/`--warning-bg` + 테두리, **색만으로 구분 금지**(FR-CLIENT-07) | 「받기」 버튼 이름 끝에 「, 매크로 포함」 추가(G-62). 표지 자체는 보이는 텍스트 | 같음 | 같음(경고 Dialog 없음 — 영환님 결정 「받는다」, ADR-002 §4-3 1) | 만료 |
+| 만료 자리표시자 | `expired = true`(90일 경과 또는 메시지 삭제, T §4) | muted: 형식 표지 + 파일명 + 「만료된 첨부입니다」(재사용, G-61). **「받기」 버튼 없음**, 크기 숨김 | 텍스트로만 읽힘(버튼 없음) | 탭 정류장 없음 | 없음 | 없음(최종 상태) |
+| 받기 후 | 사용자가 「받기」 | 앱 화면 변화 없음. 저장·열기는 브라우저·OS(iPhone은 공유 시트/「파일」 앱) 몫 — 실기 확인 REPORT ⑤ | 앱은 상태를 알리지 않음(받는 중·받기 실패 상태 없음, UI-D5) | 버튼 유지 | 다시 받기 | — |
+
+- **파일명 말줄임 규칙:** 파일명을 `이름부`와 `확장자부`(마지막 `.` 이후, 점 포함)로 나눈다. 이름부만 한 줄 `text-overflow: ellipsis`, 확장자부는 줄이지 않는다(예: 「분기 보고서_최종_수정본_v….docm」 → 확장자 `.docm`이 항상 보임 — 매크로 확장자 위장 판단에 필요). 확장자가 없거나 이름부가 비면 전체를 한 덩어리로 말줄임.
+- **전체 파일명 접근 방법:** ① 「받기」 버튼 접근 이름(스크린리더·음성 제어) ② 정밀 포인터(medium·wide)에서 파일명 요소 `title` ③ 터치(iPhone)는 `title`이 보이지 않으므로 compact에서 이름부를 **최대 2줄**까지 보이고 그 뒤에만 말줄임한다(확장자부 분리 규칙 유지). 그래도 잘리면 받은 파일의 이름이 최종 확인 수단이다. 툴팁·길게 누르기 전용 UI는 만들지 않는다.
+- **배치(폭별):** 390px(compact)·834px(medium)·1440px(wide) 배치와 간격·토큰은 D §6-5. 요약: 390 = 파일명 블록(형식 표지 + 파일명, 이름부 최대 2줄) + 메타 줄(크기·「매크로 포함」) + 오른쪽 「받기」 44×44 이상 / 834·1440 = 1줄(표지·파일명·크기·표지) + 「받기」, 행 최대 폭 D §6-5.
+- 지정 테스트: DD 6-2에 FR-OPS-09 행이 없다 → 구현 레인이 DD에 행을 추가한 뒤 이름을 정한다(테스트 이름을 이 문서가 새로 정하지 않음, CLAUDE.md). 확인 항목은 REPORT UI-AC-01–UI-AC-11.
+
+### 2-14. CMP-22 `SessionList` — 로그인한 기기 (`/settings/sessions`, ADR-002 §3 1c, P FR-AUTH-04, 문구 COPY_GAPS G-63–G-72)
+
+- 데이터원: `GET /api/sessions` → `{sessions:[{id,created_at,last_seen_at,expires_at,current}]}`(`packages/shared/src/auth.ts:25-35`, 살아 있는 세션만 — `apps/server/src/modules/auth/service.ts:209-211`). **기기 라벨 필드는 아직 없다.** 로그인 시 한 번 만든 거친 라벨(「iPhone · Safari」 수준, 원시 UA·IP 저장 금지 — ADR-002 C-4 ★)을 `device_label`로 내려 준다고 가정한다(제안, REPORT ④). 원격 로그아웃 라우트도 없다 → `DELETE /api/sessions/{id}` 제안(REPORT ④).
+- **진입 경로(UI-D10):** 사이드바 하단 계정 카드의 아이콘 버튼 「로그인한 기기」(`smartphone`, G-63) — 「로그아웃」 버튼(`Sidebar.tsx:250-254`) 옆, 모든 역할에 보임. → `/settings/sessions` 라우트 화면(`/settings/members`와 같은 라우트 화면 방식, 모든 구간). `/settings` 셸(D §4-2 P0 셸)은 이번에 만들지 않는다. compact 화면 머리에 뒤로(`chevron-left`) — 히스토리 없으면 `/`로 `replace`.
+- **정렬:** 이 기기(`current = true`) 맨 위 → 나머지는 `last_seen_at` 내림차순(UI-D16).
+- **「다른 기기 모두 로그아웃」은 넣지 않는다(UI-D11).** 개별 로그아웃만.
+
+| 상태 | 진입 조건 | 표시(문구는 「」) | 접근성(이름·스크린리더) | 포커스 | 가능한 동작 | 탈출 조건 |
+|---|---|---|---|---|---|---|
+| 로딩 | 화면 진입 → `GET /api/sessions` 응답 전 | 화면 제목 「로그인한 기기」(G-63) + `Skeleton` 3줄 | 목록 `aria-busy="true"` | 화면 진입 시 제목(`h1`, `tabindex="-1"`)으로 이동 | 뒤로 | 2xx → 기본/빈 · 오류 |
+| 기본 | 2xx, 다른 기기 ≥ 1 | `ul` 목록. 행 = 기기 아이콘(`smartphone`/`laptop`, 장식) + 기기 라벨(G-65) + 2줄째 「마지막 사용 {시각}」(G-66) + 오른쪽 버튼. 이 기기 행: 「이 기기」 텍스트 표지(G-64) + 「이 기기에서 로그아웃」 버튼(G-67). 다른 기기 행: 「로그아웃」 버튼(G-67) | 목록 `aria-label="로그인한 기기"`. 행 `listitem`. 버튼 이름 = 다른 기기 「{기기 라벨} 로그아웃」 / 이 기기 「이 기기에서 로그아웃」. 「이 기기」 표지는 보이는 텍스트(색 외 구분) | 제목 → 목록 버튼 순(DOM = 시각 순) | 행 「로그아웃」 → 확인 Dialog / 「이 기기에서 로그아웃」 → 아래 행 | — |
+| 빈(다른 기기 없음) | 2xx, `current` 행 1개뿐 | 이 기기 행 + 그 아래 `EmptyState` 1문장 「다른 기기에서 로그인하지 않았습니다」(G-68), 행동 버튼 없음 | 텍스트 | 제목 | 「이 기기에서 로그아웃」 | 다른 기기 로그인 후 재진입 |
+| 라벨 없음 | 행의 `device_label`이 null(라벨 컬럼 도입 전 세션) | 기기 라벨 자리에 「알 수 없는 기기」(G-65), 아이콘 `smartphone` | 버튼 이름 「알 수 없는 기기 로그아웃」 — 여러 개면 「마지막 사용 {시각}」을 이름에 덧붙여 구분(G-65) | — | 같음 | — |
+| 오류 | 목록 요청 네트워크 오류·5xx·429 | `ErrorState`: `ERROR_COPY` 원인 1문장(재사용 — network·server·rateLimited) + 「다시 시도」 | `role="alert"` | 「다시 시도」 버튼 | 「다시 시도」 = 같은 요청 | 2xx |
+| 시간 초과 | 목록 요청이 20초 상한 초과(`TimeoutError`, PR #31 C1) | `ErrorState`: 「서버 응답이 늦어 확인하지 못했습니다.」(재사용 `ERROR_COPY.timeout`) + 「다시 시도」 | `role="alert"` | 「다시 시도」 | 같은 요청 | 2xx |
+| 확인 Dialog | 다른 기기 행 「로그아웃」 | CMP-18: 제목 「기기 로그아웃」, 본문 G-69(5초 안 로그아웃·그 기기 알림도 꺼짐), 버튼 「로그아웃」(danger)·「취소」 | APG modal, 제목이 이름, 본문 `aria-describedby` | 열릴 때 기존 Dialog 규칙 그대로 — 첫 포커스 가능 요소(`apps/web/src/ui/Dialog.tsx:163`, 다른 확인 Dialog 4개와 같음) | 「로그아웃」 → 요청 / 「취소」·Esc·「닫기」 → 닫힘 | 닫힘 → 트리거 행 「로그아웃」 버튼으로 복귀 |
+| 확인 Dialog · 요청 중(busy) | Dialog 「로그아웃」 → `DELETE /api/sessions/{id}`(제안) 응답 전 | **PR #31 busy 규칙과 동일:** Dialog `busy` → Esc(상자·문서 단위)·「닫기」 무시, `aria-busy`, 「취소」·「로그아웃」 `disabled`, 배경 클릭은 원래 닫지 않음(`apps/web/src/ui/Dialog.tsx:10-13,170-201`) | `aria-busy="true"` | 비활성된 버튼에서 포커스를 잃으면 Dialog 상자로(`observeLostFocus`, `Dialog.tsx:107-130`) | 없음(20초 상한 안에서 끝남) | 2xx → 성공 / 오류 → Dialog 안 오류 · 응답 없이 끝나도 `settleAction`으로 busy 해제 보장(1d30ea3) |
+| 확인 Dialog · 오류 | 요청 4xx·5xx·네트워크·시간 초과 | Dialog 본문 아래 「로그아웃하지 못했습니다.」 + 원인 1문장(`failureText`, G-70) — 시간 초과면 `ERROR_COPY.timeout` | `role="alert"` 1회 | 「로그아웃」 버튼(다시 시도) | 「로그아웃」 다시 / 「취소」 | 2xx / 닫힘 |
+| 로그아웃 완료 | 2xx(제안: 이미 폐기된 본인 세션도 204, REPORT ④) | Dialog 닫힘, 행 제거, StatusRegion 「{기기 라벨} 기기를 로그아웃했습니다」(G-71) | StatusRegion `aria-live="polite"` | **사라진 트리거 규칙(I-4 선례):** 다음 행의 「로그아웃」 → 없으면 이전 다른 기기 행의 「로그아웃」 → 없으면 화면 제목 | — | 목록 갱신(`GET /api/sessions` 재요청) |
+| 대상 없음 | 로그아웃 요청 404(남의 세션 ID·없는 ID — 존재 은폐) | Dialog 안 「로그아웃하지 못했습니다.」 + `ERROR_COPY.notFound`(재사용) + 「목록 새로 고침」 | `role="alert"` | 「목록 새로 고침」 | 목록 재요청 | 2xx |
+| 이 기기에서 로그아웃 | 이 기기 행 「이 기기에서 로그아웃」 | **확인 없이** 기존 로그아웃과 같음: `POST /api/auth/logout` → `end('logout')` → `/login`(`apps/web/src/data/http-source.ts:1203-1209`, 사이드바 「로그아웃」과 동일, UI-D12) | 버튼 이름 「이 기기에서 로그아웃」. 이동 후 로그인 화면이 「세션이 종료되었습니다…」 없이 열림(사용자 동작) | `/login` 로그인 폼 첫 입력(F6) | — | `/login` |
+| 다른 기기에서 로그아웃당함 | 그 기기의 다음 HTTP 401 또는 WS close(5초 안, T §5 :149) | 기존 401 흐름: 「세션이 종료되었습니다. 다시 로그인해 주세요.」(재사용, D §4-3) — 원인(원격 로그아웃) 비노출 | 기존 | 기존 F6 | 로그인 | 로그인 성공 |
+| 401 | 이 화면의 어떤 요청이든 401 | C9와 같음: 메모리 비움 → `/login` + 「세션이 종료되었습니다. 다시 로그인해 주세요.」(재사용) | 로그인 화면 안내 문구가 텍스트로 읽힘(D §4-3) | 로그인 폼 첫 입력(F6) | 로그인 | `/login` |
+
+- 「마지막 사용」 시각은 `last_seen_at`이다. 서버가 인증 요청마다 갱신하므로(30일 sliding, T §5) 이 기기 행은 항상 「지금」에 가깝다. 이 기기 행에도 같은 형식으로 표시한다(특례 없음).
+- 이 기기 로그아웃은 DB 세션 revoke + 그 세션의 push 구독 삭제(T :66 CASCADE)라 CMP-30 구독도 같이 없어진다. 확인 Dialog 본문 G-69가 이를 알린다(다른 기기 대상).
+- 지정 테스트: DD 6-2에 FR-AUTH-04 행이 없다 → 구현 레인이 DD에 행 추가(§2-13과 같음). 확인 항목은 REPORT UI-AC-12–UI-AC-20.
 
 ---
 
@@ -557,6 +629,8 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | FR-BOT-06 | §2-5(`/` 본문), §2-6(`/` 입력) | `FR-BOT-06 슬래시로 시작하는 owner 메시지는 작성기가 가로채지 않고 원문 그대로 전송·표시되며 승인 요청 안의 명령 문구는 인라인 코드로 보인다` | 컴포넌트 `apps/web/test/conversation/slash-text.test.tsx` | 수동 `QA-FR-BOT-06`(어댑터 pytest: owner 외 작성자 `/approve` 무시 + 실기 승인 왕복 1회) |
 | FR-OPS-05 | §2-5(첨부 표시), §2-6(Composer 첨부) | `FR-OPS-05 허용목록 밖 형식과 상한+1바이트 첨부는 저장되지 않고 내용으로 형식을 판정하며 비참여자는 404이고 Range 요청은 206이며 보존 만료·메시지 삭제 시 바이트가 지워진다` | 통합 `apps/server/test/attachments/attachments.int.test.ts` | 보조 통합 `apps/server/test/attachments/attachment-headers.int.test.ts`(nosniff·sandbox CSP·no-store), 컴포넌트 `apps/web/test/conversation/attachments/audio-attachment.test.tsx` / 수동 `QA-FR-OPS-05`(iPhone PWA mp3 재생) |
 | FR-CLIENT-05 | §2-10(CMP-30) | `FR-CLIENT-05 구독 기기에 본문 없는 payload로 알림이 1건 전송되고 404·410 구독은 삭제되며 허용목록 밖 endpoint는 등록되지 않는다` | 통합 `apps/server/test/push/push.int.test.ts`(가짜 push service) | 보조 컴포넌트 `apps/web/test/pwa/push-handler.test.ts`: SW push 이벤트가 항상 알림을 표시하고 본문을 저장하지 않음 / 수동 `QA-FR-CLIENT-05`(iOS 16.4+ 홈 화면 PWA·tailnet origin 실기 수신) |
+| FR-OPS-09 | §2-13(CMP-32) | — (DD 6-2 행 없음 → 1b 구현 레인이 DD에 행 추가 후 확정) | 제안: 컴포넌트 `apps/web/test/conversation/attachments/` 아래 문서 행·칩 테스트 | REPORT UI-AC-01–11, 수동: iPhone PWA 「받기」→「파일」 앱 저장(REPORT ⑤) |
+| FR-AUTH-04 | §2-14(CMP-22) | — (DD 6-2 행 없음 → 1c 구현 레인이 DD에 행 추가 후 확정) | 제안: 컴포넌트 `apps/web/test/` 아래 세션 목록 테스트 + 통합 `apps/server/test/auth/` 원격 로그아웃 | REPORT UI-AC-12–20, 수동: 두 기기 실기 원격 로그아웃 5초 |
 
 - FR-MSG-10·FR-BOT-04·FR-BOT-06·FR-OPS-05·FR-CLIENT-05 5행은 ADR-001 채택(2026-11-08, P0 42개)으로 추가한 UI 관련 P0이며 DD 6-2 R3.3 행을 그대로 옮겼다. 웹 구현은 W-19(봇 표시·서식)·W-22(웹 첨부)·W-23(Web Push).
 - 같은 W-10 범위의 인접 테스트(참고, 이번 매핑 대상 아님): FR-MSG-08 `apps/web/test/conversation/composer-ime.test.tsx`(§4-3), FR-SYNC-07 보조 `apps/web/test/sync/resume-banner.test.tsx`(§5), FR-SYNC-04 보조 `apps/web/test/sidebar/badge-sync.test.tsx`(§2-3).
@@ -604,6 +678,8 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — ★ 설정 화면 + Jarvis DM 첫 진입 시 1회 안내 제안. 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
 | Q-H5 | 알림 고정 문구(후보: "Jarvis" / "새 메시지가 있습니다")와 잠금 화면 노출 정책 | CMP-30, 서비스 워커 | 영환님 + TRD 저자(T §6-2) |
 | Q-H6 | 제목(`#`) 서식의 시각 크기 단계와 메시지 목록 밀도 영향 | CMP-08 | Designer |
+
+- Q-H2·Q-H3 중 **문서 첨부 부분**(첨부 버튼 이름·문서 크기·형식·매크로 확장자 실패 문구, 문서만 보낼 때 본문 자리 문구, 문서 행 만료 자리표시자)은 COPY_GAPS G-53–G-62로 닫는다(p2s1-ui-spec, 2026-11-13). 이미지·오디오 부분은 W-22 구현 문구(`ATTACHMENT_COPY`, `apps/web/src/ui/copy.ts:331-347`)가 이미 있다.
 
 ## 9. 문구 공백 채택 기록 (Jarvis ★, 2026-11-07)
 

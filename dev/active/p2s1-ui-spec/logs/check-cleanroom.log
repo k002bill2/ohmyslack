@@ -1,0 +1,6 @@
+
+> ohmyslack@ check:cleanroom /Users/younghwankang/orca/workspaces/ohmyslack/p2s1-ui-spec
+> tsx tools/bin/check-cleanroom.ts
+
+CLEANROOM OK
+EXIT=0
