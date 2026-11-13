@@ -386,7 +386,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 형식 표지 | `--text-sm`, `--text-muted`, 굵기 600 | 텍스트로 형식 구분(색 외 표시) |
 | 파일명 | `--text-md`, `--text`, `--leading-tight` | 이름부 말줄임 + 확장자부 고정(UI_STATES §2-13). compact 이름부 최대 2줄, medium·wide 1줄 + `title` |
 | 크기 | `--text-sm`, `--text-muted`, `tabular-nums` | — |
-| 「매크로 포함」 표지 | 글자 `--warning-text`, 바탕 `--warning-bg`, 1px `--border` 테두리, 반경 `--radius-sm`, `--text-xs`, 안쪽 `--space-1`·`--space-2` | **텍스트가 본체**, 색은 보조(FR-CLIENT-07). 그레이스케일에서도 테두리·글자로 구분. 글자/바탕 쌍은 ConnectionBanner 「다시 연결 중…」과 같은 쌍 |
+| 「매크로 포함」 표지 | 글자 `--warning-text`, 바탕 `--warning-bg`, 1px `--border` 테두리, 반경 `--radius-sm`, `--text-xs`, 안쪽 `--space-1`·`--space-2` | **텍스트가 본체**, 색은 보조(FR-CLIENT-07). 그레이스케일에서도 테두리·글자로 구분. 글자/바탕 쌍은 ConnectionBanner 「다시 연결 중…」과 같은 쌍이며 대비 린트 실측 대상(`tokens.ts:95-97`, `on: --warning-bg`) |
 | 「받기」 버튼 | `download` 아이콘 + 「받기」 텍스트, 보조 버튼 스타일(기존 `.btn` 계열), 글자 `--accent-text` | 히트 영역 터치(`pointer: coarse`)·compact **44×44px 이상**, 정밀 포인터는 시안 밀도 32px 허용(§7-1 R4), 최소 24px 하드 룰 |
 | 포커스 | 「받기」에만 2px `--focus-ring` + 2px 오프셋(§7-1 2.4.7) | 행은 탭 정류장이 아님. 작성기·고정 배너에 가리면 `scroll-margin`(2.4.11) |
 | 만료 | 행 바탕 유지, 글자 전부 `--text-muted`, 「받기」 없음 | 이탤릭 금지(삭제 자리표시자와 구분) |
@@ -410,12 +410,12 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 목록 행 | 바탕 `--bg-app`, 행 사이 1px `--border-subtle`, 안쪽 `--space-3`, 행 높이는 내용(2줄)으로 — 터치 최소 44px | `ul` > `li`, 행은 탭 정류장 아님(버튼만) |
 | 기기 라벨 | `--text-md`, `--text` | 1줄 말줄임(라벨은 짧은 거친 라벨이라 잘림 드묾) |
 | 마지막 사용 | `--text-sm`, `--text-muted`, `tabular-nums` | — |
-| 「이 기기」 표지 | 글자 `--accent-text`, 바탕 `--accent-bg`, 반경 `--radius-sm`, `--text-xs` | 텍스트가 본체(색 외 구분). 자기 멘션과 같은 accent 쌍 재사용 |
+| 「이 기기」 표지 | 글자 `--accent-text`, 바탕 `--accent-bg`, 반경 `--radius-sm`, `--text-xs` | 텍스트가 본체(색 외 구분). 자기 멘션과 같은 accent 쌍 재사용. **대비 린트는 `--accent-text`를 `--bg-app` 위에서만 실측**(`apps/web/src/ui/tokens.ts:88-89`) → `--accent-bg` 위 4.5:1은 구현 레인이 실측(REPORT UI-AC-14) |
 | 「로그아웃」(다른 기기) | 보조 버튼, 글자 `--danger-text` | 파괴적 동작이지만 확인 Dialog가 있으므로 채움(`--danger-solid`)은 Dialog의 확인 버튼에만 |
 | 「이 기기에서 로그아웃」 | 보조 버튼, 글자 `--text` | 기존 사이드바 로그아웃과 같은 동작(확인 없음) |
 | 버튼 히트 영역 | 터치·compact 44×44px 이상, 정밀 포인터 32px 허용(§7-1 R4), 최소 24px | — |
 | 포커스 | 2px `--focus-ring` + 2px 오프셋. 화면 진입 시 제목(`tabindex="-1"`), 로그아웃 완료 후 다음 행 버튼 → 이전 행 → 제목 | UI_STATES §2-14 |
-| 확인 Dialog | CMP-18, 요청 중 닫기 차단(PR #31 `busy`) | 확인 버튼 `--danger-solid` 채움, 열릴 때 포커스는 「취소」 |
+| 확인 Dialog | CMP-18, 요청 중 닫기 차단(PR #31 `busy`) | 확인 버튼 `--danger-solid` 채움, 첫 포커스는 기존 Dialog 규칙(첫 포커스 가능 요소) |
 
 | 폭(구간) | 배치 |
 |---|---|

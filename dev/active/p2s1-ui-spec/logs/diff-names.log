@@ -1,4 +1,10 @@
+dev/active/p2s1-ui-spec/PROGRESS.md
+dev/active/p2s1-ui-spec/REPORT.md
+dev/active/p2s1-ui-spec/logs/check-cleanroom.log
+dev/active/p2s1-ui-spec/logs/check-design-tokens.log
+dev/active/p2s1-ui-spec/logs/diff-names.log
+dev/active/p2s1-ui-spec/logs/table-columns.log
+dev/active/p2s1-ui-spec/logs/tblcheck.py
 docs/05-design-ref/DESIGN_REFERENCE.md
 docs/07-ui-spec/COPY_GAPS.md
 docs/07-ui-spec/UI_STATES.md
-dev/active/p2s1-ui-spec/** (commit 2, git add -f — dev/ is gitignored)

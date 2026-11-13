@@ -41,7 +41,8 @@
 | UI-D15 | 834px | medium 구간으로 배치. D §11-1 QA 폭 목록에 834 추가 | iPad 세로 계열 실기 폭. 추가 비용이 작음 | 목록 추가 안 함 |
 | UI-D16 | 세션 정렬 | 이 기기 맨 위 → `last_seen_at` 내림차순 | 이 기기 구분이 먼저 | 생성 시각 순 |
 | UI-D17 | 한글 앱 안내(ADR-002 §4-4) | 앱 안 문구 미표시. 실기 확인 항목만(⑤) | 안내가 필요한지 실기 전 근거 없음 | 한글 문서 행에 보조 안내 |
-| UI-D18 | 확인 Dialog 첫 포커스 | 「취소」 | 파괴적 동작을 Enter 한 번으로 실행하지 않음 | 확인 버튼 |
+| UI-D18 | 확인 Dialog 첫 포커스 | 기존 Dialog 규칙 그대로(첫 포커스 가능 요소, `Dialog.tsx:163`) | 다른 확인 Dialog 4개와 같게(PR #31 규칙과 동일 요구). 「취소」 기본 포커스는 공용 Dialog에 초기 포커스 지정 기능이 필요해 별건 | 「취소」에 초기 포커스 |
+| UI-D19 | 업로드 실패 문구 | 「업로드하지 못했습니다.」 + `ERROR_COPY` 원인(G-57), 이미지 칩에도 적용 | 브리프 「ERROR_COPY 재사용 우선」, G-70과 같은 구조 | 기존 원인 없는 한 문장 유지 |
 
 ## ② 구현 레인용 수용 기준
 
@@ -53,7 +54,7 @@
 |---|---|---|
 | UI-AC-01 | 첨부 버튼 이름이 「파일 첨부」이고 `accept`가 G-54 목록과 같다 | C |
 | UI-AC-02 | 허용 밖 확장자·형식별 상한+1바이트는 요청 없이 칩 실패(G-54·G-55)와 `role="alert"` 1회 | C |
-| UI-AC-03 | 서버 413·415·415 `macro_extension_mismatch`가 각각 G-55·G-54·G-56으로 보이고 「다시 시도」가 없다. 네트워크·5xx만 「다시 시도」 | C |
+| UI-AC-03 | 서버 413·415·415 `macro_extension_mismatch`가 각각 G-55·G-54·G-56으로 보이고 「다시 시도」가 없다. 네트워크·5xx만 「업로드하지 못했습니다.」 + `ERROR_COPY` 원인 + 「다시 시도」(구현 변경: 현재 `composer-upload.ts:29` `uploadErrorText`는 `failureText`를 쓰지 않음) | C |
 | UI-AC-04 | 업로드 중 칩에 「업로드 중」 + 비결정 진행, 전송 버튼 비활성, 「첨부 제거」가 요청을 abort | C |
 | UI-AC-05 | 업로드가 20초 상한에 걸리지 않는다(느린 응답 모의에서 20초 뒤에도 업로드 중 유지) | C |
 | UI-AC-06 | 문서만 보낼 때 본문이 「[문서]」 | C |
@@ -69,9 +70,9 @@
 |---|---|---|
 | UI-AC-12 | 사이드바 「로그인한 기기」 버튼 → `/settings/sessions`, 진입 시 제목에 포커스 | C |
 | UI-AC-13 | 로딩 `aria-busy`·Skeleton, 오류 `ERROR_COPY` + 「다시 시도」, 20초 초과 시 `ERROR_COPY.timeout` | C |
-| UI-AC-14 | 이 기기 행이 맨 위에 「이 기기」 텍스트 표지로 보이고 나머지는 마지막 사용 내림차순 | C |
+| UI-AC-14 | 이 기기 행이 맨 위에 「이 기기」 텍스트 표지로 보이고 나머지는 마지막 사용 내림차순. `--accent-text`/`--accent-bg` 쌍 대비 4.5:1 이상을 라이트·다크에서 실측(대비 린트 미대상) | C + R |
 | UI-AC-15 | `device_label` null이면 「알 수 없는 기기」. 원시 UA·IP가 화면·로그에 0건 | C + I |
-| UI-AC-16 | 다른 기기 「로그아웃」 → Dialog(G-69). 요청 중 Esc·「닫기」·「취소」가 닫지 못하고 `aria-busy`(PR #31과 같은 테스트 패턴) | C |
+| UI-AC-16 | 다른 기기 「로그아웃」 → Dialog(G-69), 첫 포커스는 기존 Dialog와 같음. 요청 중 Esc·「닫기」·「취소」가 닫지 못하고 `aria-busy`(PR #31과 같은 테스트 패턴) | C |
 | UI-AC-17 | 성공 시 행 제거, StatusRegion G-71, 포커스가 다음 행 → 이전 행 → 제목 순으로 이동 | C |
 | UI-AC-18 | 실패 시 Dialog 안 「로그아웃하지 못했습니다.」 + 원인, busy 해제 보장 | C |
 | UI-AC-19 | 원격 로그아웃 후 대상 기기가 5초 안에 401 흐름(「세션이 종료되었습니다…」)으로 가고 그 기기의 push 구독이 삭제됨. 남의 세션 ID는 404 | I + R(두 기기) |
@@ -119,8 +120,8 @@
 |---|---|---|
 | `pnpm check:cleanroom` | `CLEANROOM OK`, EXIT=0 | `logs/check-cleanroom.log` |
 | `pnpm check:design-tokens` | `check:design-tokens OK`, EXIT=0 | `logs/check-design-tokens.log` |
-| 표 열 수 검사(`/tmp/tblcheck.py`, 수정한 3개 파일의 모든 표에서 헤더 `\|` 수와 행 비교) | 불일치 0 | `logs/table-columns.log` |
-| `git diff --name-only d89cfe9..HEAD` | 아래 범위 확인 | `logs/diff-names.log` |
+| 표 열 수 검사(`python3 dev/active/p2s1-ui-spec/logs/tblcheck.py` + 수정한 3개 파일·REPORT.md) | 불일치 0 | `logs/table-columns.log` |
+| `git diff --name-only d89cfe9..HEAD` | 10개 = `docs/05-design-ref/DESIGN_REFERENCE.md`, `docs/07-ui-spec/COPY_GAPS.md`, `docs/07-ui-spec/UI_STATES.md` + `dev/active/p2s1-ui-spec/**`(PROGRESS·REPORT·logs 5개) — 허용 범위 안. `dev/`는 gitignore라 `git add -f` | `logs/diff-names.log` |
 
 ## 서브에이전트
 
