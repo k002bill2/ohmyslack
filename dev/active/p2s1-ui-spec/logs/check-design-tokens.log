@@ -1,6 +1,0 @@
-
-> ohmyslack@ check:design-tokens /Users/younghwankang/orca/workspaces/ohmyslack/p2s1-ui-spec
-> tsx tools/bin/check-design-tokens.ts
-
-check:design-tokens OK
-EXIT=0
