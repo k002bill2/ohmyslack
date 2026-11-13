@@ -1,7 +1,7 @@
 /** W-13 복원 드릴 SQL 생성기. 스키마 이름은 `drill_(src|orig)_<소문자·숫자>`만 허용하고 그대로 인용한다. */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { SNAPSHOT_TABLES } from './compare.ts';
+import { BLOB_DIGEST_KEY, SNAPSHOT_TABLES } from './compare.ts';
 
 const DRILL_SCHEMA = /^drill_(src|orig)_[a-z0-9]{4,32}$/;
 
@@ -25,6 +25,28 @@ const W = id(1);
 const [U1, U2, U3] = [id(11), id(12), id(13)];
 const [CH, DM] = [id(21), id(22)];
 const [M1, M2, M3, M4, M6, M7] = [id(31), id(32), id(33), id(34), id(36), id(37)];
+const [A1, A2, A3, A4] = [id(51), id(52), id(53), id(54)];
+
+/** 합성 첨부 바이트(실제 파일 아님): 미디어 결속·문서 결속(매크로)·텍스트 미결속·만료 문서(바이트 삭제됨). */
+const ATT_BYTES: readonly (readonly [string, string])[] = [
+  [A1, "'\\x89504e470d0a1a0a'::bytea"],
+  [A2, "'\\x504b0304'::bytea || convert_to('drill synthetic docm', 'UTF8')"],
+  [A3, "convert_to('a,b\n1,2\n', 'UTF8')"],
+];
+const attachmentsSeed = (): string => {
+  const bytes = new Map(ATT_BYTES);
+  const b = (a: string): string => bytes.get(a) ?? "'\\x00'::bytea";
+  const row = (a: string, conv: string, msg: string, mime: string, name: string, macros: boolean, wh: string, sec: number, del: string): string =>
+    `(${a}, ${conv}, ${U1}, ${msg}, '${mime}', octet_length(${b(a)}), encode(sha256(${b(a)}), 'hex'), NULL, ${wh}, ${ts(sec)}, ${ts(sec)}::timestamptz + interval '90 days', ${del}, ${name}, ${macros})`;
+  return `
+INSERT INTO attachments (id, conversation_id, uploader_id, message_id, mime, byte_size, sha256, duration_ms, width, height, created_at, expires_at, deleted_at, filename, has_macros) VALUES
+  ${row(A1, CH, M1, 'image/png', 'NULL', false, '2, 3', 3, 'NULL')},
+  ${row(A2, CH, M4, 'application/vnd.ms-word.document.macroEnabled.12', "'드릴 보고서.docm'", true, 'NULL, NULL', 6, 'NULL')},
+  ${row(A3, DM, 'NULL', 'text/csv', "'drill.csv'", false, 'NULL, NULL', 7, 'NULL')},
+  ${row(A4, DM, M6, 'application/pdf', "'만료.pdf'", false, 'NULL, NULL', 7, ts(15))};
+INSERT INTO attachment_blobs (attachment_id, bytes) VALUES ${ATT_BYTES.map(([a, v]) => `(${a}, ${v})`).join(', ')};
+`;
+};
 
 /** 합성 데이터: 채널·DM·답글·수정·삭제(tombstone)·멘션·읽음 커서·change 커서. 실데이터 없음. */
 export const SEED_SQL = `
@@ -57,7 +79,7 @@ INSERT INTO conversation_read_state (conversation_id, user_id, last_read_seq, up
   (${CH}, ${U1}, 4, ${ts(13)}), (${CH}, ${U2}, 2, ${ts(13)}), (${DM}, ${U2}, 1, ${ts(13)});
 INSERT INTO thread_read_state (root_message_id, user_id, last_read_seq, updated_at) VALUES (${M1}, ${U1}, 4, ${ts(14)});
 INSERT INTO thread_unread_targets (root_message_id, user_id, qualified_at) VALUES (${M1}, ${U1}, ${ts(6)});
-`;
+${attachmentsSeed()}`;
 
 /** 스키마 생성 + 마이그레이션 + 합성 데이터. psql `-1`(단일 트랜잭션)로 실행한다. */
 export function seedSql(schema: string, migrations: readonly string[]): string {
@@ -69,6 +91,9 @@ export function seedSql(schema: string, migrations: readonly string[]): string {
 export function snapshotSql(schema: string): string {
   const s = assertDrillSchema(schema);
   const parts = SNAPSHOT_TABLES.map((t) => `'${t}', (SELECT coalesce(json_agg(t), '[]'::json) FROM "${s}"."${t}" t)`);
+  parts.push(
+    `'${BLOB_DIGEST_KEY}', (SELECT coalesce(json_agg(t), '[]'::json) FROM (SELECT attachment_id, octet_length(bytes) AS byte_len, encode(sha256(bytes), 'hex') AS sha256 FROM "${s}"."attachment_blobs") t)`,
+  );
   return `SELECT json_build_object(${parts.join(', ')});`;
 }
 

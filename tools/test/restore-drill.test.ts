@@ -42,6 +42,14 @@ function baseSnapshot(): Snapshot {
     sync_clock: [{ id: 1, last_change_id: 2 }],
     conversation_read_state: [{ conversation_id: CH, user_id: 'a', last_read_seq: 2 }],
     thread_read_state: [{ root_message_id: 'm1', user_id: 'a', last_read_seq: 1 }],
+    attachments: [
+      { id: 'a1', conversation_id: CH, uploader_id: 'a', message_id: 'm1', mime: 'image/png', byte_size: 8, sha256: 'h1', filename: null, has_macros: false, created_at: 't1', expires_at: 't9', deleted_at: null },
+      { id: 'a2', conversation_id: DM, uploader_id: 'a', message_id: null, mime: 'text/csv', byte_size: 4, sha256: 'h2', filename: 'x.csv', has_macros: false, created_at: 't2', expires_at: 't9', deleted_at: null },
+    ],
+    attachment_blob_digests: [
+      { attachment_id: 'a1', byte_len: 8, sha256: 'h1' },
+      { attachment_id: 'a2', byte_len: 4, sha256: 'h2' },
+    ],
   };
 }
 
@@ -59,8 +67,19 @@ describe('restore-drill compare', () => {
     expect(result.ok).toBe(true);
     expect(last(result.lines)).toBe(`DRILL OK ${ITEMS.length}/${ITEMS.length}`);
     expect(ITEMS.map((i) => i.name)).toEqual(
-      expect.arrayContaining(['messages', 'edit_delete_state', 'dm_membership', 'read_cursor', 'seq', 'change_cursor']),
+      expect.arrayContaining(['messages', 'edit_delete_state', 'dm_membership', 'read_cursor', 'seq', 'change_cursor', 'attachment_meta', 'attachment_blobs']),
     );
+  });
+
+  it('fails attachment items when restored blob bytes, sha256 or file name differ (TRD §6-1-1 (7))', () => {
+    const orig = baseSnapshot();
+    const blobs = orig['attachment_blob_digests'] ?? [];
+    const corrupt: Snapshot = { ...orig, attachment_blob_digests: blobs.map((r) => (r['attachment_id'] === 'a2' ? { ...r, sha256: 'hx' } : r)) };
+    expect(last(compareSnapshots(orig, corrupt).lines)).toBe('DRILL FAILED attachment_blobs');
+    const missing: Snapshot = { ...orig, attachment_blob_digests: blobs.slice(1) };
+    expect(last(compareSnapshots(orig, missing).lines)).toBe('DRILL FAILED attachment_blobs');
+    const renamed: Snapshot = { ...orig, attachments: (orig['attachments'] ?? []).map((r) => (r['id'] === 'a2' ? { ...r, filename: 'y.csv' } : r)) };
+    expect(last(compareSnapshots(orig, renamed).lines)).toBe('DRILL FAILED attachment_meta');
   });
 
   it('fails only the item whose deleted_at differs', () => {
@@ -121,6 +140,8 @@ describe('restore-drill sql', () => {
     expect(seed.startsWith('CREATE SCHEMA "drill_src_abcd1234";\nSET search_path TO "drill_src_abcd1234";')).toBe(true);
     expect(seed).toContain('CREATE TABLE messages');
     expect(seed).toMatch(/deleted_at\) VALUES/);
+    expect(seed).toContain('INSERT INTO attachment_blobs');
+    expect(snapshotSql('drill_orig_abcd1234')).toContain('"drill_orig_abcd1234"."attachment_blobs"');
     for (const t of SNAPSHOT_TABLES) expect(snapshotSql('drill_orig_abcd1234')).toContain(`"drill_orig_abcd1234"."${t}"`);
     expect(renameSql('drill_src_abcd1234', 'drill_orig_abcd1234')).toBe('ALTER SCHEMA "drill_src_abcd1234" RENAME TO "drill_orig_abcd1234";');
     expect(dropSql(['drill_src_abcd1234'])).toBe('DROP SCHEMA IF EXISTS "drill_src_abcd1234" CASCADE;');
