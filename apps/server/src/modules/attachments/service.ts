@@ -75,6 +75,10 @@ const SNIFF_DEADLINE_LOG = Object.freeze({ event: 'attachment_sniff_deadline', e
 
 const unsupported = (): HttpError => new HttpError(415, 'unsupported_media_type');
 
+/** 저장 열 `duration_ms`·`width`·`height`(integer = int4) 상한. 넘는 판정값은 INSERT 500 대신 판정 단계 415(SR-D-03). */
+const PG_INT4_MAX = 2_147_483_647;
+const fitsColumn = (v: number | null): boolean => v === null || (Number.isSafeInteger(v) && v >= 0 && v <= PG_INT4_MAX);
+
 /**
  * TRD §6-1-1 (4) 순서: body 상한 413 → 0바이트 400 → 판정 415 → 종류별 상한(미디어 10 MiB 413) → 확장자 415 → 저장.
  * 파일명 헤더 형식 오류·문서인데 헤더 없음은 400.
@@ -105,6 +109,8 @@ export function judge(
   if (match.kind === 'media') {
     const m = match.media;
     if (!isAttachmentMime(declared) || m.mime !== declared) throw unsupported();
+    // PNG 명세상 폭·높이는 2^31-1 이하다. 헤더 값이 저장 범위 밖이면 형식 위반으로 보고 415(§6-1-1 (4) 순서상 413보다 먼저).
+    if (![m.durationMs, m.width, m.height].every(fitsColumn)) throw unsupported();
     if (bytes.length > ATTACHMENT_MAX_BYTES) throw new HttpError(413, 'payload_too_large');
     return { mime: m.mime, filename: null, hasMacros: false, durationMs: m.durationMs, width: m.width, height: m.height };
   }
