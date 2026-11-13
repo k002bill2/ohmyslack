@@ -17,6 +17,8 @@ export interface BotRateLimiter {
   take(tokenId: string, kind: BotRateKind): RateDecision;
   /** 첨부 업로드: 건수(10/분)와 바이트(100 MiB/일)를 함께 검사하고, 둘 다 허용일 때만 둘 다 기록한다. */
   takeUpload(tokenId: string, bytes: number): RateDecision;
+  /** 바이트(100 MiB/일)만 검사·기록한다. 길이를 미리 모르는(chunked) 업로드가 body를 받은 뒤 쓴다. 거부는 기록하지 않는다. */
+  takeUploadBytes(tokenId: string, bytes: number): RateDecision;
 }
 
 export function createBotRateLimiter(clock: () => number = Date.now): BotRateLimiter {
@@ -28,6 +30,14 @@ export function createBotRateLimiter(clock: () => number = Date.now): BotRateLim
     const oldest = recent[0] ?? now;
     return { decision: { ok: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + BOT_RATE_WINDOW_MS - now) / 1000)) }, recent };
   };
+  const byteDecision = (tokenId: string, bytes: number, now: number): { decision: RateDecision; used: { readonly at: number; readonly bytes: number }[] } => {
+    const used = (byteWindows.get(tokenId) ?? []).filter((e) => now - e.at < BOT_UPLOAD_BYTES_WINDOW_MS);
+    byteWindows.set(tokenId, used);
+    const total = used.reduce((sum, e) => sum + e.bytes, 0);
+    if (total + bytes <= BOT_UPLOAD_BYTES_PER_DAY) return { decision: { ok: true }, used };
+    const oldest = used[0]?.at ?? now;
+    return { decision: { ok: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + BOT_UPLOAD_BYTES_WINDOW_MS - now) / 1000)) }, used };
+  };
   return {
     takeUpload(tokenId, bytes) {
       const now = clock();
@@ -35,15 +45,17 @@ export function createBotRateLimiter(clock: () => number = Date.now): BotRateLim
       const counted = countDecision(key, BOT_RATE_LIMITS.upload, now);
       windows.set(key, counted.recent);
       if (!counted.decision.ok) return counted.decision;
-      const used = (byteWindows.get(tokenId) ?? []).filter((e) => now - e.at < BOT_UPLOAD_BYTES_WINDOW_MS);
-      byteWindows.set(tokenId, used);
-      const total = used.reduce((sum, e) => sum + e.bytes, 0);
-      if (total + bytes > BOT_UPLOAD_BYTES_PER_DAY) {
-        const oldest = used[0]?.at ?? now;
-        return { ok: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + BOT_UPLOAD_BYTES_WINDOW_MS - now) / 1000)) };
-      }
+      const sized = byteDecision(tokenId, bytes, now);
+      if (!sized.decision.ok) return sized.decision;
       windows.set(key, [...counted.recent, now]);
-      byteWindows.set(tokenId, [...used, { at: now, bytes }]);
+      byteWindows.set(tokenId, [...sized.used, { at: now, bytes }]);
+      return { ok: true };
+    },
+    takeUploadBytes(tokenId, bytes) {
+      const now = clock();
+      const sized = byteDecision(tokenId, bytes, now);
+      if (!sized.decision.ok) return sized.decision;
+      byteWindows.set(tokenId, [...sized.used, { at: now, bytes }]);
       return { ok: true };
     },
     take(tokenId, kind) {
