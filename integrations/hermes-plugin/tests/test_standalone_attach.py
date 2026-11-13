@@ -1,0 +1,145 @@
+"""ADR-002 1a: standalone(게이트웨이 밖 cron) 첨부 — 업로드·결속, 실패는 파일마다 `warnings`(조용한 유실 금지)."""
+
+from __future__ import annotations
+
+import functools
+from pathlib import Path
+
+import pytest
+
+from conftest import CHANNEL_ID, DM_ID, TOKEN
+
+MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" * 64
+PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+       + b"\x00" * 32)
+
+
+def _cfg(server):
+    from gateway.config import PlatformConfig
+    return PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+
+
+def _ok_posts(server):
+    return [p for p in server.posts if p["_status"] == 200]
+
+
+def _write(tmp_path: Path, name: str, data: bytes) -> str:
+    path = tmp_path / name
+    path.write_bytes(data)
+    return str(path)
+
+
+async def _send(server, message, media_files):
+    from ohmyslack.adapter import standalone_send
+    return await standalone_send(_cfg(server), DM_ID, message, media_files=media_files)
+
+
+async def test_mp3_is_uploaded_and_bound_to_the_text_message(server, tmp_path):
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await _send(server, "아침 브리핑", [(path, True)])
+    assert out["success"] is True and not out.get("warnings")
+    assert out.get("media_delivered") is True  # Hermes generic 경로가 "omitted" 경고를 붙이지 않게
+    assert [(u["content_type"], u["conversation_id"], u["size"]) for u in server.uploads] == \
+        [("audio/mpeg", DM_ID, len(MP3))]
+    posts = _ok_posts(server)
+    assert len(posts) == 1
+    assert posts[0]["body"] == "아침 브리핑" and "thread_root_id" not in posts[0]
+    assert posts[0]["attachment_ids"] == [server.uploads[0]["attachment_id"]]
+    assert out["message_id"]
+
+
+async def test_plain_path_strings_and_images_are_accepted(server, tmp_path):
+    png = _write(tmp_path, "chart.png", PNG)
+    out = await _send(server, "차트", [png])
+    assert out["success"] is True and not out.get("warnings")
+    assert [u["content_type"] for u in server.uploads] == ["image/png"]
+    assert _ok_posts(server)[0]["attachment_ids"] == [server.uploads[0]["attachment_id"]]
+
+
+async def test_long_text_binds_attachments_to_first_chunk_only(server, tmp_path):
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await _send(server, "가" * 4500, [(path, True)])
+    assert out["success"] is True and not out.get("warnings")
+    posts = _ok_posts(server)
+    assert len(posts) == 2
+    assert posts[0]["attachment_ids"] == [server.uploads[0]["attachment_id"]]
+    assert "attachment_ids" not in posts[1]
+
+
+async def test_unsupported_document_warns_without_upload(server, tmp_path):
+    pdf = _write(tmp_path, "report.pdf", b"%PDF-1.4\n" + b"0" * 64)
+    out = await _send(server, "보고서", [(pdf, False)])
+    assert out["success"] is True
+    assert out["warnings"] == ["report.pdf: unsupported_type"]
+    assert not out.get("media_delivered")
+    assert server.uploads == []
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and posts[0]["body"] == "보고서" and "attachment_ids" not in posts[0]
+
+
+@pytest.mark.parametrize("status", [413, 415])
+async def test_upload_4xx_warns_and_text_still_sent(server, tmp_path, status):
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    server.upload_status = [status]
+    out = await _send(server, "아침 브리핑", [(path, True)])
+    assert out["success"] is True
+    assert out["warnings"] == ["briefing.mp3: upload_failed"]
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and "attachment_ids" not in posts[0]
+
+
+async def test_upload_5xx_after_retries_warns_and_text_still_sent(server, tmp_path, monkeypatch):
+    import ohmyslack.adapter as adapter_mod
+    from ohmyslack.client import MAX_SEND_ATTEMPTS
+
+    async def no_sleep(_delay):
+        return None
+    monkeypatch.setattr(adapter_mod, "BotClient", functools.partial(adapter_mod.BotClient, sleep=no_sleep))
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    server.upload_status = [503] * MAX_SEND_ATTEMPTS
+    out = await _send(server, "아침 브리핑", [(path, True)])
+    assert out["success"] is True
+    assert out["warnings"] == ["briefing.mp3: upload_failed"]
+    assert len(server.uploads) == MAX_SEND_ATTEMPTS
+    assert len(_ok_posts(server)) == 1
+
+
+async def test_missing_and_oversize_files_warn_per_file(server, tmp_path):
+    missing = str(tmp_path / "gone.mp3")
+    big = tmp_path / "huge.mp3"
+    with open(big, "wb") as fh:
+        fh.truncate(10 * 1024 * 1024 + 1)
+    ok = _write(tmp_path, "briefing.mp3", MP3)
+    out = await _send(server, "아침 브리핑", [(missing, True), (str(big), True), (ok, True)])
+    assert out["success"] is True
+    assert out["warnings"] == ["gone.mp3: not_found", "huge.mp3: too_large"]
+    assert not out.get("media_delivered")
+    assert len(server.uploads) == 1
+    assert _ok_posts(server)[0]["attachment_ids"] == [server.uploads[0]["attachment_id"]]
+    assert all(str(tmp_path) not in w for w in out["warnings"])  # 경로 전체 금지
+
+
+async def test_more_than_per_message_max_warns_too_many(server, tmp_path):
+    paths = [(_write(tmp_path, f"p{i}.png", PNG), False) for i in range(5)]
+    out = await _send(server, "차트", paths)
+    assert out["success"] is True
+    assert out["warnings"] == ["p4.png: too_many"]
+    assert len(server.uploads) == 4
+    assert len(_ok_posts(server)[0]["attachment_ids"]) == 4
+
+
+async def test_text_send_failure_is_send_error(server, tmp_path):
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    server.post_status = [403]
+    out = await _send(server, "아침 브리핑", [(path, True)])
+    assert "error" in out and "success" not in out
+    assert TOKEN not in out["error"]
+
+
+async def test_non_dm_target_refused_before_upload(server, tmp_path):
+    from ohmyslack.adapter import standalone_send
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel"}]
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await standalone_send(_cfg(server), CHANNEL_ID, "브리핑", media_files=[(path, True)])
+    assert "error" in out
+    assert server.uploads == [] and _ok_posts(server) == []
