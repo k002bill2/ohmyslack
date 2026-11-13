@@ -8,13 +8,14 @@ import {
   ATTACHMENT_415_CODES,
   ATTACHMENT_DOC_MAX_BYTES,
   ATTACHMENT_FILENAME_HEADER,
+  ATTACHMENT_HUMAN_CONCURRENT_UPLOADS,
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_TEXT_MIMES,
   type AttachmentView,
 } from '../../../../../packages/shared/src/index.js';
 import type { ActionResult } from '../../../src/data/index.js';
 import { CONV, setup } from '../../sync/fake-server.js';
-import { Composer } from '../../../src/features/conversation';
+import { Composer, MessageItem } from '../../../src/features/conversation';
 import { AttachmentList } from '../../../src/features/conversation/attachments/index.js';
 import { uploadErrorText } from '../../../src/features/conversation/attachments/composer-upload.js';
 import { ATTACHMENT_COPY, DOCUMENT_KIND_COPY, ERROR_COPY } from '../../../src/ui/copy.js';
@@ -185,6 +186,22 @@ describe('FR-OPS-09 작성기 문서 칩', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: `${ATTACHMENT_COPY.remove}: b.pdf` }));
   });
 
+  it('사람 동시 업로드 상한(ATTACHMENT_HUMAN_CONCURRENT_UPLOADS)을 넘는 칩은 차례를 기다린다', async () => {
+    const pending: ReturnType<typeof deferred>[] = [];
+    const upload = vi.fn<Upload>(() => {
+      const d = deferred();
+      pending.push(d);
+      return d.promise;
+    });
+    const { pick } = mount(upload);
+    const files = Array.from({ length: ATTACHMENT_HUMAN_CONCURRENT_UPLOADS + 1 }, (_, i) => file(`d${i}.pdf`));
+    await pick(...files);
+    expect(upload).toHaveBeenCalledTimes(ATTACHMENT_HUMAN_CONCURRENT_UPLOADS);
+    expect(screen.getAllByText(ATTACHMENT_COPY.uploading)).toHaveLength(files.length);
+    await act(async () => pending[0]?.resolve({ ok: true, value: attachment({ mime: 'application/pdf', filename: 'd0.pdf' }) }));
+    expect(upload).toHaveBeenCalledTimes(ATTACHMENT_HUMAN_CONCURRENT_UPLOADS + 1);
+  });
+
   it('UI-AC-05 업로드는 20초 상한에 걸리지 않고, 문서는 퍼센트 인코딩 파일명 헤더·octet-stream으로 보낸다', async () => {
     vi.useFakeTimers();
     try {
@@ -291,18 +308,21 @@ describe('FR-OPS-09 메시지 안 문서 행', () => {
     expect(container.querySelectorAll('a[href], button, [tabindex]')).toHaveLength(0);
   });
 
-  it('UI-AC-11 「받기」는 /api/attachments/{id} download 링크(JS fetch 없음), 봇·사람 행 DOM 동일', () => {
+  it('UI-AC-11 「받기」는 /api/attachments/{id} download 링크(JS fetch 없음), 봇·사람 메시지의 문서 행 DOM 동일', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const a = doc();
-    const { container: one } = render(<AttachmentList attachments={[a]} />);
-    const link = one.querySelector('a.doc-download') as HTMLAnchorElement;
+    const base = { id: 'm1', createdAt: '2026-11-08T00:00:00Z', body: '보고서', attachments: [a] };
+    const { container: bot } = render(<ul><MessageItem message={{ ...base, author: 'Jarvis', authorKind: 'bot' }} /></ul>);
+    const { container: human } = render(<ul><MessageItem message={{ ...base, author: 'A' }} /></ul>);
+    const botList = bot.querySelector('.attachment-list');
+    const humanList = human.querySelector('.attachment-list');
+    expect(botList).not.toBeNull();
+    expect(botList?.outerHTML).toBe(humanList?.outerHTML);
+    const link = bot.querySelector('a.doc-download') as HTMLAnchorElement;
     expect(link.getAttribute('href')).toBe(`/api/attachments/${a.id}`);
     expect(link.hasAttribute('download')).toBe(true);
     fireEvent.click(link);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
-    // 같은 projection이면 작성자(봇·사람)와 무관하게 같은 DOM — 행은 작성자 정보를 받지 않는다.
-    const { container: two } = render(<AttachmentList attachments={[a]} />);
-    expect(two.innerHTML).toBe(one.innerHTML);
   });
 });

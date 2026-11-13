@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ATTACHMENTS_PER_MESSAGE_MAX, type AttachmentView } from '../../../../../../packages/shared/src/index.js';
+import { ATTACHMENT_HUMAN_CONCURRENT_UPLOADS, ATTACHMENTS_PER_MESSAGE_MAX, type AttachmentView } from '../../../../../../packages/shared/src/index.js';
 import type { ActionFailure, ActionResult } from '../../../data/index.js';
 import { ATTACHMENT_COPY } from '../../../ui/copy.js';
 import { failureText } from '../../spaces/index.js';
@@ -65,20 +65,25 @@ export function useComposerAttachments(upload: UploadFn | undefined) {
   /** 진행 중 요청의 취소 손잡이(칩 키별). 제거·전송 비우기 때 abort한다. */
   const controllers = useRef(new Map<number, AbortController>());
 
+  /** 동시 업로드 상한(사람 2건, TRD §6-1-1 (2) — 초과는 서버 429)을 넘는 칩은 「업로드 중」으로 두고 차례를 기다린다. */
+  const waiting = useRef<readonly { readonly key: number; readonly file: File; readonly kind: ComposerFileKind }[]>([]);
+
+  const pump = () => {
+    while (controllers.current.size < ATTACHMENT_HUMAN_CONCURRENT_UPLOADS && waiting.current.length > 0) {
+      const [next, ...rest] = waiting.current;
+      waiting.current = rest;
+      if (next !== undefined && live.current.has(next.key)) begin(next.key, next.file, next.kind);
+    }
+  };
+
   const abort = (key: number) => {
+    waiting.current = waiting.current.filter((w) => w.key !== key);
     controllers.current.get(key)?.abort();
     controllers.current.delete(key);
   };
 
-  const start = (key: number, file: File, kind: ComposerFileKind | null) => {
+  const begin = (key: number, file: File, kind: ComposerFileKind) => {
     if (upload === undefined) return;
-    const pre = precheck(file, kind);
-    if (pre !== null) {
-      patch(key, { status: 'failed', error: pre, retryable: false });
-      return;
-    }
-    patch(key, { status: 'uploading' });
-    abort(key);
     const controller = new AbortController();
     controllers.current.set(key, controller);
     const options: UploadOptions =
@@ -86,6 +91,7 @@ export function useComposerAttachments(upload: UploadFn | undefined) {
     const settle = (next: Partial<ComposerChip>) => {
       if (controllers.current.get(key) === controller) controllers.current.delete(key);
       patch(key, next);
+      pump();
     };
     upload(file, options).then(
       (r) =>
@@ -96,6 +102,19 @@ export function useComposerAttachments(upload: UploadFn | undefined) {
         ),
       () => settle({ status: 'failed', error: uploadErrorText({ status: 'network' }, kind), retryable: true }),
     );
+  };
+
+  const start = (key: number, file: File, kind: ComposerFileKind | null) => {
+    if (upload === undefined) return;
+    const pre = precheck(file, kind);
+    if (pre !== null || kind === null) {
+      patch(key, { status: 'failed', error: pre ?? ATTACHMENT_COPY.unsupported, retryable: false });
+      return;
+    }
+    patch(key, { status: 'uploading' });
+    abort(key);
+    waiting.current = [...waiting.current, { key, file, kind }];
+    pump();
   };
 
   const add = (files: readonly File[]) => {
@@ -114,6 +133,7 @@ export function useComposerAttachments(upload: UploadFn | undefined) {
     live.current.delete(key);
     abort(key);
     setChips((list) => list.filter((c) => c.key !== key));
+    pump();
   };
 
   const retry = (key: number) => {
@@ -125,6 +145,7 @@ export function useComposerAttachments(upload: UploadFn | undefined) {
   const clear = () => {
     live.current = new Set();
     controllers.current = new Map();
+    waiting.current = [];
     setChips([]);
   };
 
