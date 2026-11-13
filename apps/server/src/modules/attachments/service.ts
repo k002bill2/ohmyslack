@@ -42,7 +42,7 @@ export interface AttachmentsService {
   upload(uploaderId: string, conversationId: string, declared: string, bytes: Buffer, filenameHeader?: string, check?: InTxCheck): Promise<AttachmentMeta>;
   /**
    * `attachment` 메타 라우트의 접근 판정(B2): 첨부 ID로 대화를 해석한 뒤 `conversations.service.assertAccess` **하나**로 판정한다.
-   * 없는 첨부는 존재를 숨기고 404.
+   * 없는 첨부는 존재를 숨기고 404. 미결속 첨부는 업로더 외에는 404(SR-D-04).
    */
   resolveAccess(userId: string, attachmentId: string, action: AccessAction): Promise<AttachmentMeta>;
   /** 바이트 읽기. 삭제·만료(expired)는 404. */
@@ -75,6 +75,10 @@ const SNIFF_DEADLINE_LOG = Object.freeze({ event: 'attachment_sniff_deadline', e
 
 const unsupported = (): HttpError => new HttpError(415, 'unsupported_media_type');
 
+/** 저장 열 `duration_ms`·`width`·`height`(integer = int4) 상한. 넘는 판정값은 INSERT 500 대신 판정 단계 415(SR-D-03). */
+const PG_INT4_MAX = 2_147_483_647;
+const fitsColumn = (v: number | null): boolean => v === null || (Number.isSafeInteger(v) && v >= 0 && v <= PG_INT4_MAX);
+
 /**
  * TRD §6-1-1 (4) 순서: body 상한 413 → 0바이트 400 → 판정 415 → 종류별 상한(미디어 10 MiB 413) → 확장자 415 → 저장.
  * 파일명 헤더 형식 오류·문서인데 헤더 없음은 400.
@@ -105,6 +109,8 @@ export function judge(
   if (match.kind === 'media') {
     const m = match.media;
     if (!isAttachmentMime(declared) || m.mime !== declared) throw unsupported();
+    // PNG 명세상 폭·높이는 2^31-1 이하다. 헤더 값이 저장 범위 밖이면 형식 위반으로 보고 415(§6-1-1 (4) 순서상 413보다 먼저).
+    if (![m.durationMs, m.width, m.height].every(fitsColumn)) throw unsupported();
     if (bytes.length > ATTACHMENT_MAX_BYTES) throw new HttpError(413, 'payload_too_large');
     return { mime: m.mime, filename: null, hasMacros: false, durationMs: m.durationMs, width: m.width, height: m.height };
   }
@@ -151,6 +157,8 @@ export function createAttachmentsService(deps: AttachmentsServiceDeps): Attachme
       const meta = await store.get(attachmentId);
       if (meta === undefined) throw notFound();
       await conversations.assertAccess(userId, meta.conversationId, action);
+      // 미결속 첨부는 업로더만(SR-D-04, 봇 경로와 같은 규칙). 다른 멤버에게는 없는 첨부와 같은 404로 존재를 숨긴다.
+      if (meta.messageId === null && meta.uploaderId !== userId) throw notFound();
       return meta;
     },
     async read(meta) {
