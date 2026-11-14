@@ -203,7 +203,9 @@ async def test_check_failed_preserves_partial_success(server, monkeypatch):
 async def test_chunk0_unknown_returns_delivery_unknown_error(server, monkeypatch):
     _record_sleep(monkeypatch)
     server.post_disconnect_after_commit = 4
-    server.history_disconnect = 1  # 확인 GET도 실패(check_failed:connection)
+    # 확인 GET도 실패(check_failed:connection). aiohttp는 재사용 연결이 끊긴 GET을 1회 자동 재전송하므로
+    # (aiohttp/client.py:739-740·910-912) 두 번 끊어야 클라이언트에 연결 오류가 보인다.
+    server.history_disconnect = 2
     out = await _send(server)
     assert "success" not in out
     assert "ohmyslack standalone send: delivery_unknown chunk 1/1" in out["error"]

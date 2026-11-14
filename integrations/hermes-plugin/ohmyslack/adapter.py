@@ -21,6 +21,7 @@ import stat
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -33,7 +34,7 @@ from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.platforms.helpers import MessageDeduplicator
 
-from .client import (ATTACHMENT_MAX_BYTES, BotApiError, BotAuthError, BotClient, CursorExpired, new_session,
+from .client import (ATTACHMENT_MAX_BYTES, Attempt, BotApiError, BotAuthError, BotClient, CursorExpired, new_session,
                      validate_bot_url)
 from .cursor import CursorState, CursorStore, RECENT_IDS_MAX
 
@@ -973,13 +974,7 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
     def left() -> float:
         return started + STANDALONE_TOTAL_DEADLINE_S - clock()
 
-    def failed(reason: str) -> dict:
-        suffix = f"; warnings: {', '.join(warnings)}" if warnings else ""
-        return send_error(f"ohmyslack standalone send: {reason}{suffix}")
-    attachment_ids: list[str] = []
-    warnings: list[str] = []
-    chunks: list[str] = []
-    ids: list[str] = []
+    record = _SendRecord()
     async with session_factory() as session:
         client = BotClient(base, token, session)
         try:
@@ -987,32 +982,117 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
             kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
             if kinds.get(str(chat_id)) != "dm":
                 return send_error("ohmyslack standalone send: home channel must be the owner DM")
+            me_id = str(me.get("id") or "")
             budget = min(upload_budget, left() - STANDALONE_TEXT_RESERVE_S)
-            attachment_ids, names, warnings = await _upload_standalone_media(client, str(chat_id), media_files,
-                                                                            budget=budget, clock=clock)
+            record.attachment_ids, names, record.warnings = await _upload_standalone_media(
+                client, str(chat_id), media_files, budget=budget, clock=clock)
             text = message or (names[0] if names else "")
             chunks = BasePlatformAdapter.truncate_message(text, OhmySlackAdapter.MAX_MESSAGE_LENGTH)
-            for i, chunk in enumerate(chunks):
-                res = await _within(client.post_message(
-                    str(chat_id), chunk, attachment_ids=attachment_ids if i == 0 and attachment_ids else None,
-                    remaining=left), left)
-                ids.append(str((res.get("message") or {}).get("id") or ""))
+            record.chunks = [_ChunkRecord(key=str(uuid.uuid4())) for _ in chunks]  # 키는 게시 전에 청크마다 하나
+            for i, (chunk, rec) in enumerate(zip(chunks, record.chunks)):
+                # 청크 0을 한 번이라도 시도했으면 재업로드하지 않는다 — 첨부 ID는 루프 전에 한 번 정해진다.
+                attach = record.attachment_ids if i == 0 and record.attachment_ids else None
+                if not await _post_chunk(client, str(chat_id), chunk, rec, attach, me_id, left):
+                    break  # 확인 안 된 청크 뒤로는 보내지 않는다(순서 보장 + 중복 범위 축소)
         except _DeadlineExceeded:
-            reason = "deadline_exceeded"
+            record.reason = "deadline_exceeded"
         except BotApiError as exc:
-            reason = f"HTTP {exc.status}"
+            record.reason = f"HTTP {exc.status}"
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            reason = type(exc).__name__
+            record.reason = type(exc).__name__
+    return _standalone_result(record)
+
+
+@dataclass
+class _ChunkRecord:
+    """청크 하나의 전달 기록(설계 r4 §Q1-4). state: pending → attempted → confirmed|rejected|conflict|ambiguous."""
+
+    key: str
+    state: str = "pending"
+    attempts: list[Attempt] = field(default_factory=list)
+    message_id: Optional[str] = None  # 검증된 UUID(정상 ACK 또는 확인 GET found)에서만
+    reason: str = ""  # rejected 사유(`HTTP <n>` 등)
+
+
+@dataclass
+class _SendRecord:
+    """standalone 호출 하나의 기록 — 반환은 `_standalone_result`에서만 조립한다."""
+
+    chunks: list[_ChunkRecord] = field(default_factory=list)
+    attachment_ids: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    reason: str = ""  # 청크 시도 밖의 실패(`/me`·deadline 등)
+
+
+def _settle(rec: _ChunkRecord, message_id: Optional[str], cut: bool) -> None:
+    """시도 기록 → 종결 상태. 409는 앞 모호성과 무관하게 conflict, 앞 모호성은 뒤 4xx로 지우지 않는다."""
+    may_have_committed = any(a.may_have_committed for a in rec.attempts)
+    last = rec.attempts[-1] if rec.attempts else None
+    if message_id is not None:
+        rec.state, rec.message_id = "confirmed", message_id
+    elif last is not None and last.outcome == "conflict":
+        rec.state = "conflict"
+    elif may_have_committed or cut:
+        rec.state = "ambiguous"
+    else:
+        rec.state = "rejected"
+        rec.reason = f"HTTP {last.status}" if last is not None and last.status else "not_sent"
+
+
+async def _post_chunk(client: BotClient, chat_id: str, body: str, rec: _ChunkRecord,
+                      attachment_ids: Optional[list[str]], me_id: str, left: Callable[[], float]) -> bool:
+    """청크 1개 게시 → 확인됐으면 True. 모호하면 봇 이력 GET 1회로 확인하고, 그래도 모르면 ambiguous로 남긴다."""
+    if left() <= 0:
+        raise _DeadlineExceeded  # 보내지 않은 청크는 pending 그대로(attempted 아님)
+    rec.state = "attempted"
+    message_id, cut = None, False
+    try:
+        message_id = await _within(client.post_message(
+            chat_id, body, attachment_ids=attachment_ids, remaining=left, client_message_id=rec.key,
+            observe=rec.attempts.append, author_id=me_id), left)
+    except _DeadlineExceeded:
+        cut = True  # 시도 중 끊김 — 서버 커밋 여부 미상
+    _settle(rec, message_id, cut)
+    if rec.state == "ambiguous":
+        check, found_id = await client.history_contains(chat_id, rec.key, author_id=me_id, timeout=left())
+        if check == "found":
+            rec.state, rec.message_id = "confirmed", found_id
         else:
-            reason = ""
-    if reason and not ids:
-        return failed(reason)
-    if reason:  # 부분 게시: 재전달(전체 재전송)을 타지 않게 성공 + 보이는 경고
-        logger.warning("ohmyslack: standalone send partial (%d/%d chunks, %s)", len(ids), len(chunks), reason)
-        warnings = [*warnings, f"text: partial_delivery {len(ids)}/{len(chunks)}"]
-    out: dict[str, Any] = {"success": True, "message_id": ids[-1] if ids else None}
+            logger.warning("ohmyslack: standalone confirm %s", check)
+    return rec.state == "confirmed"
+
+
+def _standalone_result(record: _SendRecord) -> dict:
+    """기록 → sender 결과(설계 r4 §Q1-7 반환표). 청크 0 불명·충돌은 성공으로 숨기지 않는다."""
+    from gateway.platforms._shared import send_error
+    warnings = list(record.warnings)
+    n = len(record.chunks)
+    k = next((i for i, c in enumerate(record.chunks) if c.state != "confirmed"), n)
+    if k == 0:
+        suffix = f"; warnings: {', '.join(warnings)}" if warnings else ""
+        first = record.chunks[0] if record.chunks else None
+        if first is not None and first.state == "ambiguous":
+            logger.warning("ohmyslack: standalone delivery_unknown chunk 1/%d", n)
+            reason = f"delivery_unknown chunk 1/{n}"
+        elif first is not None and first.state == "conflict":
+            logger.warning("ohmyslack: standalone idempotency_conflict chunk 1/%d", n)
+            reason = f"idempotency_conflict chunk 1/{n}"
+        else:
+            reason = (first.reason if first is not None else "") or record.reason
+        return send_error(f"ohmyslack standalone send: {reason}{suffix}")
+    if k < n:  # 부분 게시: 재전달(전체 재전송)을 타지 않게 성공 + 보이는 경고
+        state = record.chunks[k].state
+        logger.warning("ohmyslack: standalone send partial (%d/%d chunks, %s)", k, n, state)
+        warnings.append(f"text: partial_delivery {k}/{n}")
+        if state == "ambiguous":
+            logger.warning("ohmyslack: standalone delivery_unknown chunk %d/%d", k + 1, n)
+            warnings.append(f"text: delivery_unknown chunk {k + 1}")
+        elif state == "conflict":
+            logger.warning("ohmyslack: standalone idempotency_conflict chunk %d/%d", k + 1, n)
+            warnings.append(f"text: idempotency_conflict chunk {k + 1}")
+    out: dict[str, Any] = {"success": True, "message_id": record.chunks[k - 1].message_id}
     if warnings:
         out["warnings"] = warnings
-    elif attachment_ids:
+    elif record.attachment_ids:
         out["media_delivered"] = True  # Hermes generic 경로가 "MEDIA attachments were omitted"를 붙이지 않게
     return out
