@@ -67,6 +67,10 @@
   (subpath "@HERMES_SRC@/gateway")
   (subpath "@HERMES_SRC@/hermes_cli")
   (subpath "@HERMES_SRC@/tools"))
+;; Hermes 소스 루트 디렉터리 자체의 목록 읽기(하위 파일 내용 허용 아님). PYTHONPATH 의 FileFinder 가
+;; 이 디렉터리를 os.listdir 로 캐시하는데, 목록 읽기가 거부되면 빈 캐시로 처리해 gateway 등을
+;; 못 찾는다(사람 실행 (나)-0 의 ModuleNotFoundError). 노출 범위는 최상위 이름 목록뿐 — .env 등의 내용은 읽을 수 없다.
+(allow file-read* (literal "@HERMES_SRC@"))
 
 ;; ---- 쓰기: 기본 거부(명시 — 뮤테이션 4a 대상 줄). 허용은 $ISO 4개 하위 + /dev/null·/dev/tty 뿐.
 (deny file-write*)
