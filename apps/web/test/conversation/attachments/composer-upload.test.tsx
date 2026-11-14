@@ -53,7 +53,7 @@ describe('Composer 이미지 첨부', () => {
     const { pick, sendBtn, type, onSend } = mount(() => d.promise);
     type('사진');
     await pick(png('cat.png', 2048));
-    expect(screen.getByText('cat.png')).toBeTruthy();
+    expect(screen.getByTitle('cat.png')).toBeTruthy();
     expect(screen.getByText('2KB')).toBeTruthy();
     expect(sendBtn().disabled).toBe(true);
     expect(sendBtn().getAttribute('aria-busy')).toBe('true');
@@ -63,7 +63,7 @@ describe('Composer 이미지 첨부', () => {
     expect(sendBtn().hasAttribute('aria-busy')).toBe(false);
     fireEvent.click(sendBtn());
     expect(onSend).toHaveBeenCalledWith('사진', undefined, [a.id]);
-    expect(screen.queryByText('cat.png')).toBeNull();
+    expect(screen.queryByTitle('cat.png')).toBeNull();
   });
 
   it('본문이 비면 자리 문구 「[이미지]」를 본문으로 보낸다', async () => {
