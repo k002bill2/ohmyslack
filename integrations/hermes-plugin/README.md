@@ -87,8 +87,42 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
 cd integrations/hermes-plugin
 uv venv .venv --python ~/.hermes/hermes-agent/venv/bin/python3.11
 uv pip install --python .venv/bin/python pytest pytest-asyncio aiohttp pyyaml ruamel.yaml
-PYTHONPATH=~/.hermes/hermes-agent .venv/bin/python -m pytest -q
+bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 아래 「격리 테스트 실행」
 ```
 
 - 테스트는 가짜 aiohttp 봇 서버를 상대로 돌고, `HERMES_HOME`을 tmp로 격리합니다. 실제 서버나 게이트웨이에는 연결하지 않습니다.
 - Hermes 본체는 `PYTHONPATH`로 읽기만 하며, 설치하거나 복사하지 않습니다.
+
+## 격리 테스트 실행 (설계 r4 §Q5 · 단계 1)
+
+`P/tests` 는 autouse session fixture 가 Hermes 를 import 하므로 **래퍼 밖에서 직접 돌리지 않습니다**.
+`tests/conftest.py` 맨 앞 가드가 래퍼 표지·격리 env 없는 실행을 EXIT 3(`OHMYSLACK-ISOLATION-GUARD-REFUSED`)으로 끊습니다.
+가드는 보조 장치이고, OS 수준 차단은 `scripts/pytest.sb`(sandbox-exec 사용자 정의 프로필)의 몫입니다.
+
+- 구성: `scripts/isolated-pytest.sh`(env -i 허용목록 + sandbox-exec), `scripts/pytest.sb`(템플릿 → `.isolation/profile.sb` 렌더링),
+  `tests/_isolation_guard.py`(순수 함수 가드), `tests_isolation/`(Hermes import 0 점검), `tests_outside/`(사람 전용, 기본 수집 제외).
+- `.isolation/` 은 실행마다 래퍼가 지우고 다시 만듭니다(gitignore). 지우기 전에 경로·하위가 symlink 가 아니고 realpath 가 기대값인지 확인하고, 어긋나면 아무것도 지우지 않고 EXIT 2.
+- 거부 포트 줄은 래퍼의 `DENY_PORTS=(8787 8788)` 한 목록에서 생성됩니다(사람 실행 `--prove-outside` 때만 임의 포트 X 추가).
+- `--prove-outside` 의 TTY·확인 인자·`/dev/tty` 난수 왕복 장치는 **우발 실행 방지**일 뿐입니다. 의도적 우회는 막지 못합니다.
+- 무인자·`.` 지정 실행은 pytest 가 `test*` 하위 디렉터리 conftest(`tests_outside` 포함)를 읽으므로 outside 가드가 EXIT 4 로 끊습니다. 래퍼는 항상 대상 디렉터리를 명시합니다.
+
+| 모드 | 명령(`integrations/hermes-plugin` 에서) | 기대 |
+|---|---|---|
+| 에이전트 점검 | `bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` | `PREFLIGHT PASS`, `EXIT=0` |
+| 가드 거부 점검 | `bash scripts/isolated-pytest.sh --probe-guard; echo EXIT=$?` | `OHMYSLACK-ISOLATION-GUARD-REFUSED: …`, `PROBE-GUARD PASS`, `EXIT=3` |
+| 전체 실행(G3 뒤, 사람) | `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` | TTY·난수 입력 뒤 `tests` 실행 |
+
+### 사람 실행 (나) 0–5 — 에이전트는 실행하지 않습니다
+
+(나)-0 은 `gateway` import·`~/.hermes` 열기를 포함하므로 관찰 동결(11-16) 종료 뒤 또는 영환님 명시 승인 뒤에 실행합니다.
+
+| # | 명령 | 기대 출력 |
+|---|---|---|
+| 0 | `bash scripts/isolated-pytest.sh --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN; echo EXIT=$?` (사람 터미널, 화면의 4자리 입력) | `tests_outside/test_outside_probe.py` 6건 PASS: 홈·`/tmp` 카나리 쓰기 `PermissionError`, `~/.hermes/config.yaml`·`hermes-agent/.git/HEAD` 열기 `PermissionError`, `gateway` import 스모크 성공, 임의 포트 X listen 뒤 연결 `PermissionError`. `EXIT=0` |
+| 1 | `ls -la ~/.ohmyslack-sbx-canary-* /tmp/ohmyslack-sbx-canary-* 2>&1` | `No such file or directory` 2줄 |
+| 2 | `touch .isolation/marker` → `--run` 전체 실행 → `find ~/.hermes/hermes-agent -newer .isolation/marker -not -path '*/.git/*' -print \| head -20` | 0줄(게이트웨이가 쓰는 파일이 섞이면 경로를 붙여 사람이 판정) |
+| 3 | `realpath .venv/bin/python` | `…/generation-1786174606-…/cpython-3.11.15-macos-aarch64-none/bin/python3.11` (래퍼가 이 실경로로 프로필을 렌더링) |
+| 4 | `sandbox-exec -p '(version 1)(allow default)' /usr/bin/true; echo EXIT=$?` (사람 터미널과 Orca 안 각각) | `EXIT=0`. 폐기된 `-n no-network` 는 이 OS 에서 `Killed: 9`(137)라 쓰지 않습니다 |
+| 5 | 별도 명령 없음 — 0행의 임의 포트 X 결과 | X 연결이 sandbox 거부로 PASS. 8787·8788 은 연결하지 않고, 같은 목록에서 생성된 거부 줄 존재만 `grep -n 'localhost:87' .isolation/profile.sb` 로 확인 |
+
+추가 사람 확인: 무인자·`.` 지정 수집이 outside 노드를 내지 않는지(에이전트 preflight 는 `tests`·`tests_isolation` 만 수집), 인터프리터 base 의 `sitecustomize`·`.pth`(H-4).
