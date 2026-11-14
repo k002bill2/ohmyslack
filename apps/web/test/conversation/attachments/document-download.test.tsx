@@ -48,7 +48,8 @@ describe('W1 standalone에서 iOS 직접 렌더 형식 「받기」는 새 창',
     const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
     expect(link(container).getAttribute('target')).toBe('_blank');
     expect(link(container).getAttribute('rel')).toBe('noopener');
-    expect(link(container).getAttribute('download')).toBe('');
+    // FIX2: WebKit은 download가 있으면 target을 무시한다 — 새 창 형식은 속성 없음.
+    expect(link(container).hasAttribute('download')).toBe(false);
   });
 
   it('iOS navigator.standalone === true 도 standalone으로 본다', () => {
@@ -66,6 +67,7 @@ describe('W1 standalone에서 iOS 직접 렌더 형식 「받기」는 새 창',
     const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
     expect(link(container).hasAttribute('target')).toBe(false);
     expect(link(container).hasAttribute('rel')).toBe(false);
+    expect(link(container).getAttribute('download')).toBe('');
     expect(link(container).getAttribute('href')).toMatch(/^\/api\/attachments\//);
   });
 
@@ -78,8 +80,8 @@ describe('W1 standalone에서 iOS 직접 렌더 형식 「받기」는 새 창',
   it('판정 helper: 직접 렌더 형식은 PDF·텍스트 3종뿐', () => {
     expect(['application/pdf', 'text/plain', 'text/markdown', 'text/csv'].every(rendersInline)).toBe(true);
     expect(rendersInline(DOCX)).toBe(false);
-    expect(downloadLinkTarget('application/pdf', false)).toEqual({});
-    expect(downloadLinkTarget(DOCX, true)).toEqual({});
+    expect(downloadLinkTarget('application/pdf', false)).toEqual({ download: true });
+    expect(downloadLinkTarget(DOCX, true)).toEqual({ download: true });
   });
 });
 
