@@ -133,6 +133,6 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 log show --last 5m --style compact --predicate 'sender == "Sandbox" AND eventMessage CONTAINS "deny"' | grep -i python | tail -30
 ```
 
-거부된 경로가 `@HERMES_SRC@`(= `~/.hermes/hermes-agent`) 최상위 `*.py` 이면, 프로필 `scripts/pytest.sb` 에 `(allow file-read* (literal "<그 파일 경로>"))` 를 **한 줄씩만** 추가합니다(N-12). `subpath` 로 넓히지 않습니다. 루트 디렉터리 자체의 목록 읽기(`literal "@HERMES_SRC@"`)는 이미 허용되어 있습니다 — FileFinder 의 `os.listdir` 용이며 하위 파일 내용은 열리지 않습니다.
+거부된 경로가 `@HERMES_SRC@`(= `~/.hermes/hermes-agent`) 최상위 `*.py` 이면, 프로필 `scripts/pytest.sb` 에 `(allow file-read* (literal "<그 파일 경로>"))` 를 추가합니다. 단 Hermes 루트 바로 아래 `*.py` 는 정규식 1줄(`^<이스케이프된 루트>/[^/]+\.py$`)로 이미 허용되어 있습니다(설계 N-12 「한 줄씩」 이탈 — 사람 재실행 반복 회피). 하위 폴더·`.py` 아닌 파일(`.env`·`config.yaml`·`*.json`)은 계속 거부됩니다. 다음 거부가 하위 폴더이면 그 폴더 `subpath` 1줄을 추가합니다. 루트 디렉터리 자체의 목록 읽기(`literal "@HERMES_SRC@"`)는 이미 허용되어 있습니다 — FileFinder 의 `os.listdir` 용이며 하위 파일 내용은 열리지 않습니다.
 
 추가 사람 확인: 인터프리터 base 의 `sitecustomize`·`.pth`(H-4). 프로필이 mach*·ipc*·iokit*·sysctl-write·user-preference* 를 다시 거부하므로 0행·`--run` 이 이 이름들에서 막히면 거부 로그로 필요한 이름만 한 줄씩 재허용합니다(N-22).
