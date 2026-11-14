@@ -3,9 +3,24 @@
 ;; 규칙 순서: 같은 동작에 여러 규칙이 걸리면 뒤의 규칙이 이긴다(L2 — preflight 카나리로 확인).
 (version 1)
 (deny default)
-;; Apple 기본 BSD 프로필(libSystem·dyld 초기화용 mach-lookup·IPC·sysctl). 그 안의 쓰기·exec·fork·네트워크 허용은
-;; 아래에서 다시 거부해 덮는다(뒤 규칙 우선). 읽기 허용(시스템 경로·/dev·/private/etc 일부)은 남는다 — 정적 검토 로그 참조.
+;; Apple 기본 BSD 프로필(→ system.sb). libSystem·dyld 초기화에 필요한 syscall·system-* 허용을 얻으려고 들인다.
+;; 그 안의 허용 중 아래에서 다시 거부하지 않은 것만 남는다(뒤 규칙 우선, L2 — preflight 카나리).
 (import "bsd.sb")
+;; Codex 1차 P2: 상속분을 다시 거부하고, 이 파일의 경로별 allow 만 재허용한다.
+;;   - 읽기·실행 매핑: 전부 재거부 → 아래 명시 목록이 최종 상한(재허용 추가 0줄로 preflight EXIT 0, fix-preflight-2).
+;;   - mach*(lookup·register·bootstrap)·ipc*·iokit*·sysctl-write·user-preference*: 재거부해도
+;;     preflight·probe-guard 기동이 된다(fix-preflight-3·4 실측) → 상속을 유지할 이유가 없어 거부한다.
+;;     단 Hermes import·aiohttp 를 실제로 도는 --run·--prove-outside(사람 실행)에서는 미측정(N-22) —
+;;     거기서 막히면 거부 로그로 필요한 이름만 한 줄씩 재허용하고 줄마다 이유를 단다.
+;; 한계(재거부 안 함): syscall*·system-*(fsctl·info·socket·mac-syscall·automount)·file-ioctl·file-test-existence 는
+;;   bsd.sb/system.sb 상속분이 그대로다 — 이 축은 명시 목록이 최종 상한이 아니다(REPORT 「Codex 1차 수정」 P2-a).
+(deny file-read*)
+(deny file-map-executable)
+(deny mach*)
+(deny ipc*)
+(deny iokit*)
+(deny sysctl-write)
+(deny user-preference*)
 
 ;; ---- 프로세스: 인터프리터 실경로만 exec. process-fork 는 허용하지 않는다(N-20 검증 항목).
 (deny process-exec*)

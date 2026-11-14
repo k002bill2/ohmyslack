@@ -3,14 +3,15 @@
 # 설계 r4 §Q5 ★구성 1–6, §4 단계 1. sandbox-exec 를 쓸 수 없으면 실행하지 않는다(조용한 폴백 없음).
 #
 # 모드
-#   --preflight      sandbox 안 tests_isolation 실행 + `tests`·`tests_isolation` 수집 부정 검사(outside 노드 0건).
-#                    PYTHONPATH 비움 → Hermes import 0.
+#   --preflight      sandbox 안 tests_isolation 실행 → 수집 부정 검사 4조합(무인자·`.`·`tests`·`tests_isolation`,
+#                    각 rc 0 + probe_outside 노드·outside 표지 0건) → `probe_outside` 직접 지정 수집이 rc 4 + outside
+#                    표지인지. 첫 실패·신호·sandbox 오류에서 즉시 종료(뒤 수집 0). PYTHONPATH 비움 → Hermes import 0.
 #   --probe-guard    sandbox 안, 래퍼 표지·격리 env(OHMYSLACK_ISOLATED_RUN·HERMES_HOME·HOME·TMPDIR·
 #                    PYTHONPYCACHEPREFIX·PYTHONPATH)만 뺀 `pytest tests --collect-only`. 가드 표지 + rc 3 이면 EXIT 3(PASS).
 #   --run --confirm=G3-CLEARED-BY-HUMAN [pytest 인자]
 #                    P/tests 실행(사람 전용, G3 = (나) 0–5 확인 뒤). TTY 필수.
 #   --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN
-#                    tests_outside 실행(사람 전용). TTY·확인 인자·/dev/tty 난수 왕복 입력 3중 장치.
+#                    probe_outside 실행(사람 전용). TTY·확인 인자·/dev/tty 난수 왕복 입력 3중 장치.
 #                    이 장치의 효과는 「우발 실행 방지」뿐이다(I-2) — 의도적 우회(pty 래핑 등)는 막지 못하며,
 #                    그 경우는 BRIEF 금지와 에이전트 권한 deny 에 의존한다.
 #
@@ -40,6 +41,8 @@ case "$P" in */integrations/hermes-plugin) ;; *) die 2 "unexpected P: $P" ;; esa
 [ -f "$P/pytest.ini" ] && [ -f "$P/scripts/pytest.sb" ] || die 2 "P layout mismatch: $P"
 ISO="$P/.isolation"
 VENV_PY="$P/.venv/bin/python"
+# shellcheck source=_iso_fs.sh
+. "$P/scripts/_iso_fs.sh"
 case "$PY_HOME$HERMES_SRC$P" in *'"'*|*'|'*|*$'\n'*) die 2 "path contains a forbidden character" ;; esac
 
 # ---- I-1: $ISO 와 각 하위가 symlink 가 아니고 realpath 가 기대값인지 (require=1 이면 존재도 요구)
@@ -63,16 +66,20 @@ check_iso() {
 recreate_iso() {
   check_iso 0                       # 확인 먼저 — 어긋나면 아무것도 지우지 않고 EXIT 2
   case "$ISO" in */integrations/hermes-plugin/.isolation) ;; *) die 2 "unexpected ISO: $ISO" ;; esac
-  mkdir -p -- "$ISO"
+  # Codex 1차 P1: rm -rf 대신 symlink 를 따라가지 않는 삭제(scripts/_iso_fs.sh). $ISO 를 통째로 지우고
+  # 새 mkdir 로 만든다(-p 없음 — 그 사이 무엇이든 생겼으면 실패, 기존 경로 재사용 없음).
+  iso_wipe "$ISO" || die 2 "refused to wipe (symlink or not a directory): $ISO"
   local name
-  for name in "${ISO_SUBDIRS[@]}"; do rm -rf -- "${ISO:?}/$name"; mkdir -- "$ISO/$name"; done
-  for name in "${ISO_FILES[@]}"; do rm -f -- "${ISO:?}/$name"; done
+  ( umask 077 && mkdir -- "$ISO" ) || die 2 "mkdir failed (path reappeared?): $ISO"
+  check_node "$ISO" 1
+  for name in "${ISO_SUBDIRS[@]}"; do mkdir -- "$ISO/$name" || die 2 "mkdir failed: $ISO/$name"; done
   check_iso 1                       # 재생성 뒤 다시 확인
 }
 # noclobber 로 새 파일만 만든다(미리 심은 symlink 로 밖에 쓰는 것 방지).
 write_new() { local path=$1 content=$2; check_node "$path" 0; ( set -C; printf '%s\n' "$content" > "$path" ); check_node "$path" 1; }
 new_token() { od -An -tx1 -N16 /dev/urandom | tr -d ' \n'; }
-cleanup() { rm -f -- "$ISO/run-token" "$ISO/outside-token"; }
+# 종료 때 토큰 파일만 지운다 — $ISO 가 그새 symlink 가 됐으면 아무것도 지우지 않는다(iso_rm_files).
+cleanup() { iso_rm_files "$ISO" run-token outside-token || printf 'isolated-pytest: cleanup skipped (ISO is not a plain directory): %s\n' "$ISO" >&2; }
 
 require_sandbox() {
   [ -x "$SANDBOX_EXEC" ] || die 6 "sandbox-exec not found at $SANDBOX_EXEC — refusing to run without sandbox"
@@ -135,21 +142,46 @@ sandboxed() {
   SB_OUT="$out"
 }
 
+OUTSIDE_DIR=probe_outside                    # 사람 전용 디렉터리 — test* 로 시작하지 않는다(pytest 가 test* 하위 conftest 를 자동으로 읽음)
+OUTSIDE_MARKER=OHMYSLACK-OUTSIDE-GUARD-REFUSED
+
+# 수집 뒤 공통 판정: sandbox 오류·신호면 EXIT 6, 그 밖의 실패는 EXIT 1 — 둘 다 즉시(뒤 수집 0, Codex 1차 P2).
+preflight_stop_if_fatal() {
+  [ "$SB_FATAL" = 0 ] || die 6 "sandbox-exec or sandboxed child failed in [$1] (signal or sandbox error) — no fallback, nothing more collected"
+}
+preflight_fail() { echo "PREFLIGHT FAIL: $*"; echo "PREFLIGHT STOPPED: no further collection after the first failure"; exit 1; }
+
 mode_preflight() {
-  local fail=0 target
+  local label
   base_env
   SB_FATAL=0
   sandboxed preflight-tests_isolation "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" tests_isolation -q
-  [ "$SB_FATAL" = 0 ] || die 6 "sandbox-exec or sandboxed child failed (signal or sandbox error) — no fallback"
-  [ "$SB_RC" = 0 ] || { echo "PREFLIGHT FAIL: tests_isolation rc=$SB_RC"; fail=1; }
-  # I-3 부정 검사: 에이전트 모드 수집에 tests_outside 노드 0건. `.`·무인자는 pytest 가 test* 하위
-  # 디렉터리 conftest(tests_outside 포함)를 읽으므로 에이전트 preflight 에서 돌리지 않는다(사람 확인 목록).
-  for target in tests_isolation tests; do
-    sandboxed "collect-$target" "${PYTEST_ARGS[@]}" --collect-only -q "$target"
-    if [ "$SB_RC" != 0 ]; then echo "PREFLIGHT FAIL: collect $target rc=$SB_RC"; fail=1; fi
-    if grep -q 'tests_outside' "$SB_OUT"; then echo "PREFLIGHT FAIL: tests_outside node collected for $target"; fail=1; fi
+  preflight_stop_if_fatal preflight-tests_isolation
+  [ "$SB_RC" = 0 ] || preflight_fail "tests_isolation rc=$SB_RC"
+  # I-3 부정 검사(G2): 네 호출 조합 모두 rc 0 + probe_outside 노드·outside 표지 0건.
+  # 무인자 = testpaths(tests), `.` = 하위 전체(--ignore=probe_outside 가 막아야 함).
+  for label in noargs dot tests tests_isolation; do
+    case "$label" in
+      noargs) set -- ;;
+      dot) set -- . ;;
+      *) set -- "$label" ;;
+    esac
+    sandboxed "collect-$label" "${PYTEST_ARGS[@]}" --collect-only -q "$@"
+    preflight_stop_if_fatal "collect-$label"
+    [ "$SB_RC" = 0 ] || preflight_fail "collect $label rc=$SB_RC"
+    if grep -q -e "$OUTSIDE_DIR" -e "$OUTSIDE_MARKER" -e 'tests_outside' "$SB_OUT"; then
+      preflight_fail "outside node or marker in collect $label"
+    fi
   done
-  [ "$fail" = 0 ] || exit 1
+  # 직접 지정: outside conftest 가 실제로 연결돼 첫 동작에서 끊는지 — rc 4 + outside 고유 표지(둘 다).
+  # --collect-only 라 시험 함수는 돌지 않고, 표지 검사는 그 conftest 의 첫 동작이다(outside-token 없음 → 거부).
+  # --capture=no: PYTEST_ARGS 의 -s 는 python 플래그다. pytest fd 캡처가 켜져 있으면 os._exit 가 표지를 버린다(fix-preflight-1 실측).
+  sandboxed "collect-direct-$OUTSIDE_DIR" "${PYTEST_ARGS[@]}" --capture=no --collect-only -q "$OUTSIDE_DIR"
+  preflight_stop_if_fatal "collect-direct-$OUTSIDE_DIR"
+  if [ "$SB_RC" != 4 ] || ! grep -q "$OUTSIDE_MARKER" "$SB_OUT"; then
+    preflight_fail "direct $OUTSIDE_DIR: expected rc=4 with $OUTSIDE_MARKER, got rc=$SB_RC"
+  fi
+  if grep -q '::' "$SB_OUT"; then preflight_fail "direct $OUTSIDE_DIR: test nodes were listed"; fi
   echo "PREFLIGHT PASS"
 }
 
@@ -192,14 +224,15 @@ mode_prove_outside() {
   require_human "OUTSIDE-PROBE-BY-HUMAN"
   local port=$(( (RANDOM % 30000) + 20000 ))
   case " ${DENY_PORTS[*]} " in *" $port "*) port=$((port + 1)) ;; esac
-  rm -f -- "$ISO/profile.sb"; render_profile "$port"
+  iso_rm_files "$ISO" profile.sb || die 2 "refused to remove profile (ISO is not a plain directory): $ISO"
+  render_profile "$port"
   write_new "$ISO/outside-token" "$(new_token)"
   base_env
   ENV_ARGS+=(PYTHONPATH="$HERMES_SRC" OHMYSLACK_OUTSIDE_PROBE="$(cat "$ISO/outside-token")"
              OHMYSLACK_OUTSIDE_PORT="$port" OHMYSLACK_REAL_HOME="$REAL_HOME")
   SB_FATAL=0
   sandboxed prove-outside "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" \
-    -c tests_outside/pytest.ini --rootdir=tests_outside tests_outside -q
+    -c "$OUTSIDE_DIR/pytest.ini" --rootdir="$OUTSIDE_DIR" "$OUTSIDE_DIR" -q
   [ "$SB_FATAL" = 0 ] || die 6 "sandbox-exec failed"
   exit "$SB_RC"
 }

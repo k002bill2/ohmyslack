@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from conftest import ISO, P_DIR
+from .conftest import ISO, P_DIR
 
 # 래퍼가 넘기는 env 허용목록(설계 ★구성 1). PYTHONPATH 는 preflight 에서 비운다.
 EXPECTED_ENV = {
@@ -58,21 +58,67 @@ def test_preflight_env_is_allowlist():
 
 
 def _toplevel_imports(tree: ast.Module) -> list[str]:
+    """모듈 로딩 때 실행되는 import 전부. 함수·메서드 본문만 뺀다(Codex 1차 P3).
+
+    `class` 본문·`with`·`for`·`while`·`try`(except·else·finally·except*)·`if`·`match` 는 모두
+    모듈 실행 중에 돈다 — 문장 종류를 나열하지 않고 자식 노드 전체를 훑되 함수 정의만 건너뛴다
+    (import 문은 식 안에 올 수 없으므로 lambda 는 볼 필요가 없다).
+    """
     names: list[str] = []
-    stack = list(tree.body)
+    stack: list[ast.AST] = list(tree.body)
     while stack:
         node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
         if isinstance(node, ast.Import):
             names.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             names.append(node.module)
-        elif isinstance(node, (ast.If, ast.Try)):
-            stack.extend(node.body)
-            stack.extend(getattr(node, "orelse", []))
-            stack.extend(getattr(node, "finalbody", []))
-            for handler in getattr(node, "handlers", []):
-                stack.extend(handler.body)
+        stack.extend(ast.iter_child_nodes(node))
     return names
+
+
+# 구문별 회귀 사례: 모듈 로딩 때 실행되는 위치의 Hermes import 는 모두 잡혀야 한다.
+EXECUTED_AT_IMPORT = {
+    "plain": "import gateway\n",
+    "class_body": "class A:\n    import gateway\n",
+    "nested_class_body": "class A:\n    class B:\n        from gateway import x\n",
+    "with": "with open('x') as fh:\n    import gateway\n",
+    "for": "for _ in ():\n    import gateway\nelse:\n    pass\n",
+    "for_else": "for _ in ():\n    pass\nelse:\n    import gateway\n",
+    "while": "while False:\n    import gateway\n",
+    "while_else": "while False:\n    pass\nelse:\n    import gateway\n",
+    "if_else": "if False:\n    pass\nelse:\n    import gateway\n",
+    "try_body": "try:\n    import gateway\nexcept Exception:\n    pass\n",
+    "try_handler": "try:\n    pass\nexcept Exception:\n    import gateway\n",
+    "try_else_finally": "try:\n    pass\nexcept Exception:\n    pass\nelse:\n    import gateway\nfinally:\n    import hermes_cli\n",
+    "try_star": "try:\n    pass\nexcept* ValueError:\n    import gateway\n",
+    "match": "match 1:\n    case 1:\n        import gateway\n    case _:\n        pass\n",
+    "deep_mix": "if True:\n    class A:\n        with x:\n            for _ in y:\n                try:\n                    import ohmyslack.adapter\n                except E:\n                    pass\n",
+}
+# 함수·메서드 본문은 호출될 때만 돈다 — 잡지 않는다(오탐 방지 대조군).
+NOT_EXECUTED_AT_IMPORT = {
+    "function": "def f():\n    import gateway\n",
+    "async_function": "async def f():\n    import gateway\n",
+    "method": "class A:\n    def m(self):\n        import gateway\n",
+    "nested_function": "if True:\n    def f():\n        import gateway\n",
+    "relative": "from . import gateway\n",
+}
+
+
+def _hermes_names(source: str) -> list[str]:
+    tree = ast.parse(source)
+    return [n for n in _toplevel_imports(tree) if n.split(".")[0] in HERMES_TOPLEVEL]
+
+
+@pytest.mark.parametrize("case", sorted(EXECUTED_AT_IMPORT))
+def test_toplevel_import_scan_catches_executed_statements(case):
+    assert _hermes_names(EXECUTED_AT_IMPORT[case]), case
+
+
+@pytest.mark.parametrize("case", sorted(NOT_EXECUTED_AT_IMPORT))
+def test_toplevel_import_scan_skips_function_bodies(case):
+    assert _hermes_names(NOT_EXECUTED_AT_IMPORT[case]) == [], case
 
 
 def test_tests_dir_has_no_toplevel_hermes_imports():

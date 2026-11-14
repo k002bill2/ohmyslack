@@ -1,6 +1,7 @@
 """outside(사람 전용) 항목이 에이전트 경로에 들어오지 않음을 정적으로 고정(설계 r4 §Q5 ★구성 6, I-3).
 
-tests_outside 를 수집·실행하지 않는다 — 파일 읽기와 순수 함수만.
+probe_outside 를 수집·실행하지 않는다 — 파일 읽기와 순수 함수만. 실제 연결(무인자·`.`·`tests`·`tests_isolation`
+수집 outside 0건, 직접 지정 rc 4 + 표지)은 래퍼 `--preflight` 가 sandbox 안에서 확인한다(Codex 1차 P2).
 """
 
 from __future__ import annotations
@@ -9,15 +10,19 @@ import ast
 import configparser
 import os
 
-from conftest import P_DIR, guard
+from .conftest import P_DIR, guard
 
-OUTSIDE_DIR = os.path.join(P_DIR, "tests_outside")
+OUTSIDE_NAME = "probe_outside"
+OUTSIDE_DIR = os.path.join(P_DIR, OUTSIDE_NAME)
 
 
 def test_outside_excluded_statically():
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join(P_DIR, "pytest.ini"), encoding="utf-8")
-    assert "--ignore=tests_outside" in cfg.get("pytest", "addopts").split()
+    assert f"--ignore={OUTSIDE_NAME}" in cfg.get("pytest", "addopts").split()
+    # pytest 는 인자 디렉터리 바로 아래 test* 디렉터리의 conftest 를 자동으로 읽는다 — 사람 전용 디렉터리는 그 이름을 피한다.
+    assert not OUTSIDE_NAME.startswith("test")
+    assert not os.path.exists(os.path.join(P_DIR, "tests_outside"))
     assert cfg.get("pytest", "testpaths").split() == ["tests"]
     here = os.listdir(os.path.dirname(os.path.abspath(__file__)))
     assert not [name for name in here if name.startswith("test_outside_probe")]
@@ -25,7 +30,7 @@ def test_outside_excluded_statically():
 
 
 def test_outside_marker_required():
-    # 표지 없는 tests_outside 직접 지정 → EXIT 4 판정(실행 대신 순수 함수로 고정).
+    # 판정 함수 보조 점검. 직접 지정의 실제 EXIT 4 + 표지는 래퍼 preflight 의 sandbox 수집이 확인한다.
     assert guard.outside_problems({}, "tok")
     assert guard.outside_problems({"OHMYSLACK_OUTSIDE_PROBE": "other"}, "tok")
     assert guard.outside_problems({"OHMYSLACK_OUTSIDE_PROBE": "tok"}, None)

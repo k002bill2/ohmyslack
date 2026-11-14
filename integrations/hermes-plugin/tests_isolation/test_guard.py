@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from conftest import ISO, guard
+from .conftest import ISO, guard
 
 TOKEN = "t0ken"
 
