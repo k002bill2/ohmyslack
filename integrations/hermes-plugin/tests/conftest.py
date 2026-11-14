@@ -302,9 +302,12 @@ class FakeBotServer:
 
     @staticmethod
     def _norm(payload: dict) -> dict:
-        """멱등 비교 정규형: thread_root·첨부 ID 집합(소문자)·본문·멘션 요청 집합."""
-        root = payload.get("thread_root_id")
-        return {"thread_root_id": root.lower() if isinstance(root, str) else root,
+        """멱등 비교 정규형: thread_root(원문 그대로)·첨부 ID 집합(소문자)·본문·멘션 요청 집합.
+
+        replay 의 thread_root 비교는 요청 원문 문자열과 DB 저장값(소문자 UUID)의 직접 비교다(S/messages/routes.ts:110-117,
+        S/messages/repo.ts:171) — 가시성·조회만 소문자 정규화하고 비교는 정규화하지 않는다(저장 쪽은 `_store_or_replay`).
+        """
+        return {"thread_root_id": payload.get("thread_root_id"),
                 "attachment_ids": sorted({a.lower() for a in payload.get("attachment_ids") or []}),
                 "body": payload.get("body"), "mentions": sorted(set(payload.get("mention_user_ids") or []))}
 
@@ -367,11 +370,11 @@ class FakeBotServer:
         mentions = sorted(set(norm["mentions"]) & self._eligible(cid, BOT_ID))
         # `_status` 200 = 새로 저장(기존 테스트 집계 호환). 실제 HTTP 상태는 `_http`(201).
         self.posts.append({**payload, "_status": 200, "_http": 201, "conversation_id": cid})
-        msg = make_message(author=BOT_ID, body=payload["body"], thread_root_id=payload.get("thread_root_id"),
-                           conv=cid, mentions=mentions)
+        stored_root = norm["thread_root_id"].lower() if isinstance(norm["thread_root_id"], str) else None  # DB uuid 값
+        msg = make_message(author=BOT_ID, body=payload["body"], thread_root_id=stored_root, conv=cid, mentions=mentions)
         msg["client_message_id"] = payload["client_message_id"]
         change = self.add(msg, cid)
-        self.idem[scope] = {**norm, "stored_mentions": mentions, "created_at": self.clock(),
+        self.idem[scope] = {**norm, "thread_root_id": stored_root, "stored_mentions": mentions, "created_at": self.clock(),
                             "id": msg["id"], "change_id": change}
         for aid in norm["attachment_ids"]:
             self.attachments[aid]["message_id"] = msg["id"]
@@ -457,7 +460,9 @@ class FakeBotServer:
         self.patches.append((mid, payload))
         # S/messages/repo.ts:266 editIn: 기존 행의 본문·edited_at 만 갱신(id·client_message_id·대화 보존).
         base, conv = self.current(mid), self._first_conv(mid)
-        if base is None or conv is None or mid in self.hidden_message_ids or base.get("deleted_at") is not None:
+        # 숨김 검사도 `_visible_in`과 같은 소문자 정규화(S/bots/routes.ts:317,221-223,201-203).
+        hidden = mid.lower() in {h.lower() for h in self.hidden_message_ids}
+        if base is None or conv is None or hidden or base.get("deleted_at") is not None:
             return web.json_response({"error": "not_found"}, status=404)
         if base["author_id"] != BOT_ID:
             return web.json_response({"error": "forbidden"}, status=403)

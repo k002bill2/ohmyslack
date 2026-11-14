@@ -175,6 +175,27 @@ async def test_fake_root_uuid_is_case_insensitive(server):
     assert (await _post(server, _payload(str(uuid.uuid4()), thread_root_id=root.upper())))[0] == 201
 
 
+async def test_fake_replay_root_compared_as_raw_string(server):
+    # S/messages/routes.ts:110-117(루트 원문 전달)·S/messages/repo.ts:171(DB 소문자 UUID와 원문 직접 비교):
+    # 소문자 루트로 저장한 키를 같은 본문·루트만 대문자로 재요청하면 replay 가 아니라 409.
+    root = _seed_root(server)
+    key = str(uuid.uuid4())
+    assert (await _post(server, _payload(key, thread_root_id=root)))[0] == 201
+    st, body = await _post(server, _payload(key, thread_root_id=root.upper()))
+    assert (st, json.loads(body)) == (409, {"error": "idempotency_conflict"})
+    assert len(_stored(server, key)) == 1
+
+
+async def test_fake_patch_hidden_message_by_uppercase_id_is_404(server):
+    # S/bots/routes.ts:317,221-223,201-203: PATCH 대상 ID도 소문자 정규화 후 가시성 판정 → 숨김이면 404.
+    mid = "abcdef01-2345-4678-9abc-def012345678"
+    server.add(make_message(author=BOT_ID, body="hidden", mid=mid))
+    server.hidden_message_ids.add(mid)
+    st, body = await _patch(server, mid.upper(), "edit")
+    assert (st, json.loads(body)) == (404, NOT_FOUND)
+    assert server.current(mid)["body"] == "hidden"
+
+
 async def test_fake_attachment_must_be_own_fresh_upload_in_same_conversation(server):
     other_conv = await _upload(server, CHANNEL_ID)
     other_uploader = server.seed_attachment(conv=DM_ID, uploader=OWNER_ID)
