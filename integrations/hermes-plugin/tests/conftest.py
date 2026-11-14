@@ -151,6 +151,8 @@ class FakeBotServer:
         # 참여자·비활성 사용자(S/messages/repo.ts MENTION_FILTER_SQL). 목록에 없는 대화는 DM 기본값.
         self.members: dict[str, set[str]] = {DM_ID: {BOT_ID, OWNER_ID}, CHANNEL_ID: {BOT_ID, OWNER_ID, OTHER_ID}}
         self.inactive_user_ids: set[str] = set()
+        # 참여자 가입 시각(cm.joined_at). 기록 없으면 아주 오래전(0.0) 가입. 퇴장(left_at)은 members 에서 제거로 모델링.
+        self.joined_at: dict[tuple[str, str], float] = {}
         self.hidden_message_ids: set[str] = set()  # 봇에게 안 보이는 메시지(참여 전 시작 스레드 등, S/bots/routes.ts §4-5)
         # 커밋(저장 또는 replay 판정) 뒤에 적용 — 연결 유실과 본문 파싱 실패는 별도 스위치.
         self.post_disconnect_after_commit = 0  # 다음 N회: 응답 없이 연결 끊기(ServerDisconnectedError)
@@ -176,7 +178,8 @@ class FakeBotServer:
 
     def current(self, mid: str) -> Optional[dict]:
         """메시지의 현재 상태(같은 id의 마지막 변경)."""
-        return next((m for _c, _conv, m in reversed(self.changes) if m.get("id") == mid), None)
+        mid = mid.lower()  # UUID 소문자 정규화(S/messages/repo.ts:183-190)
+        return next((m for _c, _conv, m in reversed(self.changes) if m.get("id", "").lower() == mid), None)
 
     def tombstone(self, mid: str) -> int:
         """삭제: 본문 NULL·deleted_at 설정, client_message_id 등 키는 보존(서버 delete 와 같은 모양)."""
@@ -274,11 +277,21 @@ class FakeBotServer:
         return await resp.send(request) if isinstance(resp, _ShortBody) else resp
 
     def _first_conv(self, mid: str) -> Optional[str]:
-        return next((conv for _c, conv, m in self.changes if m.get("id") == mid), None)
+        mid = mid.lower()  # S/bots/routes.ts:201-203, S/messages/repo.ts:183-190 — UUID 는 소문자 정규화 비교
+        return next((conv for _c, conv, m in self.changes if m["id"].lower() == mid), None)
 
     def _visible_in(self, cid: str, mid: str) -> bool:
         """봇 가시성: 이 대화에 저장된 메시지이고 숨김 목록에 없다(없음·숨김·다른 대화 모두 같은 404)."""
-        return self._first_conv(mid) == cid and mid not in self.hidden_message_ids
+        return self._first_conv(mid) == cid and mid.lower() not in {h.lower() for h in self.hidden_message_ids}
+
+    def join(self, cid: str, user: str, at: Optional[float] = None) -> None:
+        """참여자 가입(joined_at = at 또는 지금)."""
+        self.members.setdefault(cid, {BOT_ID, OWNER_ID}).add(user)
+        self.joined_at[(cid, user)] = self.clock() if at is None else at
+
+    def leave(self, cid: str, user: str) -> None:
+        """참여자 퇴장(left_at 설정 = 현재 참여자 집합에서 제거)."""
+        self.members.setdefault(cid, {BOT_ID, OWNER_ID}).discard(user)
 
     def _members(self, cid: str) -> set[str]:
         return self.members.get(cid, {BOT_ID, OWNER_ID})
@@ -290,17 +303,20 @@ class FakeBotServer:
     @staticmethod
     def _norm(payload: dict) -> dict:
         """멱등 비교 정규형: thread_root·첨부 ID 집합(소문자)·본문·멘션 요청 집합."""
-        return {"thread_root_id": payload.get("thread_root_id"),
+        root = payload.get("thread_root_id")
+        return {"thread_root_id": root.lower() if isinstance(root, str) else root,
                 "attachment_ids": sorted({a.lower() for a in payload.get("attachment_ids") or []}),
                 "body": payload.get("body"), "mentions": sorted(set(payload.get("mention_user_ids") or []))}
 
-    @staticmethod
-    def _same_mentions(prior: dict, requested: list[str]) -> bool:
-        """S/messages/repo.ts:150-161 sameMentions: 저장 ⊆ 요청, 요청에만 있는 ID 중 생성 시점 자격자 없음."""
+    def _same_mentions(self, prior: dict, cid: str, requested: list[str]) -> bool:
+        """S/messages/repo.ts:150-161 sameMentions: 저장 ⊆ 요청이고, 요청에만 있는 ID 중 **재요청 당시**
+        left_at IS NULL·status='active'·작성자 아님·joined_at <= 메시지 생성 시각인 사람이 없어야 같은 요청."""
         req = set(requested)
         if not set(prior["stored_mentions"]) <= req:
             return False
-        return not (req - set(prior["stored_mentions"])) & prior["eligible_at_create"]
+        extra = req - set(prior["stored_mentions"])
+        return not {u for u in extra & self._eligible(cid, BOT_ID)
+                    if self.joined_at.get((cid, u), 0.0) <= prior["created_at"]}
 
     def seed_attachment(self, *, conv: str = DM_ID, uploader: str = BOT_ID, age: float = 0.0,
                         deleted: bool = False) -> str:
@@ -334,7 +350,7 @@ class FakeBotServer:
             mutated = msg is not None and (msg["edited_at"] is not None or msg["deleted_at"] is not None)
             if msg is None or any(prior[k] != norm[k] for k in ("thread_root_id", "attachment_ids")) or (
                     not mutated and (prior["body"] != norm["body"]
-                                     or not self._same_mentions(prior, norm["mentions"]))):
+                                     or not self._same_mentions(prior, cid, norm["mentions"]))):
                 self.posts.append({**payload, "_status": 409, "conversation_id": cid})
                 return web.json_response({"error": "idempotency_conflict"}, status=409)
             # replay 는 새로 저장하지 않는다 — `_status` 200(= 새 저장) 집계에 들어가지 않게 따로 표시.
@@ -348,15 +364,14 @@ class FakeBotServer:
         if not self._bindable(cid, list(payload.get("attachment_ids") or [])):
             self.posts.append({**payload, "_status": 400, "conversation_id": cid})
             return web.json_response({"error": "invalid_attachments"}, status=400)
-        eligible = self._eligible(cid, BOT_ID)
-        mentions = sorted(set(norm["mentions"]) & eligible)
+        mentions = sorted(set(norm["mentions"]) & self._eligible(cid, BOT_ID))
         # `_status` 200 = 새로 저장(기존 테스트 집계 호환). 실제 HTTP 상태는 `_http`(201).
         self.posts.append({**payload, "_status": 200, "_http": 201, "conversation_id": cid})
         msg = make_message(author=BOT_ID, body=payload["body"], thread_root_id=payload.get("thread_root_id"),
                            conv=cid, mentions=mentions)
         msg["client_message_id"] = payload["client_message_id"]
         change = self.add(msg, cid)
-        self.idem[scope] = {**norm, "stored_mentions": mentions, "eligible_at_create": eligible,
+        self.idem[scope] = {**norm, "stored_mentions": mentions, "created_at": self.clock(),
                             "id": msg["id"], "change_id": change}
         for aid in norm["attachment_ids"]:
             self.attachments[aid]["message_id"] = msg["id"]

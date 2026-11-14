@@ -141,6 +141,40 @@ async def test_fake_mentions_filter_self_nonmember_inactive(server):
     assert (await _post(server, _payload(key, mention_user_ids=[OWNER_ID])))[0] == 409
 
 
+async def test_fake_mentions_replay_uses_current_membership_and_join_time(server):
+    # S/messages/repo.ts:150-161 sameMentions: 요청에만 있는 ID 중 "재요청 당시 left_at IS NULL·status='active'
+    # 이고 joined_at <= 메시지 createdAt"인 사람이 있으면 충돌(409), 없으면 같은 요청(replay 200).
+    server.clock = lambda: 1000.0
+    # (가) 멘션 없이 생성 → 그 사람 퇴장(left_at 설정) → 그 사람만 넣은 재요청: 현재 자격 없음 → replay 200.
+    key = str(uuid.uuid4())
+    assert (await _post(server, _payload(key), cid=CHANNEL_ID))[0] == 201
+    server.leave(CHANNEL_ID, OTHER_ID)
+    assert (await _post(server, _payload(key, mention_user_ids=[OTHER_ID]), cid=CHANNEL_ID))[0] == 200
+    # (나) 반대 전환 1: 생성 뒤(joined_at 2000 > createdAt 1000) 가입한 사람을 넣은 재요청 → 생성 이전 가입 조건
+    # (cm.joined_at <= $4) 불충족 → 자격 없음 → 200.
+    key2, late = str(uuid.uuid4()), str(uuid.UUID(int=555))
+    assert (await _post(server, _payload(key2), cid=CHANNEL_ID))[0] == 201
+    server.join(CHANNEL_ID, late, at=2000.0)
+    assert (await _post(server, _payload(key2, mention_user_ids=[late]), cid=CHANNEL_ID))[0] == 200
+    # (나) 반대 전환 2: 생성 때 비활성(저장 멘션에서 빠짐)이었다가 지금 활성인 기존 참여자 → 재요청 당시 자격 → 409.
+    server.members[CHANNEL_ID].add(OTHER_ID)
+    server.inactive_user_ids.add(OTHER_ID)
+    key3 = str(uuid.uuid4())
+    assert (await _post(server, _payload(key3, mention_user_ids=[OTHER_ID]), cid=CHANNEL_ID))[0] == 201
+    server.inactive_user_ids.discard(OTHER_ID)
+    assert (await _post(server, _payload(key3, mention_user_ids=[OTHER_ID]), cid=CHANNEL_ID))[0] == 409
+
+
+async def test_fake_root_uuid_is_case_insensitive(server):
+    # S/bots/routes.ts:201-203(소문자 정규화 가시성)·S/messages/repo.ts:183-190(DB uuid 비교): 대문자 지정도 정상.
+    root = _seed_root(server)
+    assert root == root.lower()
+    key = str(uuid.uuid4())
+    assert (await _post(server, _payload(key, thread_root_id=root.upper())))[0] == 201
+    assert (await _post(server, _payload(key, thread_root_id=root)))[0] == 200  # 같은 키·소문자 = 같은 payload
+    assert (await _post(server, _payload(str(uuid.uuid4()), thread_root_id=root.upper())))[0] == 201
+
+
 async def test_fake_attachment_must_be_own_fresh_upload_in_same_conversation(server):
     other_conv = await _upload(server, CHANNEL_ID)
     other_uploader = server.seed_attachment(conv=DM_ID, uploader=OWNER_ID)
