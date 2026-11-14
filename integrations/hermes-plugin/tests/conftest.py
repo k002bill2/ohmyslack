@@ -15,6 +15,7 @@ _sys.modules.setdefault("hermes_bootstrap", _types.ModuleType("hermes_bootstrap"
 _sys.dont_write_bytecode = True
 
 import asyncio
+import json
 import sys
 import threading
 import types
@@ -77,6 +78,20 @@ def make_message(*, author: str = OWNER_ID, body: str = "hello", conv: str = DM_
     }
 
 
+class _Disconnect(Exception):
+    """핸들러가 응답 없이 연결을 끊게 하는 표지(아래 미들웨어가 transport 를 닫는다)."""
+
+
+@web.middleware
+async def _disconnect_middleware(request, handler):
+    try:
+        return await handler(request)
+    except _Disconnect:
+        if request.transport is not None:
+            request.transport.close()
+        raise asyncio.CancelledError() from None
+
+
 class FakeBotServer:
     def __init__(self) -> None:
         self.changes: list[tuple[int, str, dict]] = []
@@ -111,6 +126,18 @@ class FakeBotServer:
         self.downloads: list[str] = []
         self.replies_status: Optional[int] = None  # 강제 응답 상태(예: 404·500). None이면 changes에서 루트를 찾는다
         self.replies_calls: list[str] = []  # GET messages/{root_id}/replies 요청 루트 id 순서대로
+        # ---- 단계 2(설계 r4 §4): 멱등·결속·이력·장애 주입. 서버 대조 근거는 레인 REPORT.
+        self.idem: dict[tuple[str, str, str], dict] = {}  # (cid, author, client_message_id) → 저장 시 payload 정규형 + message id
+        self.bound: dict[str, str] = {}  # 결속된 첨부 id → message id
+        # 커밋(저장 또는 replay 판정) 뒤에 적용 — 연결 유실과 본문 파싱 실패는 별도 스위치.
+        self.post_disconnect_after_commit = 0  # 다음 N회: 응답 없이 연결 끊기(ServerDisconnectedError)
+        self.post_body_fault_after_commit: list[str] = []  # "truncated"(잘린 JSON) | "invalid"(깨진 JSON), 상태 200/201 그대로
+        self.post_redirect_after_commit: list[int] = []  # 3xx 상태(Location = /me)
+        self.history_status: list[int] = []  # 이력 GET 강제 상태(예: [401], [403])
+        self.history_disconnect = 0  # 이력 GET 다음 N회 연결 끊기
+        self.history_delay = 0.0  # 이력 GET 응답 전 실제 대기(초)
+        self.history_body_fault: list[str] = []  # 이력 GET "truncated" | "invalid"
+        self.history_calls = 0
         self.base = ""
         self._runner: Optional[web.AppRunner] = None
 
@@ -121,6 +148,18 @@ class FakeBotServer:
         if op is not None:
             self.ops[self.next_change] = op
         return self.next_change
+
+    def current(self, mid: str) -> Optional[dict]:
+        """메시지의 현재 상태(같은 id의 마지막 변경)."""
+        return next((m for _c, _conv, m in reversed(self.changes) if m.get("id") == mid), None)
+
+    def tombstone(self, mid: str) -> int:
+        """삭제: 본문 NULL·deleted_at 설정, client_message_id 등 키는 보존(서버 delete 와 같은 모양)."""
+        base = self.current(mid)
+        assert base is not None, mid
+        dead = {**base, "body": None, "deleted_at": iso(1000.0), "attachments": []}
+        conv = next(conv for _c, conv, m in self.changes if m.get("id") == mid)
+        return self.add(dead, conv, op="delete")
 
     async def push_live(self, message: dict, conv: str = DM_ID) -> None:
         cid = self.add(message, conv)
@@ -200,10 +239,86 @@ class FakeBotServer:
             self.post_429 = max(0, self.post_429 - 1)
             self.posts.append({**payload, "_status": 429})
             return web.json_response({"error": "rate_limited"}, status=429, headers={"Retry-After": "1"})
-        self.posts.append({**payload, "_status": 200, "conversation_id": request.match_info["cid"]})
-        msg = make_message(author=BOT_ID, body=payload["body"], thread_root_id=payload.get("thread_root_id"))
+        return self._store_or_replay(request.match_info["cid"], payload)
+
+    @staticmethod
+    def _norm(payload: dict) -> dict:
+        """멱등 비교 정규형: thread_root·첨부 ID 집합(소문자)·본문·멘션 집합."""
+        return {"thread_root_id": payload.get("thread_root_id"),
+                "attachment_ids": sorted({a.lower() for a in payload.get("attachment_ids") or []}),
+                "body": payload.get("body"), "mentions": sorted(set(payload.get("mention_user_ids") or []))}
+
+    def _store_or_replay(self, cid: str, payload: dict):
+        # 순서는 서버와 같다: (rateGuard = 위 강제 상태·429) → 키 조회·replay/충돌 → 첨부 결속 → 저장.
+        scope, norm = (cid, BOT_ID, payload["client_message_id"]), self._norm(payload)
+        prior = self.idem.get(scope)
+        if prior is not None:
+            msg = self.current(prior["id"])
+            mutated = msg is not None and (msg["edited_at"] is not None or msg["deleted_at"] is not None)
+            if msg is None or any(prior[k] != norm[k] for k in ("thread_root_id", "attachment_ids")) or (
+                    not mutated and any(prior[k] != norm[k] for k in ("body", "mentions"))):
+                self.posts.append({**payload, "_status": 409, "conversation_id": cid})
+                return web.json_response({"error": "idempotency_conflict"}, status=409)
+            # replay 는 새로 저장하지 않는다 — `_status` 200(= 새 저장) 집계에 들어가지 않게 따로 표시.
+            self.posts.append({**payload, "_status": "replayed", "_http": 200, "conversation_id": cid})
+            return self._committed({"message": msg, "seq": 1, "change_id": prior["change_id"],
+                                    "mention_user_ids": list(msg.get("mention_user_ids") or [])}, 200)
+        if any(a in self.bound for a in norm["attachment_ids"]):
+            self.posts.append({**payload, "_status": 400, "conversation_id": cid})
+            return web.json_response({"error": "invalid_attachments"}, status=400)
+        # `_status` 200 = 새로 저장(기존 테스트 집계 호환). 실제 HTTP 상태는 `_http`(201).
+        self.posts.append({**payload, "_status": 200, "_http": 201, "conversation_id": cid})
+        msg = make_message(author=BOT_ID, body=payload["body"], thread_root_id=payload.get("thread_root_id"),
+                           conv=cid, mentions=norm["mentions"])
         msg["client_message_id"] = payload["client_message_id"]
-        return web.json_response({"message": msg, "seq": 1, "change_id": self.add(msg), "mention_user_ids": []})
+        change = self.add(msg, cid)
+        self.idem[scope] = {**norm, "id": msg["id"], "change_id": change}
+        for aid in norm["attachment_ids"]:
+            self.bound[aid] = msg["id"]
+        return self._committed({"message": msg, "seq": 1, "change_id": change,
+                                "mention_user_ids": norm["mentions"]}, 201)
+
+    def _committed(self, body: dict, status: int):
+        """커밋 뒤 응답 — 장애 주입 스위치를 연결 유실 → 본문 파싱 실패 → 3xx 순으로 하나만 적용."""
+        if self.post_disconnect_after_commit > 0:
+            self.post_disconnect_after_commit -= 1
+            raise _Disconnect()
+        if self.post_body_fault_after_commit:
+            return self._broken(self.post_body_fault_after_commit.pop(0), body, status)
+        if self.post_redirect_after_commit:
+            return web.Response(status=self.post_redirect_after_commit.pop(0), headers={"Location": "/api/bot/v1/me"})
+        return web.json_response(body, status=status)
+
+    @staticmethod
+    def _broken(kind: str, body: dict, status: int):
+        raw = json.dumps(body).encode()
+        data = {"truncated": raw[: len(raw) // 2], "invalid": b'{"message": nope'}[kind]
+        return web.Response(body=data, status=status, content_type="application/json")
+
+    async def history(self, request):
+        """봇 이력 GET: 원문(thread_root 없음)만, 최신 limit개(기본·최대 100) 오름차순, tombstone 키 보존."""
+        self._log(request)
+        self.history_calls += 1
+        if self.history_delay:
+            await asyncio.sleep(self.history_delay)
+        if self.history_status:
+            status = self.history_status.pop(0)
+            return web.json_response({"error": {401: "unauthorized", 403: "forbidden"}.get(status, "error")},
+                                     status=status)
+        if self.history_disconnect > 0:
+            self.history_disconnect -= 1
+            raise _Disconnect()
+        cid, limit = request.match_info["cid"], int(request.query.get("limit", 100))
+        if not 1 <= limit <= 100:
+            return web.json_response({"error": "invalid_request"}, status=400)
+        latest: dict[str, tuple[str, dict]] = {}  # id → (처음 저장된 대화, 현재 상태), 처음 등장 순서 유지
+        for _c, conv, m in self.changes:
+            latest[m["id"]] = (latest[m["id"]][0] if m["id"] in latest else conv, m)
+        roots = [m for conv, m in latest.values() if conv == cid and m.get("thread_root_id") is None]
+        body = {"messages": roots[-limit:], "has_more": len(roots) > limit}
+        if self.history_body_fault:
+            return self._broken(self.history_body_fault.pop(0), body, 200)
+        return web.json_response(body)
 
     async def upload(self, request):
         self._log(request)
@@ -273,12 +388,13 @@ class FakeBotServer:
         return ws
 
     async def start(self) -> None:
-        app = web.Application(client_max_size=11 * 1024 * 1024)
+        app = web.Application(client_max_size=11 * 1024 * 1024, middlewares=[_disconnect_middleware])
         p = "/api/bot/v1"
         app.router.add_get(f"{p}/me", self.me)
         app.router.add_get(f"{p}/sync", self.sync)
         app.router.add_get(f"{p}/sync/snapshot", self.snapshot)
         app.router.add_post(f"{p}/conversations/{{cid}}/messages", self.post)
+        app.router.add_get(f"{p}/conversations/{{cid}}/messages", self.history)
         app.router.add_patch(f"{p}/messages/{{mid}}", self.patch)
         app.router.add_get(f"{p}/messages/{{mid}}/replies", self.replies)
         app.router.add_get(f"{p}/ws", self.ws)
