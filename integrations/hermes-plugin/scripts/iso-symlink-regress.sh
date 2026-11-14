@@ -23,7 +23,9 @@ case "$TARGET/" in "$ISO"/*|"$P/.venv"/*) usage "target must not be under .isola
 
 # 전제: $ISO 는 없거나 일반 디렉터리(래퍼 산출물 — 매 실행 재생성됨). symlink 면 상태를 모르므로 중단.
 [ ! -L "$ISO" ] || usage "$ISO is already a symlink — inspect it by hand"
-iso_wipe "$ISO" || usage "could not clear $ISO"
+# 준비 단계는 시험 대상 함수(iso_wipe)를 쓰지 않는다 — 뮤테이션이 준비를 망치면 엉뚱한 이유로 FAIL 한다.
+if [ -d "$ISO" ]; then find -P "$ISO" -delete; fi
+[ ! -e "$ISO" ] && [ ! -L "$ISO" ] || usage "could not clear $ISO"
 
 mkdir -p -- "$TARGET/home"
 printf 'keep\n' > "$TARGET/sentinel"
