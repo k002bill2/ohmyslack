@@ -295,6 +295,10 @@ class FakeBotServer:
             self.post_429 = max(0, self.post_429 - 1)
             self.posts.append({**payload, "_status": 429})
             return web.json_response({"error": "rate_limited"}, status=429, headers={"Retry-After": "1"})
+        body = payload.get("body")
+        if not isinstance(body, str) or not body.strip():  # shared/messages.ts:15-18 bodySchema → S/messages/routes.ts:35
+            self.posts.append({**payload, "_status": 400, "conversation_id": cid})
+            return web.json_response({"error": "invalid_request"}, status=400)
         resp = self._store_or_replay(cid, payload)
         return await resp.send(request) if isinstance(resp, _ShortBody) else resp
 

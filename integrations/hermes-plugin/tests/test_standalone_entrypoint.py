@@ -214,6 +214,7 @@ async def test_partial_chunk_failure_reports_success_with_warning(server, tmp_pa
     out = await _send(server, LONG_TEXT, [(mp3, True)])
     assert "error" not in out and out.get("success") is True
     assert "text: partial_delivery 1/3" in out["warnings"]
+    assert out.get("media_delivered") is True  # 첨부는 청크 0에 결속됨 — 텍스트 경고와 독립(설계 r4 §Q3 M1)
     posts = _ok_posts(server)
     assert len(posts) == 1 and posts[0]["attachment_ids"] == [server.uploads[0]["attachment_id"]]
 
