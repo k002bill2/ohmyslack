@@ -74,9 +74,14 @@ export function LiveApp({
   const connect = useCallback(() => {
     const source = createSource({ fetch, session });
     setPhase({ kind: 'signed-in', source });
-    void source.start().then((ok) => {
-      if (ok) hadSession.current = true;
+    // 「연결됐던 세션」은 어느 복귀 절차든 연결됨에 닿으면 확정한다. start()의 결과만 보면 첫 복귀 도중
+    // 전경 복귀·online 등으로 새 복귀 절차가 시작될 때 start()가 false로 끝나 원격 로그아웃 안내가 빠진다(QA r2 D2).
+    const unwatch = source.subscribe(() => {
+      if (source.getSnapshot().connection !== 'connected') return;
+      hadSession.current = true;
+      unwatch();
     });
+    void source.start();
     return source;
   }, [createSource, fetch, session]);
 
