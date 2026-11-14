@@ -71,6 +71,11 @@
 ;; 이 디렉터리를 os.listdir 로 캐시하는데, 목록 읽기가 거부되면 빈 캐시로 처리해 gateway 등을
 ;; 못 찾는다(사람 실행 (나)-0 의 ModuleNotFoundError). 노출 범위는 최상위 이름 목록뿐 — .env 등의 내용은 읽을 수 없다.
 (allow file-read* (literal "@HERMES_SRC@"))
+;; Hermes 루트 바로 아래 *.py 만 한 번에 허용(하위 폴더·.py 아닌 파일 — .env·config.yaml·*.json 등 — 은 계속 거부).
+;; 이유: gateway 가 최상위 모듈(hermes_constants 등)을 import 한다(사람 실행 (나)-0 2회차 PermissionError).
+;; 설계 N-12 「최상위 *.py 한 줄씩」 이탈 — 한 줄씩이면 사람 재실행이 파일 수만큼 반복되어 정규식 1줄로 대체.
+;; @HERMES_SRC_RE@ 는 래퍼가 $HERMES_SRC 를 정규식 이스케이프해 렌더한다.
+(allow file-read* (regex #"^@HERMES_SRC_RE@/[^/]+\.py$"))
 
 ;; ---- 쓰기: 기본 거부(명시 — 뮤테이션 4a 대상 줄). 허용은 $ISO 4개 하위 + /dev/null·/dev/tty 뿐.
 (deny file-write*)

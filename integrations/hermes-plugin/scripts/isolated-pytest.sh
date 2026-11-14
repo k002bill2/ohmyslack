@@ -94,7 +94,8 @@ require_sandbox() {
 }
 
 render_profile() {           # $1 = 추가 거부 포트(선택)
-  local extra=${1:-} ports=("${DENY_PORTS[@]}") line port out
+  local extra=${1:-} ports=("${DENY_PORTS[@]}") line port out src_re
+  src_re="$(printf '%s' "$HERMES_SRC" | sed 's/[][\.^$*+?(){}|]/\\&/g')"
   [ -n "$extra" ] && ports+=("$extra")
   out="$(
     while IFS= read -r line || [ -n "$line" ]; do
@@ -104,7 +105,7 @@ render_profile() {           # $1 = 추가 거부 포트(선택)
         done
       else
         line=${line//@VENV_PY@/$VENV_PY}; line=${line//@PY_EXE@/$PY_EXE_REAL}; line=${line//@PY_HOME@/$PY_HOME_REAL}
-        line=${line//@HERMES_SRC@/$HERMES_SRC}; line=${line//@ISO@/$ISO}; line=${line//@P@/$P}
+        line=${line//@HERMES_SRC_RE@/$src_re}; line=${line//@HERMES_SRC@/$HERMES_SRC}; line=${line//@ISO@/$ISO}; line=${line//@P@/$P}
         printf '%s\n' "$line"
       fi
     done < "$P/scripts/pytest.sb"
