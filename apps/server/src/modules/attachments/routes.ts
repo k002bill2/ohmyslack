@@ -104,13 +104,34 @@ export function parseRange(header: string | undefined, size: number): ByteRange 
   return { start, end };
 }
 
+/** 사람 다운로드의 문서·텍스트 응답 형식(TRD §6-1-1 (6), 실기 r3). */
+const ATTACHMENT_OPAQUE_FILE_TYPE = 'application/octet-stream';
+
+/** 다운로드 응답 형식: 문서·텍스트를 불투명 바이트로 보낼지(사람 라우트만) — 봇 라우트는 기본값(원래 mime). */
+export interface DownloadOptions {
+  readonly opaqueFiles?: boolean;
+}
+
+function downloadContentType(mime: string, file: boolean, options: DownloadOptions): string {
+  if (!file) return mime;
+  // iOS 홈 화면 앱은 범위 안 PDF·텍스트를 창 안에 열어 돌아올 수 없다 — octet-stream이면 다운로드 시트로 받는다(실기 r3).
+  if (options.opaqueFiles === true) return ATTACHMENT_OPAQUE_FILE_TYPE;
+  return mime.startsWith('text/') ? `${mime}; charset=utf-8` : mime;
+}
+
 /** 다운로드 처리 본문(사람·봇 공용). 첨부는 가드가 해석·판정해 둔 것을 쓴다. */
-export async function downloadAs(service: AttachmentsService, meta: AttachmentMeta, request: FastifyRequest, reply: FastifyReply): Promise<Buffer | undefined> {
+export async function downloadAs(
+  service: AttachmentsService,
+  meta: AttachmentMeta,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  options: DownloadOptions = {},
+): Promise<Buffer | undefined> {
   const { bytes } = await service.read(meta);
   // 문서·텍스트 계열은 `attachment` + RFC 6266/5987 파일명, 미디어는 기존 `inline`(TRD §6-1-1 (6)).
   const file = isAttachmentFileMime(meta.mime);
   reply
-    .header('content-type', file && meta.mime.startsWith('text/') ? `${meta.mime}; charset=utf-8` : meta.mime)
+    .header('content-type', downloadContentType(meta.mime, file, options))
     .header('content-disposition', file ? attachmentDisposition(meta.filename ?? 'document') : 'inline')
     .header('accept-ranges', 'bytes')
     .header('cache-control', 'no-store')
@@ -213,6 +234,6 @@ export function registerAttachmentRoutes(app: FastifyInstance, deps: AttachmentR
   app.get(
     '/api/attachments/:id',
     { config: { access: 'attachment' }, preHandler: [account, attachmentGuard(deps.attachments)], onSend: attachmentCspOnSend },
-    (request, reply) => downloadAs(deps.attachments, guarded(request), request, reply),
+    (request, reply) => downloadAs(deps.attachments, guarded(request), request, reply, { opaqueFiles: true }),
   );
 }
