@@ -81,6 +81,7 @@ class FakeBotServer:
         self.sync_expired_below: Optional[int] = None
         self.sync_403 = 0  # 다음 N회 /sync를 403으로(권한 거부 — 인증 실패 아님)
         self.post_status: list[int] = []  # 다음 게시 응답 상태를 순서대로 강제(예: [403])
+        self.post_retry_after = "1"  # post_status로 강제한 429 응답의 Retry-After 값
         self.ws_fail = 0
         self.ws_status = 503
         self.post_429 = 0
@@ -97,6 +98,8 @@ class FakeBotServer:
         self.display_name = BOT_NAME
         self.uploads: list[dict] = []  # 업로드 요청 기록(content_type·conversation_id·size·status)
         self.upload_status: list[int] = []  # 다음 업로드 응답 상태를 순서대로 강제(예: [429], [413])
+        self.upload_retry_after = "1"  # 업로드 429 응답의 Retry-After 값
+        self.upload_delay = 0.0  # 업로드 응답 전 실제 대기(초) — 업로드가 걸린 상황 재현용
         self.blobs: dict[str, tuple[str, bytes]] = {}  # 다운로드용 첨부 id → (mime, bytes)
         self.downloads: list[str] = []
         self.replies_status: Optional[int] = None  # 강제 응답 상태(예: 404·500). None이면 changes에서 루트를 찾는다
@@ -182,7 +185,9 @@ class FakeBotServer:
         if self.post_status:
             status = self.post_status.pop(0)
             self.posts.append({**payload, "_status": status})
-            return web.json_response({"error": "forbidden" if status == 403 else "error"}, status=status)
+            headers = {"Retry-After": self.post_retry_after} if status == 429 else {}
+            return web.json_response({"error": "forbidden" if status == 403 else "error"}, status=status,
+                                     headers=headers)
         ok_so_far = sum(1 for p in self.posts if p["_status"] == 200)
         if self.post_429 > 0 or (self.ok_posts_before_429 is not None and ok_so_far >= self.ok_posts_before_429):
             self.post_429 = max(0, self.post_429 - 1)
@@ -198,10 +203,12 @@ class FakeBotServer:
         data = await request.read()
         rec = {"content_type": request.headers.get("Content-Type"), "size": len(data),
                "conversation_id": request.query.get("conversation_id")}
+        if self.upload_delay:
+            await asyncio.sleep(self.upload_delay)
         if self.upload_status:
             status = self.upload_status.pop(0)
             self.uploads.append({**rec, "_status": status})
-            headers = {"Retry-After": "1"} if status == 429 else {}
+            headers = {"Retry-After": self.upload_retry_after} if status == 429 else {}
             return web.json_response({"error": "error"}, status=status, headers=headers)
         aid = str(uuid.uuid4())
         self.uploads.append({**rec, "_status": 201, "attachment_id": aid})

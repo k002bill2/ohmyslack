@@ -155,6 +155,9 @@ def resolve_bot_url(extra: Optional[dict]) -> str:
 
 class OhmySlackAdapter(BasePlatformAdapter):
     MAX_MESSAGE_LENGTH = 4000
+    # `send`가 `truncate_message`로 직접 나눠 게시하므로, cron 라우터(gateway/delivery.py `_cap_oversized_output`)가
+    # 4,000자 초과 출력을 「truncated, full output saved to …」 표지로 자르지 않고 전문을 넘기게 한다(base 공개 속성).
+    splits_long_messages = True
 
     def __init__(self, config: PlatformConfig, *, session_factory: Callable[[], aiohttp.ClientSession] = new_session,
                  sleep=asyncio.sleep, clock: Callable[[], float] = time.time,
@@ -776,12 +779,143 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return {"name": name, "type": kind, "chat_id": str(chat_id)}
 
 
+STANDALONE_TYPES = {**VOICE_TYPES, **IMAGE_TYPES}
+
+
+def _media_path(descriptor: Any) -> Any:
+    """Hermes `media_files` 원소: `(path, is_voice)` 튜플(base.extract_media) 또는 경로 문자열."""
+    if isinstance(descriptor, (list, tuple)):
+        return descriptor[0] if descriptor else None
+    return descriptor
+
+
+def _reject_reason(path: Any) -> str:
+    """read_attachment_file이 거절한 이유 분류(warnings용 enum). 형식 판정은 호출 전에 끝난다."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return "not_found"
+    except (OSError, TypeError, ValueError):
+        return "rejected"
+    if stat.S_ISREG(info.st_mode) and info.st_size > ATTACHMENT_MAX_BYTES:
+        return "too_large"
+    return "rejected"
+
+
+# standalone 업로드 전체가 쓰는 공유 시간 예산(초). Hermes는 standalone 전송 전체를 기본 60초
+# (`cron.standalone_send_timeout_seconds`)에 끊는다 — 넘으면 텍스트·warnings 모두 사라진다. `/me` 조회·텍스트 게시
+# (청크·재시도)와 여유를 남기려고 업로드에는 35초만 쓴다.
+STANDALONE_UPLOAD_BUDGET_S = 35.0
+# standalone 전송 전체(`/me`·파일 읽기·업로드·텍스트 게시와 그 재시도)의 deadline(초, 호출 시작 기준).
+# Hermes 기본 `cron.standalone_send_timeout_seconds` 60초 − 정리 여유 10초. 실제 설정값은 어댑터가 알 수 없어
+# 기본값을 가정한다 — 운영자가 상한을 50초 밑으로 줄이면 Hermes 취소가 먼저 온다.
+STANDALONE_TOTAL_DEADLINE_S = 50.0
+# 텍스트 게시 몫: 업로드 예산은 deadline까지 남은 시간에서 이만큼 먼저 떼고 계산한다.
+STANDALONE_TEXT_RESERVE_S = 10.0
+
+
+class _DeadlineExceeded(Exception):
+    """standalone 전체 deadline 소진(Hermes 취소 전에 send_error로 끝내기 위한 내부 신호)."""
+
+
+async def _within(aw: Any, left: Callable[[], float]) -> Any:
+    """`aw`를 deadline까지 남은 시간(`left()`, 초)으로 제한한다. 남은 시간이 없거나 그 때문에 끊기면 _DeadlineExceeded."""
+    if left() <= 0:
+        aw.close()
+        raise _DeadlineExceeded
+    timeout = asyncio.timeout(left())
+    try:
+        async with timeout:
+            return await aw
+    except TimeoutError:
+        if timeout.expired():
+            raise _DeadlineExceeded from None
+        raise
+
+
+async def _upload_one(client: BotClient, chat_id: str, data: bytes, mime: str,
+                      remaining: Callable[[], float]) -> tuple[Optional[str], str]:
+    """업로드 1건 → (첨부 ID, 실패 사유). 남은 예산으로 감싸고, 예산보다 긴 재시도 대기는 하지 않는다."""
+    try:
+        uploaded = await asyncio.wait_for(client.upload_attachment(chat_id, data, mime, remaining=remaining),
+                                          timeout=max(remaining(), 0.0))
+    except (BotApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        logger.warning("ohmyslack: standalone upload failed (%s)",
+                       exc.status if isinstance(exc, BotApiError) else type(exc).__name__)
+        timed_out = isinstance(exc, asyncio.TimeoutError) and remaining() <= 0
+        return None, "budget_exceeded" if timed_out else "upload_failed"
+    attachment_id = str(uploaded.get("attachment_id") or "")
+    return (attachment_id, "") if _is_uuid(attachment_id) else (None, "upload_failed")
+
+
+async def _upload_standalone_media(client: BotClient, chat_id: str, media_files: Any, *,
+                                   budget: float = STANDALONE_UPLOAD_BUDGET_S,
+                                   clock: Callable[[], float] = time.monotonic,
+                                   ) -> tuple[list[str], list[str], list[str]]:
+    """standalone 첨부 업로드 → (첨부 ID, 파일명, warnings). 실패는 파일마다 `"<basename>: <사유>"` 한 줄.
+
+    판정·상한은 라이브 `_send_attachment`와 같다(read_attachment_file, 음성·이미지 허용목록, 10 MiB).
+    시도는 지원 형식 앞 ATTACHMENTS_PER_MESSAGE_MAX개까지(성공 여부 무관), 전체는 `budget`초(단조 `clock`) 안에서만 —
+    예산이 다 되면 남은 파일은 업로드하지 않고 `budget_exceeded`. 경로 전체·본문·토큰은 warnings·로그에 남기지 않는다.
+    """
+    deadline = clock() + budget
+
+    def remaining() -> float:
+        return deadline - clock()
+    ids: list[str] = []
+    names: list[str] = []
+    warnings: list[str] = []
+    attempts = 0
+    for descriptor in media_files or ():
+        path = _media_path(descriptor)
+        try:
+            name = os.path.basename(os.fspath(path))
+        except TypeError:
+            warnings.append("(invalid): rejected")
+            continue
+        if STANDALONE_TYPES.get(os.path.splitext(name)[1].lower()) is None:
+            warnings.append(f"{name}: unsupported_type")
+            continue
+        attempts += 1
+        if attempts > ATTACHMENTS_PER_MESSAGE_MAX:
+            warnings.append(f"{name}: too_many")
+            continue
+        if remaining() <= 0:
+            warnings.append(f"{name}: budget_exceeded")
+            continue
+        try:  # 읽기(스레드 대기 포함)도 예산 안에서만 — 멈춘 파일 시스템이 전송 전체를 붙잡지 않게
+            loaded = await asyncio.wait_for(asyncio.to_thread(read_attachment_file, path, STANDALONE_TYPES),
+                                            timeout=max(remaining(), 0.0))
+        except asyncio.TimeoutError:
+            warnings.append(f"{name}: budget_exceeded")
+            continue
+        if loaded is None:
+            warnings.append(f"{name}: {_reject_reason(path)}")
+            continue
+        data, mime, _ = loaded
+        attachment_id, reason = await _upload_one(client, str(chat_id), data, mime, remaining)
+        if attachment_id is None:
+            warnings.append(f"{name}: {reason}")
+            continue
+        ids.append(attachment_id)
+        names.append(name)
+    return ids, names, warnings
+
+
 async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Optional[str] = None,
                           media_files=None, force_document: bool = False,
-                          session_factory: Callable[[], aiohttp.ClientSession] = new_session) -> dict:
-    """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·첨부는 쓰지 않는다.
+                          session_factory: Callable[[], aiohttp.ClientSession] = new_session,
+                          upload_budget: float = STANDALONE_UPLOAD_BUDGET_S,
+                          clock: Callable[[], float] = time.monotonic) -> dict:
+    """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·`force_document`는 쓰지 않는다.
 
-    홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 보내지 않는다.
+    홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 업로드도 하지 않는다.
+    첨부(ADR-002 1a): 음성·이미지는 업로드해 첫 청크에 결속(라이브 `_send_attachment`와 같은 규칙), 지원 밖·없는 파일·
+    상한 초과·업로드 실패·시간 예산 초과는 파일마다 `warnings`에 싣고 텍스트는 보낸다. `success`는 텍스트 전송 결과를 따른다.
+    전체는 시작 시각부터 STANDALONE_TOTAL_DEADLINE_S초(단조 `clock`) 안에서만 — Hermes 전체 상한(기본 60초)에 취소되면
+    텍스트·warnings가 모두 사라지므로. `/me`·게시(재시도 대기 포함)는 남은 시간으로 제한하고, 업로드는
+    min(`upload_budget`, 남은 시간 − STANDALONE_TEXT_RESERVE_S)초만 쓴다. 텍스트를 deadline 안에 못 끝내면
+    `deadline_exceeded` send_error(모인 첨부 warnings를 메시지에 덧붙인다 — Hermes는 실패 시 `error`만 남긴다).
     """
     from gateway.platforms._shared import send_error
     extra = getattr(pconfig, "extra", None) or {}
@@ -792,19 +926,43 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
         base = resolve_bot_url(extra)
     except ValueError as exc:
         return send_error(f"ohmyslack standalone send: {exc}")
+    started = clock()
+
+    def left() -> float:
+        return started + STANDALONE_TOTAL_DEADLINE_S - clock()
+
+    def failed(reason: str) -> dict:
+        suffix = f"; warnings: {', '.join(warnings)}" if warnings else ""
+        return send_error(f"ohmyslack standalone send: {reason}{suffix}")
+    attachment_ids: list[str] = []
+    warnings: list[str] = []
     async with session_factory() as session:
         client = BotClient(base, token, session)
         ids = []
         try:
-            me = await client.get_me()
+            me = await _within(client.get_me(), left)
             kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
             if kinds.get(str(chat_id)) != "dm":
                 return send_error("ohmyslack standalone send: home channel must be the owner DM")
-            for chunk in BasePlatformAdapter.truncate_message(message or "", OhmySlackAdapter.MAX_MESSAGE_LENGTH):
-                res = await client.post_message(str(chat_id), chunk)
+            budget = min(upload_budget, left() - STANDALONE_TEXT_RESERVE_S)
+            attachment_ids, names, warnings = await _upload_standalone_media(client, str(chat_id), media_files,
+                                                                            budget=budget, clock=clock)
+            text = message or (names[0] if names else "")
+            chunks = BasePlatformAdapter.truncate_message(text, OhmySlackAdapter.MAX_MESSAGE_LENGTH)
+            for i, chunk in enumerate(chunks):
+                res = await _within(client.post_message(
+                    str(chat_id), chunk, attachment_ids=attachment_ids if i == 0 and attachment_ids else None,
+                    remaining=left), left)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
+        except _DeadlineExceeded:
+            return failed("deadline_exceeded")
         except BotApiError as exc:
-            return send_error(f"ohmyslack standalone send: HTTP {exc.status}")
+            return failed(f"HTTP {exc.status}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            return send_error(f"ohmyslack standalone send: {type(exc).__name__}")
-    return {"success": True, "message_id": ids[-1] if ids else None}
+            return failed(type(exc).__name__)
+    out: dict[str, Any] = {"success": True, "message_id": ids[-1] if ids else None}
+    if warnings:
+        out["warnings"] = warnings
+    elif attachment_ids:
+        out["media_delivered"] = True  # Hermes generic 경로가 "MEDIA attachments were omitted"를 붙이지 않게
+    return out
