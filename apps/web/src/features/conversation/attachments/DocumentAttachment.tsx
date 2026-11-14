@@ -104,8 +104,10 @@ export function DocumentAttachment({ attachment }: { readonly attachment: Attach
           className="doc-download"
           href={href}
           // 값 없는 download: 저장 파일명은 서버 Content-Disposition 하나가 정한다(QA iPhone r2 W2).
-          download=""
-          {...target}
+          // 새 창 형식(target=_blank)은 download를 렌더하지 않는다 — WebKit이 target을 무시하기 때문(FIX2).
+          download={target.download ? '' : undefined}
+          target={target.target}
+          rel={target.rel}
           onClick={onDownloadClick}
           aria-label={documentDownloadName(filename, kind, size, macros)}
         >

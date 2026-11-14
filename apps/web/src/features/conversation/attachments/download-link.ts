@@ -33,9 +33,13 @@ export function rendersInline(mime: string): boolean {
 }
 
 /**
- * standalone + 직접 렌더 형식이면 새 창(iOS는 「완료」 버튼이 있는 시트로 연다)으로 받는다.
- * 그 밖에는 속성을 더하지 않는다(데스크톱·일반 브라우저 동작 불변).
+ * standalone + 직접 렌더 형식이면 새 창(iOS는 「완료」 버튼이 있는 시트로 연다)으로 받고 `download` 속성은 뺀다 —
+ * WebKit은 download가 있으면 target을 무시한다(저장 파일명은 서버 Content-Disposition이 정함).
+ * 그 밖에는 값 없는 download만(데스크톱·일반 브라우저 동작 불변, QA iPhone r2 W2).
  */
-export function downloadLinkTarget(mime: string, standalone: boolean): { readonly target?: '_blank'; readonly rel?: 'noopener' } {
-  return standalone && rendersInline(mime) ? { target: '_blank', rel: 'noopener' } : {};
+export function downloadLinkTarget(
+  mime: string,
+  standalone: boolean,
+): { readonly target?: '_blank'; readonly rel?: 'noopener'; readonly download: boolean } {
+  return standalone && rendersInline(mime) ? { target: '_blank', rel: 'noopener', download: false } : { download: true };
 }
