@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from conftest import DM_ID, TOKEN, wait_for
+from conftest import BOT_ID, DM_ID, TOKEN, make_message, wait_for
 
 
 def _ok(server):
@@ -49,6 +49,7 @@ def test_split_preserves_code_fences():
 async def test_send_reply_uses_thread_root_and_retries_429_idempotently(server, make_adapter, fake_sleep):
     adapter = make_adapter()
     assert await adapter.connect()
+    server.add(make_message(mid="root-1"))  # 봇에게 보이는 루트(가짜 서버 루트 가시성 404, Codex 1차 P2-3)
     server.post_429 = 1
     res = await adapter.send(DM_ID, "answer", reply_to="m-1", metadata={"thread_id": "root-1"})
     assert res.success
@@ -71,6 +72,7 @@ async def test_send_429_exhausted_returns_rate_limited(server, make_adapter):
 async def test_send_long_message_posts_chunks_in_same_thread(server, make_adapter):
     adapter = make_adapter()
     assert await adapter.connect()
+    server.add(make_message(mid="root-9"))  # 봇에게 보이는 루트(P2-3)
     res = await adapter.send(DM_ID, "b" * 9000, metadata={"thread_id": "root-9"})
     ok = _ok(server)
     assert res.success and len(ok) == 3
@@ -96,6 +98,7 @@ async def test_reply_to_a_reply_is_corrected_to_root(server, make_adapter):
 async def test_edit_message_patches(server, make_adapter):
     adapter = make_adapter()
     assert await adapter.connect()
+    server.add(make_message(author=BOT_ID, mid="mid-1"))  # 수정 대상 = 봇 자신의 기존 메시지(P2-4)
     res = await adapter.edit_message(DM_ID, "mid-1", "edited")
     assert res.success and server.patches == [("mid-1", {"body": "edited"})]
     too_long = await adapter.edit_message(DM_ID, "mid-1", "z" * 4001)

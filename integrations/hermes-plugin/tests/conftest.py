@@ -18,6 +18,7 @@ import asyncio
 import json
 import sys
 import threading
+import time
 import types
 import uuid
 from datetime import datetime, timezone
@@ -42,6 +43,7 @@ OTHER_ID = str(uuid.UUID(int=3))
 DM_ID = str(uuid.UUID(int=100))
 CHANNEL_ID = str(uuid.UUID(int=200))
 BOT_NAME = "Jarvis"
+ATTACHMENT_UNBOUND_TTL_S = 60 * 60  # packages/shared/src/attachments.ts:11 ATTACHMENT_UNBOUND_TTL_MS = 60 * 60 * 1000
 
 
 @pytest.fixture(autouse=True)
@@ -92,6 +94,20 @@ async def _disconnect_middleware(request, handler):
         raise asyncio.CancelledError() from None
 
 
+class _ShortBody:
+    """Content-Length 는 전체 길이로 선언하고 절반만 보낸 뒤 연결을 닫는다 → 클라이언트 ClientPayloadError."""
+
+    def __init__(self, raw: bytes, status: int) -> None:
+        self.raw, self.status = raw, status
+
+    async def send(self, request: web.Request):
+        resp = web.StreamResponse(status=self.status, headers={"Content-Type": "application/json"})
+        resp.content_length = len(self.raw)
+        await resp.prepare(request)
+        await resp.write(self.raw[: len(self.raw) // 2])
+        raise _Disconnect()
+
+
 class FakeBotServer:
     def __init__(self) -> None:
         self.changes: list[tuple[int, str, dict]] = []
@@ -128,15 +144,24 @@ class FakeBotServer:
         self.replies_calls: list[str] = []  # GET messages/{root_id}/replies 요청 루트 id 순서대로
         # ---- 단계 2(설계 r4 §4): 멱등·결속·이력·장애 주입. 서버 대조 근거는 레인 REPORT.
         self.idem: dict[tuple[str, str, str], dict] = {}  # (cid, author, client_message_id) → 저장 시 payload 정규형 + message id
-        self.bound: dict[str, str] = {}  # 결속된 첨부 id → message id
+        # 첨부 메타(S/attachments/repo.ts bindInTx): id → {conversation_id, uploader_id, created_at, message_id, deleted}
+        self.attachments: dict[str, dict] = {}
+        self.attachment_ttl_s = ATTACHMENT_UNBOUND_TTL_S  # 미결속 유예(shared ATTACHMENT_UNBOUND_TTL_MS)
+        self.clock = time.time  # 첨부 created_at·유예 판정 시계(주입 가능)
+        # 참여자·비활성 사용자(S/messages/repo.ts MENTION_FILTER_SQL). 목록에 없는 대화는 DM 기본값.
+        self.members: dict[str, set[str]] = {DM_ID: {BOT_ID, OWNER_ID}, CHANNEL_ID: {BOT_ID, OWNER_ID, OTHER_ID}}
+        self.inactive_user_ids: set[str] = set()
+        self.hidden_message_ids: set[str] = set()  # 봇에게 안 보이는 메시지(참여 전 시작 스레드 등, S/bots/routes.ts §4-5)
         # 커밋(저장 또는 replay 판정) 뒤에 적용 — 연결 유실과 본문 파싱 실패는 별도 스위치.
         self.post_disconnect_after_commit = 0  # 다음 N회: 응답 없이 연결 끊기(ServerDisconnectedError)
-        self.post_body_fault_after_commit: list[str] = []  # "truncated"(잘린 JSON) | "invalid"(깨진 JSON), 상태 200/201 그대로
+        # "json_truncated"·"json_invalid" = 완전한 응답의 잘린/깨진 JSON(파싱 실패), 상태 200/201 그대로.
+        # "short_body" = Content-Length 보다 적게 보내고 연결 닫기(수신 단계 ClientPayloadError).
+        self.post_body_fault_after_commit: list[str] = []
         self.post_redirect_after_commit: list[int] = []  # 3xx 상태(Location = /me)
         self.history_status: list[int] = []  # 이력 GET 강제 상태(예: [401], [403])
         self.history_disconnect = 0  # 이력 GET 다음 N회 연결 끊기
         self.history_delay = 0.0  # 이력 GET 응답 전 실제 대기(초)
-        self.history_body_fault: list[str] = []  # 이력 GET "truncated" | "invalid"
+        self.history_body_fault: list[str] = []  # 이력 GET "json_truncated" | "json_invalid" | "short_body"
         self.history_calls = 0
         self.base = ""
         self._runner: Optional[web.AppRunner] = None
@@ -234,52 +259,111 @@ class FakeBotServer:
             headers = {"Retry-After": self.post_retry_after} if status == 429 else {}
             return web.json_response({"error": "forbidden" if status == 403 else "error"}, status=status,
                                      headers=headers)
+        cid = request.match_info["cid"]
+        # 루트 가시성(S/bots/routes.ts:190-208 threadRootGuard, :314) — rateGuard·replay 판정보다 먼저 404.
+        root = payload.get("thread_root_id")
+        if root is not None and not self._visible_in(cid, root):
+            self.posts.append({**payload, "_status": 404, "conversation_id": cid})
+            return web.json_response({"error": "not_found"}, status=404)
         ok_so_far = sum(1 for p in self.posts if p["_status"] == 200)
         if self.post_429 > 0 or (self.ok_posts_before_429 is not None and ok_so_far >= self.ok_posts_before_429):
             self.post_429 = max(0, self.post_429 - 1)
             self.posts.append({**payload, "_status": 429})
             return web.json_response({"error": "rate_limited"}, status=429, headers={"Retry-After": "1"})
-        return self._store_or_replay(request.match_info["cid"], payload)
+        resp = self._store_or_replay(cid, payload)
+        return await resp.send(request) if isinstance(resp, _ShortBody) else resp
+
+    def _first_conv(self, mid: str) -> Optional[str]:
+        return next((conv for _c, conv, m in self.changes if m.get("id") == mid), None)
+
+    def _visible_in(self, cid: str, mid: str) -> bool:
+        """봇 가시성: 이 대화에 저장된 메시지이고 숨김 목록에 없다(없음·숨김·다른 대화 모두 같은 404)."""
+        return self._first_conv(mid) == cid and mid not in self.hidden_message_ids
+
+    def _members(self, cid: str) -> set[str]:
+        return self.members.get(cid, {BOT_ID, OWNER_ID})
+
+    def _eligible(self, cid: str, author: str) -> set[str]:
+        """멘션 대상 자격(MENTION_FILTER_SQL): 활성 참여자이고 작성자 본인이 아님."""
+        return {u for u in self._members(cid) if u != author and u not in self.inactive_user_ids}
 
     @staticmethod
     def _norm(payload: dict) -> dict:
-        """멱등 비교 정규형: thread_root·첨부 ID 집합(소문자)·본문·멘션 집합."""
+        """멱등 비교 정규형: thread_root·첨부 ID 집합(소문자)·본문·멘션 요청 집합."""
         return {"thread_root_id": payload.get("thread_root_id"),
                 "attachment_ids": sorted({a.lower() for a in payload.get("attachment_ids") or []}),
                 "body": payload.get("body"), "mentions": sorted(set(payload.get("mention_user_ids") or []))}
 
+    @staticmethod
+    def _same_mentions(prior: dict, requested: list[str]) -> bool:
+        """S/messages/repo.ts:150-161 sameMentions: 저장 ⊆ 요청, 요청에만 있는 ID 중 생성 시점 자격자 없음."""
+        req = set(requested)
+        if not set(prior["stored_mentions"]) <= req:
+            return False
+        return not (req - set(prior["stored_mentions"])) & prior["eligible_at_create"]
+
+    def seed_attachment(self, *, conv: str = DM_ID, uploader: str = BOT_ID, age: float = 0.0,
+                        deleted: bool = False) -> str:
+        """HTTP 업로드를 거치지 않은 첨부 메타(다른 업로더·만료·삭제 경계 시험용)."""
+        aid = str(uuid.uuid4())
+        self.attachments[aid] = {"conversation_id": conv, "uploader_id": uploader,
+                                 "created_at": self.clock() - age, "message_id": None, "deleted": deleted}
+        return aid
+
+    def current_bound(self, aid: str) -> Optional[str]:
+        meta = self.attachments.get(aid.lower())
+        return None if meta is None else meta["message_id"]
+
+    def _bindable(self, cid: str, raw_ids: list[str]) -> bool:
+        """S/attachments/repo.ts:98-112 bindInTx: 중복 없음 + 모두 같은 대화·같은 업로더·미결속·미삭제·유예 안."""
+        ids = [a.lower() for a in raw_ids]
+        if len(set(ids)) != len(ids):
+            return False
+        not_before = self.clock() - self.attachment_ttl_s
+        return all((meta := self.attachments.get(a)) is not None and meta["conversation_id"] == cid
+                   and meta["uploader_id"] == BOT_ID and meta["message_id"] is None and not meta["deleted"]
+                   and meta["created_at"] > not_before for a in ids)
+
     def _store_or_replay(self, cid: str, payload: dict):
-        # 순서는 서버와 같다: (rateGuard = 위 강제 상태·429) → 키 조회·replay/충돌 → 첨부 결속 → 저장.
+        # 순서는 서버와 같다: (루트 가시성 404 → rateGuard = 위 강제 상태·429) → 키 조회·replay/충돌
+        # → 루트 유효성 → 멘션 필터 → 첨부 결속(실패면 롤백: 저장·키·결속 0) → 저장.
         scope, norm = (cid, BOT_ID, payload["client_message_id"]), self._norm(payload)
         prior = self.idem.get(scope)
         if prior is not None:
             msg = self.current(prior["id"])
             mutated = msg is not None and (msg["edited_at"] is not None or msg["deleted_at"] is not None)
             if msg is None or any(prior[k] != norm[k] for k in ("thread_root_id", "attachment_ids")) or (
-                    not mutated and any(prior[k] != norm[k] for k in ("body", "mentions"))):
+                    not mutated and (prior["body"] != norm["body"]
+                                     or not self._same_mentions(prior, norm["mentions"]))):
                 self.posts.append({**payload, "_status": 409, "conversation_id": cid})
                 return web.json_response({"error": "idempotency_conflict"}, status=409)
             # replay 는 새로 저장하지 않는다 — `_status` 200(= 새 저장) 집계에 들어가지 않게 따로 표시.
             self.posts.append({**payload, "_status": "replayed", "_http": 200, "conversation_id": cid})
             return self._committed({"message": msg, "seq": 1, "change_id": prior["change_id"],
                                     "mention_user_ids": list(msg.get("mention_user_ids") or [])}, 200)
-        if any(a in self.bound for a in norm["attachment_ids"]):
+        root = self.current(norm["thread_root_id"]) if norm["thread_root_id"] is not None else None
+        if root is not None and (root.get("thread_root_id") is not None or root.get("deleted_at") is not None):
+            self.posts.append({**payload, "_status": 400, "conversation_id": cid})  # repo.ts rootIsValid
+            return web.json_response({"error": "invalid_thread_root"}, status=400)
+        if not self._bindable(cid, list(payload.get("attachment_ids") or [])):
             self.posts.append({**payload, "_status": 400, "conversation_id": cid})
             return web.json_response({"error": "invalid_attachments"}, status=400)
+        eligible = self._eligible(cid, BOT_ID)
+        mentions = sorted(set(norm["mentions"]) & eligible)
         # `_status` 200 = 새로 저장(기존 테스트 집계 호환). 실제 HTTP 상태는 `_http`(201).
         self.posts.append({**payload, "_status": 200, "_http": 201, "conversation_id": cid})
         msg = make_message(author=BOT_ID, body=payload["body"], thread_root_id=payload.get("thread_root_id"),
-                           conv=cid, mentions=norm["mentions"])
+                           conv=cid, mentions=mentions)
         msg["client_message_id"] = payload["client_message_id"]
         change = self.add(msg, cid)
-        self.idem[scope] = {**norm, "id": msg["id"], "change_id": change}
+        self.idem[scope] = {**norm, "stored_mentions": mentions, "eligible_at_create": eligible,
+                            "id": msg["id"], "change_id": change}
         for aid in norm["attachment_ids"]:
-            self.bound[aid] = msg["id"]
-        return self._committed({"message": msg, "seq": 1, "change_id": change,
-                                "mention_user_ids": norm["mentions"]}, 201)
+            self.attachments[aid]["message_id"] = msg["id"]
+        return self._committed({"message": msg, "seq": 1, "change_id": change, "mention_user_ids": mentions}, 201)
 
     def _committed(self, body: dict, status: int):
-        """커밋 뒤 응답 — 장애 주입 스위치를 연결 유실 → 본문 파싱 실패 → 3xx 순으로 하나만 적용."""
+        """커밋 뒤 응답 — 장애 주입 스위치를 연결 유실 → 본문 이상 → 3xx 순으로 하나만 적용."""
         if self.post_disconnect_after_commit > 0:
             self.post_disconnect_after_commit -= 1
             raise _Disconnect()
@@ -292,7 +376,9 @@ class FakeBotServer:
     @staticmethod
     def _broken(kind: str, body: dict, status: int):
         raw = json.dumps(body).encode()
-        data = {"truncated": raw[: len(raw) // 2], "invalid": b'{"message": nope'}[kind]
+        if kind == "short_body":
+            return _ShortBody(raw, status)
+        data = {"json_truncated": raw[: len(raw) // 2], "json_invalid": b'{"message": nope'}[kind]
         return web.Response(body=data, status=status, content_type="application/json")
 
     async def history(self, request):
@@ -317,7 +403,8 @@ class FakeBotServer:
         roots = [m for conv, m in latest.values() if conv == cid and m.get("thread_root_id") is None]
         body = {"messages": roots[-limit:], "has_more": len(roots) > limit}
         if self.history_body_fault:
-            return self._broken(self.history_body_fault.pop(0), body, 200)
+            resp = self._broken(self.history_body_fault.pop(0), body, 200)
+            return await resp.send(request) if isinstance(resp, _ShortBody) else resp
         return web.json_response(body)
 
     async def upload(self, request):
@@ -334,6 +421,8 @@ class FakeBotServer:
             return web.json_response({"error": "error"}, status=status, headers=headers)
         aid = str(uuid.uuid4())
         self.uploads.append({**rec, "_status": 201, "attachment_id": aid})
+        self.attachments[aid] = {"conversation_id": rec["conversation_id"], "uploader_id": BOT_ID,
+                                 "created_at": self.clock(), "message_id": None, "deleted": False}
         return web.json_response({"attachment_id": aid, "attachment": {
             "id": aid, "mime": rec["content_type"], "byte_size": len(data), "expires_at": iso(0), "expired": False}},
             status=201)
@@ -349,9 +438,18 @@ class FakeBotServer:
 
     async def patch(self, request):
         self._log(request)
-        self.patches.append((request.match_info["mid"], await request.json()))
-        msg = make_message(author=BOT_ID, mid=request.match_info["mid"])
-        return web.json_response({"message": msg, "seq": 1, "change_id": self.add(msg), "mention_user_ids": []})
+        mid, payload = request.match_info["mid"], await request.json()
+        self.patches.append((mid, payload))
+        # S/messages/repo.ts:266 editIn: 기존 행의 본문·edited_at 만 갱신(id·client_message_id·대화 보존).
+        base, conv = self.current(mid), self._first_conv(mid)
+        if base is None or conv is None or mid in self.hidden_message_ids or base.get("deleted_at") is not None:
+            return web.json_response({"error": "not_found"}, status=404)
+        if base["author_id"] != BOT_ID:
+            return web.json_response({"error": "forbidden"}, status=403)
+        mentions = sorted(set(payload.get("mention_user_ids") or []) & self._eligible(conv, BOT_ID))
+        msg = {**base, "body": payload["body"], "edited_at": iso(self.clock()), "mention_user_ids": mentions}
+        change = self.add(msg, conv, op="edit")
+        return web.json_response({"message": msg, "seq": 1, "change_id": change, "mention_user_ids": mentions})
 
     async def replies(self, request):
         self._log(request)

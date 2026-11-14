@@ -11,10 +11,12 @@ import uuid
 import aiohttp
 import pytest
 
-from conftest import BOT_ID, DM_ID, TOKEN, make_message
+from conftest import BOT_ID, CHANNEL_ID, DM_ID, OTHER_ID, OWNER_ID, TOKEN, make_message
 
 API = "/api/bot/v1"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
+NOT_FOUND = {"error": "not_found"}
+INVALID_ATTACHMENTS = {"error": "invalid_attachments"}
 
 
 async def _post(server, payload: dict, *, cid: str = DM_ID, redirects: bool = False):
@@ -22,6 +24,27 @@ async def _post(server, payload: dict, *, cid: str = DM_ID, redirects: bool = Fa
         async with s.post(f"{server.base}{API}/conversations/{cid}/messages", json=payload,
                           allow_redirects=redirects) as resp:
             return resp.status, await resp.read()
+
+
+async def _upload(server, cid: str = DM_ID) -> str:
+    async with aiohttp.ClientSession(headers=AUTH) as s:
+        async with s.post(f"{server.base}{API}/attachments", params={"conversation_id": cid}, data=b"png",
+                          headers={"Content-Type": "image/png"}) as resp:
+            assert resp.status == 201
+            return (await resp.json())["attachment_id"]
+
+
+async def _patch(server, mid: str, body: str):
+    async with aiohttp.ClientSession(headers=AUTH) as s:
+        async with s.patch(f"{server.base}{API}/messages/{mid}", json={"body": body}) as resp:
+            return resp.status, await resp.read()
+
+
+def _seed_root(server, conv: str = DM_ID) -> str:
+    """봇에게 보이는 원문(루트) — 스레드 충돌·답글 시험용."""
+    root = make_message(body="root", conv=conv)
+    server.add(root, conv)
+    return root["id"]
 
 
 async def _history(server, limit=None, cid: str = DM_ID):
@@ -58,12 +81,80 @@ async def test_fake_replay_same_key_returns_original(server):
 async def test_fake_conflict_on_payload_change(server):
     key = str(uuid.uuid4())
     assert (await _post(server, _payload(key, "a")))[0] == 201
-    for changed in (_payload(key, "b"), _payload(key, "a", thread_root_id=str(uuid.uuid4())),
+    # 스레드 루트는 존재하고 봇에게 보이는 원문 — 없는 루트는 replay 판정 전에 404(아래 별도 시험).
+    for changed in (_payload(key, "b"), _payload(key, "a", thread_root_id=_seed_root(server)),
                     _payload(key, "a", attachment_ids=[str(uuid.uuid4())]),
-                    _payload(key, "a", mention_user_ids=[str(uuid.UUID(int=2))])):
+                    _payload(key, "a", mention_user_ids=[OWNER_ID])):  # OWNER = 생성 시점 활성 참여자
         st, body = await _post(server, changed)
         assert (st, json.loads(body)) == (409, {"error": "idempotency_conflict"}), changed
     assert len(_stored(server, key)) == 1
+
+
+async def test_fake_missing_or_hidden_root_is_404_before_replay(server):
+    key = str(uuid.uuid4())
+    assert (await _post(server, _payload(key, "a")))[0] == 201
+    hidden = _seed_root(server)
+    server.hidden_message_ids.add(hidden)
+    for root in (str(uuid.uuid4()), hidden):
+        # 새 키·기존 키(replay 후보) 모두 루트 가시성 404가 먼저.
+        for k in (str(uuid.uuid4()), key):
+            st, body = await _post(server, _payload(k, "a", thread_root_id=root))
+            assert (st, json.loads(body)) == (404, NOT_FOUND), (root, k)
+    assert len(_stored(server, key)) == 1
+    # 다른 대화의 원문도 이 대화에서는 안 보인다.
+    st, _ = await _post(server, _payload(str(uuid.uuid4()), thread_root_id=_seed_root(server, CHANNEL_ID)))
+    assert st == 404
+    st, _ = await _post(server, _payload(str(uuid.uuid4()), thread_root_id=_seed_root(server)))
+    assert st == 201
+
+
+async def test_fake_replay_after_patch_returns_edited_state(server):
+    key = str(uuid.uuid4())
+    _st, b1 = await _post(server, _payload(key, "a"))
+    mid = json.loads(b1)["message"]["id"]
+    st, body = await _patch(server, mid, "edited")
+    edited = json.loads(body)["message"]
+    assert st == 200 and (edited["id"], edited["client_message_id"], edited["body"]) == (mid, key, "edited")
+    assert edited["edited_at"] is not None
+    # 수정 뒤 replay: 본문 비교 생략 → 200 원 메시지의 현재(수정된) 상태.
+    st, body = await _post(server, _payload(key, "a"))
+    again = json.loads(body)["message"]
+    assert st == 200 and (again["id"], again["body"]) == (mid, "edited") and again["edited_at"] is not None
+    st, body = await _history(server)
+    page = json.loads(body)["messages"]
+    assert [(m["id"], m["client_message_id"], m["body"]) for m in page] == [(mid, key, "edited")]
+    assert (await _patch(server, str(uuid.uuid4()), "x"))[0] == 404
+
+
+async def test_fake_mentions_filter_self_nonmember_inactive(server):
+    stranger = str(uuid.UUID(int=999))
+    _st, b1 = await _post(server, _payload(str(uuid.uuid4()), mention_user_ids=[BOT_ID, OWNER_ID, stranger]))
+    assert json.loads(b1)["message"]["mention_user_ids"] == [OWNER_ID]
+    server.inactive_user_ids.add(OTHER_ID)
+    _st, b2 = await _post(server, _payload(str(uuid.uuid4()), mention_user_ids=[OTHER_ID, OWNER_ID]), cid=CHANNEL_ID)
+    assert json.loads(b2)["message"]["mention_user_ids"] == [OWNER_ID]
+    # 빈 멘션 저장 뒤: 자기 자신·비참여자만 더한 재요청은 replay, 생성 시점 활성 참여자를 더하면 409.
+    key = str(uuid.uuid4())
+    assert (await _post(server, _payload(key)))[0] == 201
+    for same in ([BOT_ID], [stranger], [BOT_ID, stranger]):
+        assert (await _post(server, _payload(key, mention_user_ids=same)))[0] == 200, same
+    assert (await _post(server, _payload(key, mention_user_ids=[OWNER_ID])))[0] == 409
+
+
+async def test_fake_attachment_must_be_own_fresh_upload_in_same_conversation(server):
+    other_conv = await _upload(server, CHANNEL_ID)
+    other_uploader = server.seed_attachment(conv=DM_ID, uploader=OWNER_ID)
+    expired = server.seed_attachment(conv=DM_ID, age=server.attachment_ttl_s + 1)
+    deleted = server.seed_attachment(conv=DM_ID, deleted=True)
+    fresh = await _upload(server)
+    for bad in ([str(uuid.uuid4())], [other_conv], [other_uploader], [expired], [deleted], [fresh, fresh]):
+        key = str(uuid.uuid4())
+        st, body = await _post(server, _payload(key, attachment_ids=bad))
+        assert (st, json.loads(body)) == (400, INVALID_ATTACHMENTS), bad
+        assert _stored(server, key) == [] and server.current_bound(fresh) is None  # 롤백: 메시지 0개·결속 0
+        # 롤백이라 같은 키는 아직 비어 있다 → 올바른 게시가 처음 저장(201).
+        assert (await _post(server, _payload(key)))[0] == 201
+    assert (await _post(server, _payload(str(uuid.uuid4()), attachment_ids=[fresh.upper()])))[0] == 201
 
 
 async def test_fake_replay_skips_body_check_after_delete(server):
@@ -75,10 +166,10 @@ async def test_fake_replay_skips_body_check_after_delete(server):
 
 
 async def test_fake_rebinding_attachment_is_400(server):
-    aid = str(uuid.uuid4())
+    aid = await _upload(server)  # 가짜 업로드가 반환한 ID로 시작
     assert (await _post(server, _payload(str(uuid.uuid4()), attachment_ids=[aid])))[0] == 201
     st, body = await _post(server, _payload(str(uuid.uuid4()), attachment_ids=[aid]))
-    assert (st, json.loads(body)) == (400, {"error": "invalid_attachments"})
+    assert (st, json.loads(body)) == (400, INVALID_ATTACHMENTS)
 
 
 async def test_fake_history_returns_key(server):
@@ -105,12 +196,17 @@ async def test_fake_post_faults_after_commit(server):
     with pytest.raises(aiohttp.ServerDisconnectedError):
         await _post(server, _payload(key))
     assert len(_stored(server, key)) == 1  # 커밋됨
-    server.post_body_fault_after_commit = ["truncated", "invalid"]
+    # 완전한 HTTP 응답에 잘린/깨진 JSON(본문 파싱 실패) — 수신 자체는 성공.
+    server.post_body_fault_after_commit = ["json_truncated", "json_invalid"]
     for _ in range(2):
         st, raw = await _post(server, _payload(key))
         assert st == 200
         with pytest.raises(ValueError):
             json.loads(raw)
+    # 선언 길이(Content-Length)보다 적게 보내고 연결 닫기 — 수신 단계의 ClientPayloadError(파싱 전).
+    server.post_body_fault_after_commit = ["short_body"]
+    with pytest.raises(aiohttp.ClientPayloadError):
+        await _post(server, _payload(key))
     server.post_redirect_after_commit = [302]
     st, _raw = await _post(server, _payload(key))
     assert st == 302
@@ -127,7 +223,7 @@ async def test_fake_history_faults(server):
     server.history_disconnect = 2
     with pytest.raises(aiohttp.ServerDisconnectedError):
         await _history(server)
-    server.history_body_fault = ["invalid"]
+    server.history_body_fault = ["json_invalid"]
     st, raw = await _history(server)
     assert st == 200
     with pytest.raises(ValueError):
