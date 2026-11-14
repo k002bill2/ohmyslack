@@ -2,6 +2,7 @@ import { ATTACHMENT_FILENAME_FALLBACK_STEM, type AttachmentView } from '../../..
 import { ATTACHMENT_COPY, documentDownloadName } from '../../../ui/copy.js';
 import { attachmentUrl } from './attachment-url.js';
 import { formatBytes } from './composer-upload.js';
+import { downloadLinkTarget, isStandaloneDisplay } from './download-link.js';
 import { documentKindLabel } from './file-kinds.js';
 import { FileName } from './FileName.js';
 
@@ -34,12 +35,14 @@ function DownloadIcon() {
  * CMP-32 DocumentAttachment — 메시지 안 문서·텍스트 행(UI_STATES §2-13, COPY_GAPS G-59–G-62).
  * 「받기」는 일반 `<a download>` 링크(서버 `Content-Disposition: attachment`) — JS fetch·blob 없음(UI-D5, B7).
  * 사람·봇 문서가 같은 DOM이다(UI-D9). 만료면 「받기」·크기 없이 자리표시자만.
+ * standalone(홈 화면 앱)에서 iOS가 직접 렌더하는 형식은 새 창으로 받는다 — 창 전체가 뷰어로 바뀌어 돌아올 수 없던 문제(QA iPhone r2 W1).
  */
 export function DocumentAttachment({ attachment }: { readonly attachment: AttachmentView }) {
   const filename = attachment.filename ?? ATTACHMENT_FILENAME_FALLBACK_STEM;
   const kind = documentKindLabel(attachment.mime) ?? '';
   const macros = attachment.has_macros === true;
   const size = formatBytes(attachment.byte_size);
+  const target = downloadLinkTarget(attachment.mime, isStandaloneDisplay());
   return (
     <div className={attachment.expired ? 'attachment doc-attachment doc-attachment-expired' : 'attachment doc-attachment'}>
       <FileTextIcon />
@@ -63,6 +66,7 @@ export function DocumentAttachment({ attachment }: { readonly attachment: Attach
           href={attachmentUrl(attachment.id)}
           // 값 없는 download: 저장 파일명은 서버 Content-Disposition 하나가 정한다(QA iPhone r2 W2).
           download=""
+          {...target}
           aria-label={documentDownloadName(filename, kind, size, macros)}
         >
           <DownloadIcon />
