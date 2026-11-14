@@ -49,6 +49,7 @@ SNAPSHOT_MAX_PAGES = 50
 BACKOFF_START, BACKOFF_CAP = 2.0, 60.0
 BACKLOG_NOTICE = "오프라인 동안 받은 {n}건은 처리하지 않았습니다"
 ATTACHMENT_FALLBACK = "(첨부 전송은 아직 지원하지 않습니다)"
+ATTACHMENT_READ_UNAVAILABLE = "첨부 파일을 읽을 수 없습니다. 잠시 후 다시 시도해 주세요."  # 읽기 슬롯 없음
 # 허용목록(shared/attachments.ts ATTACHMENT_MIMES, ADR-001 §3-g): 확장자 → MIME. 서버가 매직 바이트로 다시 판정한다.
 VOICE_TYPES = {".mp3": "audio/mpeg"}
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
@@ -141,8 +142,8 @@ async def _read_off_loop(path: Any, allowed: dict[str, str], declared_mime: Opti
     기본 executor(`asyncio.to_thread`)를 쓰지 않는다: `asyncio.run` 종료가 executor 스레드를 기한 없이 join하므로
     멈춘 파일 시스템 읽기가 Hermes cron 반환을 붙잡는다. daemon 스레드는 join 대상이 아니다 — 멈춘 스레드는 남지만
     프로세스 전체 `_READ_SLOTS`(READ_SLOTS개) 비차단 획득으로 상한이 있다(설계 r4 §Q2 S1). 슬롯이 없으면 스레드를
-    만들지 않고 `read_unavailable`. 소유권: `start()` 전 = 호출자(실패하면 여기서 반환), 뒤 = worker(`run` 전체
-    `finally`에서 정확히 한 번 반환) — 호출자가 기다리기를 포기(취소·timeout)해도 반환하지 않고 결과만 버려진다.
+    만들지 않고 `read_unavailable`. 소유권: `start()` 전 = 호출자(실패하면 여기서 반환), 뒤 = worker(읽기 완료·예외 직후
+    `finally`에서 정확히 한 번 반환한 뒤에만 루프에 통지) — 호출자가 기다리기를 포기(취소·timeout)해도 반환하지 않고 결과만 버려진다.
     """
     slots = _READ_SLOTS  # 획득한 객체를 그대로 반환한다(호출 시점의 모듈 전역)
     if not slots.acquire(blocking=False):
@@ -156,19 +157,21 @@ async def _read_off_loop(path: Any, allowed: dict[str, str], declared_mime: Opti
             fut.set_result(result)
 
     def run() -> None:
+        # 순서: 실제 읽기 완료/예외 → 슬롯 반환(정확히 1회) → 루프 통지. 통지를 먼저 하면 결과를 받은 호출자의
+        # 다음 읽기가 아직 반환 전인 슬롯 때문에 `read_unavailable`이 된다(Codex 단계 4·5 1차 P2).
         try:
             try:
                 result = read_attachment_file(path, allowed, declared_mime)
             except Exception:  # 예상 밖 예외에도 future가 영원히 미결로 남지 않게
                 result = (None, "rejected")
-            if loop.is_closed():
-                return
-            try:
-                loop.call_soon_threadsafe(deliver, result)
-            except RuntimeError:  # is_closed 확인 뒤 닫힌 경쟁
-                pass
         finally:
             slots.release()
+        if loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(deliver, result)
+        except RuntimeError:  # is_closed 확인 뒤 닫힌 경쟁
+            pass
 
     try:
         threading.Thread(target=run, name="ohmyslack-attachment-read", daemon=True).start()
@@ -754,10 +757,11 @@ class OhmySlackAdapter(BasePlatformAdapter):
 
     async def _attachment_fallback(self, method: str, chat_id: str, caption: Optional[str],
                                    reply_to: Optional[str], metadata: Optional[dict], *,
-                                   reason: str = "is not supported yet") -> SendResult:
-        # 경로·캡션·토큰은 로그에 남기지 않는다(reason은 고정 문구만).
+                                   reason: str = "is not supported yet",
+                                   notice: str = ATTACHMENT_FALLBACK) -> SendResult:
+        # 경로·캡션·토큰은 로그에 남기지 않는다(reason·notice는 고정 문구만).
         logger.warning("ohmyslack: %s %s; sending text fallback", method, reason)
-        text = f"{caption}\n{ATTACHMENT_FALLBACK}" if caption else ATTACHMENT_FALLBACK
+        text = f"{caption}\n{notice}" if caption else notice
         return await self.send(chat_id, text, reply_to=reply_to, metadata=metadata)
 
     async def _send_attachment(self, method: str, allowed: dict[str, str], chat_id: str, path: Any,
@@ -775,9 +779,12 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return refused  # 업로드 전에 막는다(대체 텍스트도 채널 최상위가 되므로 보내지 않음)
         loaded, read_reason = await _read_off_loop(path, allowed, declared_mime)
         if loaded is None:
-            reason = ("file read unavailable (reader busy)" if read_reason == "read_unavailable"
-                      else "file rejected (type, size or not a regular file)")
-            return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata, reason=reason)
+            if read_reason == "read_unavailable":  # 사용자에게도 사유를 알린다(미지원 문구 아님, 설계 r4 §Q2 규칙5)
+                return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata,
+                                                       reason="file read unavailable (reader busy)",
+                                                       notice=ATTACHMENT_READ_UNAVAILABLE)
+            return await self._attachment_fallback(method, chat_id, caption, reply_to, metadata,
+                                                   reason="file rejected (type, size or not a regular file)")
         data, mime, name = loaded
         try:
             uploaded = await self._client.upload_attachment(str(chat_id), data, mime)
