@@ -43,7 +43,7 @@ describe('W1 standalone에서 iOS 직접 렌더 형식 「받기」는 새 창',
     ['text/plain', 'a.txt'],
     ['text/markdown', 'a.md'],
     ['text/csv', 'a.csv'],
-  ])('standalone + %s → target=_blank rel=noopener', (mime, filename) => {
+  ] as const)('standalone + %s → target=_blank rel=noopener', (mime, filename) => {
     stubStandalone(true);
     const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
     expect(link(container).getAttribute('target')).toBe('_blank');
@@ -61,7 +61,7 @@ describe('W1 standalone에서 iOS 직접 렌더 형식 「받기」는 새 창',
     ['비standalone + PDF', false, 'application/pdf', 'a.pdf'],
     ['standalone + docx', true, DOCX, 'a.docx'],
     ['standalone + hwp', true, 'application/x-hwp', 'a.hwp'],
-  ])('%s → 기존 속성 그대로(target·rel 없음)', (_n, on, mime, filename) => {
+  ] as const)('%s → 기존 속성 그대로(target·rel 없음)', (_n, on, mime, filename) => {
     stubStandalone(on);
     const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
     expect(link(container).hasAttribute('target')).toBe(false);
