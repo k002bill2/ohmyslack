@@ -125,4 +125,14 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 | 4 | `sandbox-exec -p '(version 1)(allow default)' /usr/bin/true; echo EXIT=$?` (사람 터미널과 Orca 안 각각) | `EXIT=0`. 폐기된 `-n no-network` 는 이 OS 에서 `Killed: 9`(137)라 쓰지 않습니다 |
 | 5 | 별도 명령 없음 — 0행의 임의 포트 X 결과 | X 연결이 sandbox 거부로 PASS. 8787·8788 은 연결하지 않고, 같은 목록에서 생성된 거부 줄 존재만 `grep -n 'localhost:87' .isolation/profile.sb` 로 확인 |
 
+#### (나)-0 에서 import 가 막힐 때 — 진단 (사람 실행)
+
+`ModuleNotFoundError`·`PermissionError` 로 0행이 실패하면 사람 터미널에서 거부 로그를 봅니다.
+
+```
+log show --last 5m --style compact --predicate 'sender == "Sandbox" AND eventMessage CONTAINS "deny"' | grep -i python | tail -30
+```
+
+거부된 경로가 `@HERMES_SRC@`(= `~/.hermes/hermes-agent`) 최상위 `*.py` 이면, 프로필 `scripts/pytest.sb` 에 `(allow file-read* (literal "<그 파일 경로>"))` 를 **한 줄씩만** 추가합니다(N-12). `subpath` 로 넓히지 않습니다. 루트 디렉터리 자체의 목록 읽기(`literal "@HERMES_SRC@"`)는 이미 허용되어 있습니다 — FileFinder 의 `os.listdir` 용이며 하위 파일 내용은 열리지 않습니다.
+
 추가 사람 확인: 인터프리터 base 의 `sitecustomize`·`.pth`(H-4). 프로필이 mach*·ipc*·iokit*·sysctl-write·user-preference* 를 다시 거부하므로 0행·`--run` 이 이 이름들에서 막히면 거부 로그로 필요한 이름만 한 줄씩 재허용합니다(N-22).
