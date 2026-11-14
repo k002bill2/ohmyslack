@@ -64,12 +64,12 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
   - 파일 검사·읽기는 daemon 스레드 1개에서 한 번만 합니다(`O_NOFOLLOW` open → `fstat`으로 사유 판정, 이벤트 루프 스레드의 파일 시스템 호출 없음). 멈춘 파일 시스템 읽기가 있어도 Hermes `asyncio.run` 종료가 그 스레드를 기다리지 않습니다
   - 지원 밖 형식(문서·영상 등)·없는 파일·상한 초과·업로드 실패·4개 초과(지원 형식 앞 4개만 시도)·시간 예산 초과는 업로드하지 않고 파일마다 `warnings`에 `"<파일명>: <사유>"` 한 줄(`unsupported_type`·`not_found`·`too_large`·`rejected`·`upload_failed`·`too_many`·`budget_exceeded`)을 싣습니다. 텍스트는 그대로 보냅니다
   - 시간: 전송 전체(`/me`·파일 읽기·업로드·청크 게시와 재시도)는 시작부터 **25초**(`STANDALONE_TOTAL_DEADLINE_S`) 안에서만 하고, 업로드는 15초(`STANDALONE_UPLOAD_BUDGET_S`)와 "남은 시간 − 텍스트 몫 8초"(`STANDALONE_TEXT_RESERVE_S`) 중 작은 값만 씁니다. 남은 시간보다 긴 재시도 대기(429 `Retry-After` 등)는 기다리지 않습니다. 25초는 Hermes 폴백 분기(실행 중인 루프 안에서 불릴 때 30초)보다 짧게 잡은 값입니다. **Hermes `cron.standalone_send_timeout_seconds`가 기본 60초라고 가정합니다** — 25초 밑으로 낮추면 Hermes 취소가 먼저 와서 아래 보고가 사라집니다
-  - 결과 규칙: 청크를 하나도 못 올리면 `send_error`(모인 첨부 사유 포함, `deadline_exceeded`·`HTTP <status>` 등)입니다. 아무것도 나가지 않았으므로 Hermes 재전달 큐가 안전합니다. 청크 k개(≥ 1)를 올린 뒤 실패하거나 deadline이 지나면 `success: True` + `warnings`의 `text: partial_delivery <k>/<n>`입니다. 오류로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가 중복되므로, **중복 대신 보이는 꼬리 유실**을 택합니다(첫 청크에 첨부가 결속되므로 첨부는 전달됨). Hermes cron은 `warnings`를 전달 오류(`delivery warning: …`)로 올립니다
+  - 결과 규칙: 청크를 하나도 못 올리면 `send_error`(모인 첨부 사유 포함, `deadline_exceeded`·`HTTP <status>` 등)입니다. 아무것도 나가지 않았으므로 Hermes 재전달 큐가 안전합니다. 청크 k개(≥ 1)를 올린 뒤 실패하거나 deadline이 지나면 `success: True` + `warnings`의 `text: partial_delivery <k>/<n>`입니다. 오류로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가 중복되므로, **중복 대신 보이는 꼬리 유실**을 택합니다(첫 청크에 첨부가 결속되므로 첨부는 전달됨). Hermes cron은 `warnings`를 전달 오류(`delivery warning: …`)로 올립니다. 첫 게시가 확정 거부(4xx)로 끝나면 아무것도 저장되지 않아 Hermes 재전달이 안전합니다. 응답이 끊겨 저장 여부를 모르면 플러그인은 같은 키로 다시 보내고, 그래도 모르면 봇 이력에서 키를 찾아 확인합니다. **확인까지 실패하면 `delivery_unknown` 오류를 돌려주며, 이때 Hermes 재전달로 같은 메시지가 한 번 더 올라갈 수 있습니다. 이 위험은 해결되지 않았고 수용된 것입니다(2026-11-14).** `media_delivered: True`는 첨부가 모두 업로드되고(파일 경고 0) 첫 청크가 확인됐을 때만 붙고, 뒤 청크의 텍스트 경고와는 무관합니다
   - 남은 위험(플러그인만으로는 못 막음, Hermes 본체 변경 제안은 별건):
     - A-1: Hermes 바깥 상한을 25초 밑으로 설정하면 어댑터 deadline보다 먼저 취소됩니다. 이때 warnings·부분 보고가 사라지고, 부분 게시 상태면 재전달 큐 중복이 생길 수 있습니다
     - A-2: 재전달 큐는 부분 게시를 모릅니다. 정상 반환은 위 규칙으로 피하지만, 취소 경로(바깥 타임아웃·프로세스 종료)에서는 보고할 기회가 없습니다
     - A-3: 결정적 멱등 키를 만들 수 없습니다. Hermes가 실행 단위 ID를 넘기지 않아, 원문 해시 키는 같은 문구를 반복하는 cron을 조용히 삼킵니다. 멱등 범위는 "게시 호출 1회 안의 재시도"뿐입니다
-    - A-4: 멈춘 파일 시스템 읽기 스레드 자체는 죽일 수 없습니다(호출당 최대 4개, fd 1개씩 점유하는 상한 있는 누수)
+    - A-4: 멈춘 파일 시스템 읽기 스레드 자체는 죽일 수 없습니다. 멈춘 파일 읽기 스레드는 프로세스 전체에서 최대 4개입니다(fd 1개씩 점유하는 상한 있는 누수). 슬롯이 다 차 있으면 그 파일은 읽지 않고 standalone은 `"<파일명>: read_unavailable"` 경고, 라이브 첨부는 텍스트 대체로 보냅니다
   - `thread_id`·`force_document`는 쓰지 않습니다. 대상이 DM이 아니면 업로드도 하지 않고 거부합니다
 
 ## Hermes 확인 항목 (ADR REPORT §8 3–6)
