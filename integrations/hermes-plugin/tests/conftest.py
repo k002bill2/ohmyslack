@@ -23,7 +23,7 @@ import types
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import pytest
 from aiohttp import web
@@ -165,6 +165,8 @@ class FakeBotServer:
         self.history_delay = 0.0  # 이력 GET 응답 전 실제 대기(초)
         self.history_body_fault: list[str] = []  # 이력 GET "json_truncated" | "json_invalid" | "short_body"
         self.history_calls = 0
+        # 이력 응답 끝에 덧붙일 항목을 만드는 함수(실제 서버는 원문만 내지만, 클라이언트 쪽 작성자·최상위 조건 방어 검사용)
+        self.history_extra: Optional[Callable[[], list[dict]]] = None
         self.base = ""
         self._runner: Optional[web.AppRunner] = None
 
@@ -419,6 +421,8 @@ class FakeBotServer:
         for _c, conv, m in self.changes:
             latest[m["id"]] = (latest[m["id"]][0] if m["id"] in latest else conv, m)
         roots = [m for conv, m in latest.values() if conv == cid and m.get("thread_root_id") is None]
+        if self.history_extra is not None:
+            roots = [*roots, *self.history_extra()]
         body = {"messages": roots[-limit:], "has_more": len(roots) > limit}
         if self.history_body_fault:
             resp = self._broken(self.history_body_fault.pop(0), body, 200)
