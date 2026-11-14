@@ -136,8 +136,11 @@ export function createAttachmentDraftStore(): AttachmentDraftStore {
     const options: UploadOptions =
       kind === 'document' ? { filename: file.name, type: DOCUMENT_DECLARED_TYPE, signal: controller.signal } : { signal: controller.signal };
     const settle = (next: Partial<ComposerChip>) => {
-      if (entry.controllers.get(key) === controller) entry.controllers.delete(key);
-      patch(entry, key, next);
+      // 현재 컨트롤러가 아니면(abort됐거나 새 요청으로 바뀜) 칩을 건드리지 않는다 — 대기열만 이어 돌려 슬롯이 막히지 않게 한다.
+      if (entry.controllers.get(key) === controller) {
+        entry.controllers.delete(key);
+        patch(entry, key, next);
+      }
       pump(entry);
     };
     upload(file, options).then(
@@ -199,6 +202,7 @@ export function createAttachmentDraftStore(): AttachmentDraftStore {
       const entry = entries.get(key);
       const chip = entry?.chips.find((c) => c.key === chipKey);
       if (entry === undefined || chip === undefined) return;
+      if (chip.status !== 'failed' || chip.retryable === false) return;
       entry.upload = upload;
       start(entry, chipKey, chip.file, chip.kind);
     },
