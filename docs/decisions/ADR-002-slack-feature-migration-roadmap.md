@@ -23,7 +23,7 @@
 - 브리핑은 「메시지 도착」이 아니라 **「mp3 첨부 도착」**으로 기록한다(음성 포함 작업에 한함).
 - 매일 게이트웨이 로그에서 `morning-ai-brief`의 ohmyslack 전달 경로를 기록한다: `via live adapter`(정상) / `falling back to standalone`(**음성 유실 위험** — 아래 사실 참조).
 - standalone 낙하로 음성이 빠진 날은 ①·② **실패**로 처리한다(D-1 ★).
-- 사실(코드, L1): `integrations/hermes-plugin/ohmyslack/adapter.py:582-606`의 `standalone_send`는 첨부를 쓰지 않고 `success: True`를 반환하며 `warnings`를 싣지 않는다. Hermes는 standalone 결과의 `warnings`만 오류로 올린다(`~/.hermes/hermes-agent/cron/scheduler_delivery.py:1637-1642`) → 유실이 로그에 남지 않는다. 낙하 자체는 `falling back to standalone` 경고로 남는다(`:1156,1323`).
+- 사실(코드, L1): `integrations/hermes-plugin/ohmyslack/adapter.py:582-606`의 `standalone_send`는 첨부를 쓰지 않고 `success: True`를 반환하며 `warnings`를 싣지 않는다. Hermes는 standalone 결과의 `warnings`만 오류로 올린다(`~/.hermes/hermes-agent/cron/scheduler_delivery.py:1637-1642`) → 유실이 로그에 남지 않는다. 낙하 자체는 `falling back to standalone` 경고로 남는다(`:1156,1323`). — 1a에서 해소(미배포, 브랜치 `k002bill2/p2s1-standalone-attach` `ec55851`, 2026-11-13).
 - 1일째(11-10) 기록(L1, Jarvis 로그 확인): `morning-ai-brief` 08:09:48 `delivered to ohmyslack:… via live adapter` — standalone 낙하 없음. mp3 첨부 포함 여부는 이 로그로는 미확인.
 
 ### 2-3. ⑤ 승인 왕복 증거 (C-2 ★)
@@ -38,12 +38,12 @@
 ## 3. 단계 계획 (게이트 통과 후)
 
 ### 1단계 — 전환 판정 + G1 통과 직후 (계약 축: 첨부 TRD §6-1)
-| # | 항목 | FR | 규모(추정) | 비고 |
-|---|---|---|---|---|
-| 1a | **standalone 첨부 처리** — 대체 경로에서도 첨부 업로드, 실패 시 `warnings` 반환 | (FR-BOT-05 보강) | S | 어댑터 단독, 서버 계약 변경 없음. 가장 먼저 |
-| 1b | **문서 첨부(§4)** — 서버 허용목록·판정·다운로드 + 어댑터 `send_document` + 웹 표시 | FR-OPS-09(P1→채택) | M–L | D-2 필수. 한글·Office 판정 때문에 L 가능 |
-| 1c | **기기 세션 화면·원격 종료** | FR-AUTH-04 | S | 기존 `GET /api/sessions` 재사용. 기기 표시는 거친 라벨만(C-4 ★) |
-| 1d | **정합 수정 묶음** — 알림 제목 코드명 → manifest 이름(C-6 ★), TM-BOT-06 문서 정정 | — | S | 푸시 `Topic` HMAC(C-5 ★)은 푸시 경로라 2단계로 이동(계약 축 1개 원칙) |
+| # | 항목 | FR | 규모(추정) | 비고 | 진행 상태(2026-11-13) |
+|---|---|---|---|---|---|
+| 1a | **standalone 첨부 처리** — 대체 경로에서도 첨부 업로드, 실패 시 `warnings` 반환 | (FR-BOT-05 보강) | S | 어댑터 단독, 서버 계약 변경 없음. 가장 먼저 | 구현 완료·미배포·Codex 리뷰 중(`k002bill2/p2s1-standalone-attach`) |
+| 1b | **문서 첨부(§4)** — 서버 허용목록·판정·다운로드 + 어댑터 `send_document` + 웹 표시 | FR-OPS-09(P1→채택) | M–L | D-2 필수. 한글·Office 판정 때문에 L 가능 | 계약(TRD §6-1-1)·화면 명세(UI_STATES §2-13) 완료(2026-11-13), 구현 미착수 |
+| 1c | **기기 세션 화면·원격 종료** | FR-AUTH-04 | S | 기존 `GET /api/sessions` 재사용. 기기 표시는 거친 라벨만(C-4 ★) | 화면 명세(UI_STATES §2-14) 완료, 계약 TRD §5-3(p2s1-canon-align), 구현 미착수 |
+| 1d | **정합 수정 묶음** — 알림 제목 코드명 → manifest 이름(C-6 ★), TM-BOT-06 문서 정정 | — | S | 푸시 `Topic` HMAC(C-5 ★)은 푸시 경로라 2단계로 이동(계약 축 1개 원칙) | 미착수 |
 
 ### 2단계 — 1단계 안정 후 (계약 축: WS frame / 푸시)
 - Jarvis **처리 중 표시**(FR-OPS-07 중 봇 처리만): 봇 WS 상향 ephemeral frame, DB·sync 미사용(GPT-Luna·Claude-Opus X5). 사람 presence 제외.
@@ -87,6 +87,7 @@ PDF, PowerPoint, Excel, Word, 한글을 Jarvis ↔ 영환님 사이에서 주고
 3. **방향 — 양방향.** 봇→사람(`send_document`) + 사람→봇(웹 업로드 → 어댑터 인바운드 문서 → Hermes 세션). Claude-Fable C-8(봇→사람만)은 채택하지 않음.
 4. **크기 상한 — 적용.** 문서 전용 상한 **25 MiB/파일**(★안 수치, 정본 TRD §6-1에서 상수로 확정). 이미지·음성 10 MiB는 유지. 업로드 라우트 body 상한·봇 리스너 상한도 같은 값으로 맞춘다. PostgreSQL `attachment_blobs` 저장이라 백업·복원 드릴(FR-OPS-02) 시간 영향을 1b 레인에서 측정한다.
 5. **보존 — 90일.** 경과 시 바이트 삭제, 메타데이터는 「만료된 첨부」 자리표시자로 유지(FR-OPS-05 ⑤와 같은 규칙). 메시지 삭제 시 즉시 바이트 삭제.
+- (Q12 추가 ★, Jarvis 2026-11-13) 텍스트 계열 `.txt`·`.md`·`.csv`도 받는다 — 영환님 D-2 「등」 범위 해석, 사후 조정 가능. 위 1–5 결정은 그대로 적용하며 계약은 TRD §6-1-1 R3.6.
 
 ### 4-4. 확인 필요
 - iPhone 홈 화면 PWA에서 `Content-Disposition: attachment` 응답의 저장·「파일」 앱 열기 동작(실기).

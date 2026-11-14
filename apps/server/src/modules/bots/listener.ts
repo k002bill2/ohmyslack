@@ -11,7 +11,7 @@ import type { MessagesService } from '../messages/service.js';
 import type { OpsLogger } from '../ops/logger.js';
 import type { SyncService } from '../sync/service.js';
 import { createBotRateLimiter, type BotRateLimiter } from './rate-limit.js';
-import { registerBotRoutes } from './routes.js';
+import { registerBotRoutes, type BotUploadProbe } from './routes.js';
 import type { BotService } from './service.js';
 import { registerBotRealtime, type BotRealtimeDeps } from './ws.js';
 
@@ -33,6 +33,8 @@ export interface BotAppOptions {
   readonly port?: number;
   /** 있으면 봇 WS(`/api/bot/v1/ws`)를 등록한다. 메인 앱과 같은 이벤트 인스턴스여야 한다. */
   readonly realtime?: BotRealtimeDeps;
+  /** 테스트 전용 업로드 단계 신호(운영 주입 없음). */
+  readonly uploadProbe?: BotUploadProbe;
 }
 
 declare module 'fastify' {
@@ -107,6 +109,7 @@ export function buildBotApp(options: BotAppOptions): FastifyInstance {
     limiter: options.limiter ?? createBotRateLimiter(clock),
     clock,
     ...(options.attachments === undefined ? {} : { attachments: options.attachments }),
+    ...(options.uploadProbe === undefined ? {} : { uploadProbe: options.uploadProbe }),
   });
   if (options.realtime !== undefined) {
     registerBotRealtime(app, { bots: options.bots, conversations: options.conversations, clock, realtime: options.realtime });

@@ -10,6 +10,8 @@ export type Route =
   | { readonly kind: 'invite' }
   /** `/settings/members` — 다음 레인(W-10h) 자리. 이 레인은 경로만 해석한다. */
   | { readonly kind: 'members' }
+  /** `/settings/sessions` — CMP-22 로그인한 기기(W-30, UI_STATES §2-14). */
+  | { readonly kind: 'sessions' }
   /** compact 화면 `/discover`(CMP-23), medium·wide는 Dialog(UI_STATES §3-2). */
   | { readonly kind: 'discover' }
   /** compact 화면 `/dm/new`(CMP-24), medium·wide는 Dialog. */
@@ -20,6 +22,7 @@ const FIXED: Readonly<Record<string, Route>> = Object.freeze({
   '/login': { kind: 'login' },
   '/invite': { kind: 'invite' },
   '/settings/members': { kind: 'members' },
+  '/settings/sessions': { kind: 'sessions' },
   '/discover': { kind: 'discover' },
   '/dm/new': { kind: 'dm-new' },
 });
@@ -53,6 +56,8 @@ export function formatRoute(route: Route): string {
       return '/invite';
     case 'members':
       return '/settings/members';
+    case 'sessions':
+      return '/settings/sessions';
     case 'discover':
       return '/discover';
     case 'dm-new':

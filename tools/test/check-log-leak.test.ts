@@ -31,6 +31,17 @@ describe('check-log-leak', () => {
     expect(LOG_CANARIES.push_endpoint).not.toMatch(/push\.apple\.com|googleapis|mozilla/);
   });
 
+  it('includes the attachment filename canary (W-26, TRD §6-1-1)', () => {
+    expect(Object.keys(LOG_CANARIES)).toEqual(expect.arrayContaining(['filename']));
+  });
+
+  it('fails (1) when an attachment filename leaks into a log line', async () => {
+    const root = reportsRoot({ 'att.log': `{"event":"probe","x-attachment-filename":"${LOG_CANARIES.filename}.docx"}\n` });
+    const ctx = captureCtx(root, {});
+    expect(await run([], ctx)).toBe(1);
+    expect(ctx.lines.join('\n')).toContain('filename 카나리아');
+  });
+
   it('fails (1) when a full push endpoint URL leaks into a log line', async () => {
     const root = reportsRoot({ 'push.log': `{"event":"push_send_result","endpoint":"https://web.push.apple.com/${LOG_CANARIES.push_endpoint}"}\n` });
     const ctx = captureCtx(root, {});

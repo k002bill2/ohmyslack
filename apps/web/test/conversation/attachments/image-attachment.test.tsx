@@ -123,7 +123,7 @@ describe('반응형: 390 폭 가로 넘침 0(CSS 단언)', () => {
   });
   it('썸네일은 height auto(비율 유지), 칩 파일명은 말줄임', () => {
     expect(rule('.attachment-thumb')).toMatch(/height:\s*auto/);
-    expect(rule('.composer-chip-name')).toMatch(/text-overflow:\s*ellipsis/);
+    expect(rule('.composer-chip-name-stem')).toMatch(/text-overflow:\s*ellipsis/);
   });
   /** `var(--x)`를 같은 규칙 묶음의 선언값으로 푼다(수치는 attachments.css 한 곳). */
   const resolveVar = (body: string, value: string) => value.replace(/var\((--[\w-]+)\)/g, (_, name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(body)?.[1]?.trim() ?? '?');

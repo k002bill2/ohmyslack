@@ -1,12 +1,16 @@
+import type { AttachmentAnyMime } from '../../shared.js';
 /** 메시지 저장소 경계. 운영은 `repo.ts`(pg 단일 트랜잭션), 단위 테스트는 가짜 구현을 쓴다. */
 /** 메시지 projection의 첨부 메타(TRD §4). 바이트는 attachments 모듈만 다룬다(B10). */
 export interface MessageAttachment {
   readonly id: string;
-  readonly mime: 'audio/mpeg' | 'image/png' | 'image/jpeg' | 'image/webp';
+  readonly mime: AttachmentAnyMime;
   readonly byteSize: number;
   readonly durationMs: number | null;
   readonly width: number | null;
   readonly height: number | null;
+  /** 문서·텍스트의 정규화 파일명(미디어 null, TRD §6-1-1 (5)). */
+  readonly filename: string | null;
+  readonly hasMacros: boolean;
   readonly expiresAt: Date;
   /** 바이트 삭제됨(`deleted_at` 존재 또는 `expires_at` 경과). */
   readonly expired: boolean;

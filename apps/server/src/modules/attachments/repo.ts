@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { withTransaction } from '../../db/pool.js';
-import type { AttachmentMime } from '../../shared.js';
+import type { AttachmentAnyMime } from '../../shared.js';
 
 /**
  * 첨부 저장소(pg, 정본: TRD §2 `attachments`·`attachment_blobs`, §6-1). 첨부 바이트를 읽고 쓰는 SQL은 이 파일에만 있다(B10).
@@ -14,11 +14,14 @@ export interface AttachmentMeta {
   readonly conversationId: string;
   readonly uploaderId: string;
   readonly messageId: string | null;
-  readonly mime: AttachmentMime;
+  readonly mime: AttachmentAnyMime;
   readonly byteSize: number;
   readonly durationMs: number | null;
   readonly width: number | null;
   readonly height: number | null;
+  /** 문서·텍스트의 정규화 파일명(미디어 null). */
+  readonly filename: string | null;
+  readonly hasMacros: boolean;
   readonly createdAt: Date;
   readonly expiresAt: Date;
   readonly deletedAt: Date | null;
@@ -34,17 +37,19 @@ interface MetaRow {
   conversation_id: string;
   uploader_id: string;
   message_id: string | null;
-  mime: AttachmentMime;
+  mime: AttachmentAnyMime;
   byte_size: number;
   duration_ms: number | null;
   width: number | null;
   height: number | null;
+  filename: string | null;
+  has_macros: boolean;
   created_at: Date;
   expires_at: Date;
   deleted_at: Date | null;
 }
 
-const META_COLUMNS = 'id, conversation_id, uploader_id, message_id, mime, byte_size, duration_ms, width, height, created_at, expires_at, deleted_at';
+const META_COLUMNS = 'id, conversation_id, uploader_id, message_id, mime, byte_size, duration_ms, width, height, filename, has_macros, created_at, expires_at, deleted_at';
 
 function toMeta(r: MetaRow): AttachmentMeta {
   return {
@@ -57,6 +62,8 @@ function toMeta(r: MetaRow): AttachmentMeta {
     durationMs: r.duration_ms,
     width: r.width,
     height: r.height,
+    filename: r.filename,
+    hasMacros: r.has_macros,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     deletedAt: r.deleted_at,
@@ -64,21 +71,23 @@ function toMeta(r: MetaRow): AttachmentMeta {
 }
 
 /**
- * 메시지 projection의 첨부 열(TRD §4). `expired` = 바이트 삭제됨(`deleted_at`) 또는 보존 기한 경과. bytea는 읽지 않는다.
+ * 메시지 projection의 첨부 열(TRD §4). 순서 = 결속 요청 순서, 0007 이전 결속 행(NULL)은 뒤에 created_at, id 순(TRD R3.7). `expired` = 바이트 삭제됨(`deleted_at`) 또는 보존 기한 경과. bytea는 읽지 않는다.
  * `m`은 messages 별칭이다(messages repo의 MESSAGE_COLUMNS에 끼워 쓴다).
  */
 export const ATTACHMENTS_PROJECTION_SQL = `COALESCE((SELECT json_agg(json_build_object(
     'id', a.id, 'mime', a.mime, 'byte_size', a.byte_size, 'duration_ms', a.duration_ms, 'width', a.width, 'height', a.height,
-    'expires_at', a.expires_at, 'expired', (a.deleted_at IS NOT NULL OR a.expires_at <= now())) ORDER BY a.created_at, a.id)
+    'filename', a.filename, 'has_macros', a.has_macros, 'expires_at', a.expires_at, 'expired', (a.deleted_at IS NOT NULL OR a.expires_at <= now())) ORDER BY a.bind_order NULLS LAST, a.created_at, a.id)
   FROM attachments a WHERE a.message_id = m.id), '[]'::json) AS attachments`;
 
 export interface AttachmentProjectionRow {
   id: string;
-  mime: AttachmentMime;
+  mime: AttachmentAnyMime;
   byte_size: number;
   duration_ms: number | null;
   width: number | null;
   height: number | null;
+  filename: string | null;
+  has_macros: boolean;
   expires_at: string;
   expired: boolean;
 }
@@ -101,7 +110,12 @@ export async function bindInTx(
     [[...input.ids], input.conversationId, input.uploaderId, input.notBefore],
   );
   if (locked.rows.length !== input.ids.length) return 'invalid';
-  await client.query('UPDATE attachments SET message_id = $2 WHERE id = ANY($1::uuid[])', [[...input.ids], input.messageId]);
+  // 위치 = 요청 배열에서의 0부터 순번(TRD R3.7). 중복 ID는 위에서 이미 'invalid'라 순번은 유일하다.
+  await client.query(
+    `UPDATE attachments a SET message_id = $2, bind_order = o.ord - 1
+       FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, ord) WHERE a.id = o.id`,
+    [[...input.ids], input.messageId],
+  );
   return 'ok';
 }
 
@@ -125,8 +139,14 @@ export interface RetentionResult {
   readonly blobsDeleted: number;
 }
 
+/**
+ * 저장 트랜잭션 안 사전 검사(INSERT 전, 같은 client). 거부는 throw — 트랜잭션이 롤백돼 메타·바이트 저장 0.
+ * 검사가 잡은 행 잠금은 COMMIT까지 유지된다(봇 업로드의 권한 회수 경쟁 차단, W-26 Codex r3). 사람 경로는 넘기지 않는다.
+ */
+export type InTxCheck = (client: pg.PoolClient, conversationId: string) => Promise<void>;
+
 export interface AttachmentsStore {
-  insert(a: NewAttachment): Promise<AttachmentMeta>;
+  insert(a: NewAttachment, check?: InTxCheck): Promise<AttachmentMeta>;
   get(id: string): Promise<AttachmentMeta | undefined>;
   /** 바이트. 행이 없으면(삭제됨) undefined. */
   bytes(id: string): Promise<Buffer | undefined>;
@@ -135,12 +155,13 @@ export interface AttachmentsStore {
 }
 
 /** 메타·바이트를 한 트랜잭션으로 넣는다(부분 저장 0). */
-async function insertTx(pool: pg.Pool, a: NewAttachment): Promise<AttachmentMeta> {
+async function insertTx(pool: pg.Pool, a: NewAttachment, check: InTxCheck | undefined): Promise<AttachmentMeta> {
   const row = await withTransaction(pool, async (client) => {
+    if (check !== undefined) await check(client, a.conversationId);
     const res = await client.query<MetaRow>(
-      `INSERT INTO attachments (id, conversation_id, uploader_id, mime, byte_size, sha256, duration_ms, width, height, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING ${META_COLUMNS}`,
-      [a.id, a.conversationId, a.uploaderId, a.mime, a.byteSize, a.sha256, a.durationMs, a.width, a.height, a.createdAt, a.expiresAt],
+      `INSERT INTO attachments (id, conversation_id, uploader_id, mime, byte_size, sha256, duration_ms, width, height, filename, has_macros, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${META_COLUMNS}`,
+      [a.id, a.conversationId, a.uploaderId, a.mime, a.byteSize, a.sha256, a.durationMs, a.width, a.height, a.filename, a.hasMacros, a.createdAt, a.expiresAt],
     );
     await client.query('INSERT INTO attachment_blobs (attachment_id, bytes) VALUES ($1, $2)', [a.id, a.bytes]);
     return { commit: true, value: res.rows[0] };
@@ -174,7 +195,7 @@ async function retain(pool: pg.Pool, now: Date, unboundBefore: Date): Promise<Re
 
 export function createPgAttachmentsStore(pool: pg.Pool): AttachmentsStore {
   return {
-    insert: (a) => insertTx(pool, a),
+    insert: (a, check) => insertTx(pool, a, check),
     async get(id) {
       const res = await pool.query<MetaRow>(`SELECT ${META_COLUMNS} FROM attachments WHERE id = $1`, [id]);
       const row = res.rows[0];

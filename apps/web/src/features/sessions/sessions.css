@@ -1,0 +1,44 @@
+/*
+ * CMP-22 SessionList(`/settings/sessions`, W-30). 토큰 변수만. 화면 틀·행은 MemberAdmin 공통 규칙(layout.css)을 쓴다.
+ * 「이 기기」 표지: DESIGN_REFERENCE 「이 기기」 행 — 글자 --accent-text, 바탕 --accent-bg, --radius-sm, --text-xs.
+ */
+.session-list .member-row {
+  gap: var(--space-3);
+  min-height: 56px;
+}
+.session-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+.session-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.session-label {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-last-used {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.session-this-device {
+  align-self: flex-start;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+}
+.session-list .member-row .btn-secondary {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: var(--space-1) var(--space-3);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+}

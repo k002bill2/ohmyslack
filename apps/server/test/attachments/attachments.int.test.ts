@@ -45,7 +45,8 @@ describe('첨부(FR-OPS-05)', () => {
       [HTML, 'image/png', 415], // 선언만 허용 형식
       [png(), 'image/jpeg', 415], // 내용 PNG, 선언 JPEG
       [Buffer.concat([Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00', 'latin1'), HTML]), 'audio/mpeg', 415], // ID3 뒤 프레임 sync 없음
-      [Buffer.from('%PDF-1.7\n'), 'application/pdf', 415],
+      // W-26: PDF는 허용 문서가 됐고, 문서인데 X-Attachment-Filename이 없으면 400(TRD §6-1-1 (5)).
+      [Buffer.from('%PDF-1.7\n'), 'application/pdf', 400],
       [png(2, 3, ATTACHMENT_MAX_BYTES + 1 - png().length), 'image/png', 413],
     ];
     for (const [bytes, type, status] of rejected) {
@@ -68,27 +69,28 @@ describe('첨부(FR-OPS-05)', () => {
     expect(max.statusCode).toBe(201);
     const maxId = max.json<{ attachment_id: string }>().attachment_id;
 
-    // 3) 비참여자 C·나간 사용자 L은 업로드·다운로드 404, 참여자 B는 200.
+    // 3) 비참여자 C·나간 사용자 L은 업로드·다운로드 404, 업로더 A는 200. 미결속 첨부는 업로더만 읽는다(SR-D-04) —
+    //    참여자 B의 200은 결속 뒤(5단계)에 확인한다.
     expect((await req(c.app, 'DELETE', `/api/conversations/${channel}/membership`, leaver)).statusCode).toBe(204);
     for (const who of [outsider, leaver]) {
       expect((await download(c.app, who, pngId)).statusCode).toBe(404);
       expect((await upload(c.app, who, channel, png(), 'image/png')).statusCode).toBe(404);
     }
     expect((await download(c.app, a, randomUUID())).statusCode).toBe(404);
-    const full = await download(c.app, b, pngId);
+    const full = await download(c.app, a, pngId);
     expect(full.statusCode).toBe(200);
     expect(full.rawPayload.equals(png(2, 3))).toBe(true);
 
     // 4) Range: 단일 범위 206 + Content-Range, 접미 범위 206, 다중 범위는 전체 200, 범위 밖 416.
-    const part = await download(c.app, b, pngId, { range: 'bytes=0-7' });
+    const part = await download(c.app, a, pngId, { range: 'bytes=0-7' });
     expect(part.statusCode).toBe(206);
     expect(part.headers['content-range']).toBe(`bytes 0-7/${png().length}`);
     expect(part.rawPayload.equals(png().subarray(0, 8))).toBe(true);
-    const tail = await download(c.app, b, audioId, { range: 'bytes=-4' });
+    const tail = await download(c.app, a, audioId, { range: 'bytes=-4' });
     expect(tail.statusCode).toBe(206);
     expect(tail.rawPayload.length).toBe(4);
-    expect((await download(c.app, b, pngId, { range: 'bytes=0-1,4-5' })).statusCode).toBe(200);
-    const unsat = await download(c.app, b, pngId, { range: 'bytes=9999-' });
+    expect((await download(c.app, a, pngId, { range: 'bytes=0-1,4-5' })).statusCode).toBe(200);
+    const unsat = await download(c.app, a, pngId, { range: 'bytes=9999-' });
     expect(unsat.statusCode).toBe(416);
     expect(unsat.headers['content-range']).toBe(`bytes */${png().length}`);
 
@@ -111,6 +113,10 @@ describe('첨부(FR-OPS-05)', () => {
     const msg = sent.json<MessageJson>().message;
     expect(msg.attachments.map((x) => x.id).sort()).toEqual([pngId, audioId].sort());
     expect(msg.attachments.every((x) => x.expired === false)).toBe(true);
+    // 결속 뒤에는 참여자 B도 200(대화 read 규칙).
+    const boundFull = await download(c.app, b, pngId);
+    expect(boundFull.statusCode).toBe(200);
+    expect(boundFull.rawPayload.equals(png(2, 3))).toBe(true);
     // 멱등: 같은 payload 200, 첨부 집합이 다르면 409. 이미 결속된 첨부를 다른 메시지에 결속하면 400.
     const replay = await req(c.app, 'POST', `/api/conversations/${channel}/messages`, a, { client_message_id: cmid, body: '사진', attachment_ids: [audioId, pngId] });
     expect(replay.statusCode).toBe(200);

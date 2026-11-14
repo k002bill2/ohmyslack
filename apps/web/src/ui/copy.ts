@@ -335,16 +335,47 @@ export const ATTACHMENT_COPY = {
   imageAlt: '첨부 이미지',
   /** 확대 Dialog 제목(CMP-18). */
   imageDialogTitle: '첨부 이미지',
-  /** 파일 선택 버튼 접근 이름. */
-  attach: '이미지 첨부',
+  /** 파일 선택 버튼 접근 이름(G-53 — 이미지·문서를 한 버튼으로). */
+  attach: '파일 첨부',
   remove: '첨부 제거',
   uploading: '업로드 중',
   tooLarge: '파일이 너무 큽니다(최대 10MB)',
-  unsupported: '지원하지 않는 형식입니다(PNG·JPEG·WebP)',
-  uploadFailed: '업로드하지 못했습니다',
+  /** 문서·텍스트 크기 초과(G-55). 서버 413만 오고 형식을 모르면 이 문구. */
+  docTooLarge: '파일이 너무 큽니다(최대 25MB)',
+  /** 허용 형식 안내(G-54 + 텍스트 계열 3종, TRD §6-1-1 R3.6). 415 `macro_extension_mismatch` 외 모든 415·사전 거부. */
+  unsupported: '지원하지 않는 형식입니다(이미지 PNG·JPEG·WebP, 문서 PDF·Word·Excel·PowerPoint·한글, 텍스트 TXT·MD·CSV)',
+  /** 415 `macro_extension_mismatch`(G-56). */
+  macroExtension: '매크로가 들어 있는 문서입니다. .docm·.xlsm·.pptm 확장자로 저장해 다시 보내 주세요.',
+  /** 네트워크·5xx 실패(G-57) — 뒤에 원인 1문장(`failureText`)을 붙인다. */
+  uploadFailed: '업로드하지 못했습니다.',
   /** 본문 없이 이미지만 보낼 때 채우는 본문(서버는 첨부 메시지도 본문 필수). */
   imageOnlyBody: '[이미지]',
+  /** 본문 없이 문서만 보낼 때(G-58). 섞이면 첫 첨부의 형식 문구. */
+  documentOnlyBody: '[문서]',
+  /** 「매크로 포함」 표지(G-60). */
+  macros: '매크로 포함',
+  /** 문서 행 받기 버튼 보이는 텍스트(G-62). 접근 이름은 `documentDownloadName`. */
+  download: '받기',
 } as const;
+
+/** 문서 형식 표지 텍스트(G-59). 키는 `file-kinds.ts`가 서버 판정 mime으로 고른다. */
+export const DOCUMENT_KIND_COPY = {
+  pdf: 'PDF',
+  word: 'Word',
+  excel: 'Excel',
+  powerpoint: 'PowerPoint',
+  hwp: '한글',
+  txt: 'TXT',
+  md: 'MD',
+  csv: 'CSV',
+} as const;
+export type DocumentKind = keyof typeof DOCUMENT_KIND_COPY;
+
+/** 「받기」 접근 이름(G-62): 「{전체 파일명} 받기, {형식}, {크기}」 + 매크로면 「, 매크로 포함」. */
+export function documentDownloadName(filename: string, kind: string, size: string, hasMacros: boolean): string {
+  const base = `${filename} ${ATTACHMENT_COPY.download}, ${kind}, ${size}`;
+  return hasMacros ? `${base}, ${ATTACHMENT_COPY.macros}` : base;
+}
 
 /**
  * Web Push 알림 고정 문구(W-23, TRD §6-2). 정본 미정(UI_STATES §8 Q-H5) — Jarvis ★ 임시 결정.
@@ -385,4 +416,38 @@ export const AUTHOR_NAME_COPY = {
   /** 화면에서 이름과 접미를 따로 그릴 때의 접미(QA D2·D3). `inactive`와 같은 정본 문구. */
   inactiveSuffix: INACTIVE_SUFFIX,
   unknown: '알 수 없는 사용자',
+} as const;
+
+/**
+ * CMP-22 SessionList 「로그인한 기기」(W-30, UI_STATES §2-14, COPY_GAPS G-63–G-72 ★ Designer 초안).
+ * 목록 오류·시간 초과·대상 없음은 `ERROR_COPY` 재사용(G-72·G-70), 「취소」는 `CANCEL_LABEL`.
+ */
+const SESSION_LIST_TITLE = '로그인한 기기';
+export const SESSION_LIST_COPY = {
+  /** G-63: 진입 버튼 이름 = 화면 제목 = 목록 `aria-label`. */
+  title: SESSION_LIST_TITLE,
+  /** G-64 이 기기 표지. */
+  thisDevice: '이 기기',
+  /** G-65 라벨 없음. */
+  unknownDevice: '알 수 없는 기기',
+  /** G-66 2줄째(`{시각}`은 오늘·어제 + 시각 / 그 전은 날짜만). */
+  lastUsed: (when: string): string => `마지막 사용 ${when}`,
+  /** G-65 같은 이름 행이 둘 이상이면 접근 이름 끝에 덧붙인다. */
+  lastUsedSuffix: (when: string): string => `, 마지막 사용 ${when}`,
+  /** G-67 다른 기기 행 버튼(보이는 글자)·접근 이름. */
+  logout: '로그아웃',
+  logoutName: (label: string): string => `${label} 로그아웃`,
+  /** G-67 이 기기 행 버튼(확인 없이 기존 로그아웃). */
+  logoutThisDevice: '이 기기에서 로그아웃',
+  /** G-68 다른 기기 없음. */
+  noOtherDevices: '다른 기기에서 로그인하지 않았습니다',
+  /** G-69 확인 Dialog. */
+  confirmTitle: '기기 로그아웃',
+  confirmBody: (label: string): string =>
+    `${label} 기기가 5초 안에 로그아웃되고 그 기기의 알림도 꺼집니다. 그 기기에서 다시 쓰려면 다시 로그인해야 합니다.`,
+  confirm: '로그아웃',
+  /** G-70 실패 첫 문장(뒤에 원인 1문장). */
+  failed: '로그아웃하지 못했습니다.',
+  /** G-71 완료 알림(StatusRegion). */
+  done: (label: string): string => `${label} 기기를 로그아웃했습니다`,
 } as const;

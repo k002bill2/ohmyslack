@@ -92,6 +92,13 @@ export interface Snapshot {
 /** `timedOut`: 응답 없음 중 시간 상한 초과(REQUEST_TIMEOUT_MS) — 서버 동작 여부를 확인하지 못했다(`ERROR_COPY.timeout`). */
 export type ActionFailure = { readonly status: number; readonly code?: string } | { readonly status: 'network'; readonly timedOut?: true };
 
+/** 첨부 업로드 옵션: 문서·텍스트는 원 파일명(`X-Attachment-Filename`, 퍼센트 인코딩)·선언 형식, `signal`은 취소. */
+export interface UploadAttachmentOptions {
+  readonly filename?: string;
+  readonly type?: string;
+  readonly signal?: AbortSignal;
+}
+
 /** 공간 진입 동작 결과. */
 export type ActionResult<T> = { readonly ok: true; readonly value: T } | ({ readonly ok: false } & ActionFailure);
 
@@ -127,6 +134,15 @@ export interface Invite {
   readonly expiresAt: string;
 }
 
+/** `GET /api/sessions` 항목(TRD §3·§5-3, W-30 CMP-22). `deviceLabel`은 서버가 만든 거친 라벨 — 모르면 null. */
+export interface DeviceSession {
+  readonly id: string;
+  readonly deviceLabel: string | null;
+  readonly createdAt: string;
+  readonly lastSeenAt: string;
+  readonly current: boolean;
+}
+
 /**
  * 공간 진입점(W-10g): 채널 만들기·찾기·참여·DM·로그아웃. 성공한 생성·참여·DM은 **목록을 다시 읽은 뒤** 대화 ID를 돌려준다
  * — 호출자는 그 ID로 이동(`open`)만 하면 기존 구독·checkpoint 규칙이 그대로 적용된다.
@@ -146,6 +162,10 @@ export interface SpacesApi {
   createInvite?(): Promise<ActionResult<Invite>>;
   /** `POST /api/admin/members/:user_id/deactivate`(owner, W-10h). 204 → ok. */
   deactivateMember?(userId: string): Promise<ActionResult<null>>;
+  /** `GET /api/sessions`(본인의 살아 있는 세션, W-30). */
+  listSessions?(): Promise<ActionResult<readonly DeviceSession[]>>;
+  /** `DELETE /api/sessions/:id`(본인 다른 기기, 204 → ok. 현재 세션 400·남의/없는 ID 404, W-30). */
+  revokeSession?(sessionId: string): Promise<ActionResult<null>>;
   /** 목록 오류 「다시 시도」 — 복귀 절차 1회. */
   reload?(): void;
   /** `POST /api/auth/logout` → 본문·checkpoint 정리 → 세션 종료. */
@@ -164,7 +184,7 @@ export interface DataSource extends SpacesApi, MembershipApi {
   /** Web Push 구독 API(W-23, CMP-30). 없으면 PushSettings를 렌더하지 않는다. */
   readonly push?: PushServerApi;
   /** `POST /api/attachments?conversation_id=`(원시 바이트, W-21). 성공하면 미결속 첨부 — `send`의 `attachmentIds`로 결속한다. */
-  uploadAttachment?(conversationId: string, file: Blob): Promise<ActionResult<AttachmentView>>;
+  uploadAttachment?(conversationId: string, file: Blob, options?: UploadAttachmentOptions): Promise<ActionResult<AttachmentView>>;
   /** 현재 대화가 바뀔 때 호출(구독·이력 로드). 메모리 구현은 없음. */
   open?(conversationId: string | null): void;
   /** 스레드를 열거나(root id) 닫을 때(null) 호출 — 기존 답글 조회. 메모리 구현은 없음. */

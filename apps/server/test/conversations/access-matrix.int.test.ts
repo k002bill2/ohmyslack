@@ -173,3 +173,26 @@ describe('접근 매트릭스 — 봇 채널 참여 라우트(BOT_CHANNEL_SPEC �
     }
   });
 });
+
+describe('접근 매트릭스 — 기기 세션 원격 로그아웃(FR-AUTH-04, DEV_DESIGN §2-4 account 행)', () => {
+  it('DELETE /api/sessions/{id}는 account 메타이고 본인 204·다른 계정 404·미인증 401이며 남의 세션은 바뀌지 않는다', async () => {
+    const route = ctx.app.accessRoutes.find((r) => r.method === 'DELETE' && r.url === '/api/sessions/:id');
+    expect(route?.access).toBe('account');
+    const a1 = await as(ctx.app, 'a');
+    const a2 = await as(ctx.app, 'a');
+    const c = await as(ctx.app, 'c');
+    const ownList = (await req(ctx.app, 'GET', '/api/sessions', a1)).json<{ sessions: { id: string; current: boolean }[] }>();
+    const target = ownList.sessions.find((s) => !s.current)?.id ?? '';
+    expect(target).not.toBe('');
+    const snapshot = async (): Promise<unknown> => (await ctx.schema.pool.query('SELECT * FROM sessions WHERE id = $1', [target])).rows;
+    const before = await snapshot();
+    // 미인증 → 401, 다른 계정 → 404(대상 무변경).
+    expect((await req(ctx.app, 'DELETE', `/api/sessions/${target}`)).statusCode).toBe(401);
+    expect((await req(ctx.app, 'DELETE', `/api/sessions/${target}`, c)).statusCode).toBe(404);
+    expect(await snapshot()).toEqual(before);
+    expect((await req(ctx.app, 'GET', '/api/me', a2)).statusCode).toBe(200);
+    // 본인 → 204, 그 세션의 다음 HTTP는 401.
+    expect((await req(ctx.app, 'DELETE', `/api/sessions/${target}`, a1)).statusCode).toBe(204);
+    expect((await req(ctx.app, 'GET', '/api/me', a2)).statusCode).toBe(401);
+  });
+});

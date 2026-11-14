@@ -17,7 +17,13 @@ export const SNAPSHOT_TABLES = [
   'sync_clock',
   'conversation_read_state',
   'thread_read_state',
+  'attachments',
 ] as const;
+
+/**
+ * `attachment_blobs`는 바이트 원문 대신 행별 길이·sha256만 스냅숏에 담는다(TRD §6-1-1 (7) ③). snapshot-sql이 만드는 가상 키.
+ */
+export const BLOB_DIGEST_KEY = 'attachment_blob_digests';
 
 interface Item {
   readonly name: string;
@@ -80,6 +86,27 @@ export const ITEMS: readonly Item[] = [
     name: 'mentions',
     project: (s) => rows(s, 'message_mentions').map((r) => pick(r, ['message_id', 'user_id'])),
   },
+  {
+    name: 'attachment_meta',
+    project: (s) =>
+      rows(s, 'attachments').map((r) =>
+        pick(r, ['id', 'conversation_id', 'uploader_id', 'message_id', 'mime', 'byte_size', 'sha256', 'filename', 'has_macros', 'created_at', 'expires_at', 'deleted_at']),
+      ),
+  },
+  {
+    // TRD §6-1-1 (7) ③: 첨부 메타 수·blob 바이트 합·sha256(전수 = 표본 상한) 일치. blob sha256이 메타 sha256과 같은지도 함께 본다.
+    name: 'attachment_blobs',
+    project: (s) => {
+      const metaSha = new Map(rows(s, 'attachments').map((r) => [r['id'], r['sha256']]));
+      const digests = rows(s, BLOB_DIGEST_KEY);
+      const total = digests.reduce((sum, r) => sum + Number(r['byte_len'] ?? 0), 0);
+      return [
+        ...digests.map((r) => ['blob', ...pick(r, ['attachment_id', 'byte_len', 'sha256']), metaSha.get(r['attachment_id']) === r['sha256']]),
+        ['meta_count', metaSha.size],
+        ['blob_total', digests.length, total],
+      ];
+    },
+  },
 ];
 
 export interface ItemDigest {
@@ -122,7 +149,7 @@ export function parseSnapshot(text: string): Snapshot {
   const data = JSON.parse(text) as unknown;
   if (data === null || typeof data !== 'object' || Array.isArray(data)) throw new Error('스냅숏이 객체가 아닙니다');
   const record = data as Record<string, unknown>;
-  for (const t of SNAPSHOT_TABLES) {
+  for (const t of [...SNAPSHOT_TABLES, BLOB_DIGEST_KEY]) {
     if (!Array.isArray(record[t])) throw new Error(`스냅숏에 테이블 배열 없음: ${t}`);
   }
   return record as Snapshot;

@@ -16,4 +16,9 @@ export const LOG_CANARIES: Readonly<Record<string, string>> = Object.freeze({
    * `https://web.push.apple.com/<이 값>…` 형태로 쓰고, 로그에는 호스트만 남아야 하므로 이 값은 0건이어야 한다.
    */
   push_endpoint: 'OMS-CANARY-PUSHEP-2a9c71',
+  /**
+   * 첨부 파일명 자리(TRD §6-1-1 (5)·(2), DEV_DESIGN W-26). 통합 테스트는 `X-Attachment-Filename`에 이 값을 넣어 문서를 올리고
+   * 내려받으며, 파일명은 응답 헤더·본문에만 있고 로그·계측·push에는 0건이어야 한다.
+   */
+  filename: 'OMS-CANARY-FILENAME-3e7b90',
 });

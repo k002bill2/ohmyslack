@@ -57,10 +57,18 @@ export function isUnreachable(e: unknown): boolean {
 /** 2xx — `Response.ok`와 같은 기준. */
 const isOkStatus = (status: number): boolean => status >= 200 && status <= 299;
 
+/** 원시 바이트 본문(첨부 업로드). `headers`: 추가 헤더(파일명 등), `signal`: 호출자 취소. */
+export interface RawBody {
+  readonly bytes: Blob;
+  readonly type: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly signal?: AbortSignal;
+}
+
 /** 요청 1건의 전송 문맥. `onStatus`: 헤더(상태) 수신 — 이후 시간 초과는 그 상태로 끝낸다. */
 interface SendContext {
   readonly body: unknown;
-  readonly raw?: { readonly bytes: Blob; readonly type: string };
+  readonly raw?: RawBody;
   readonly signal?: AbortSignal;
   readonly isTimedOut: () => boolean;
   readonly notify: (ok: boolean) => void;
@@ -78,7 +86,7 @@ export function createApi(deps: ApiDeps) {
   let csrf: string | null = null;
 
   /** `raw`: JSON 대신 원시 바이트(첨부 업로드, TRD §3 `POST /api/attachments`) — `Content-Type`은 파일 형식. */
-  const request = async <T>(method: string, path: string, body?: unknown, raw?: { readonly bytes: Blob; readonly type: string }): Promise<T> => {
+  const request = async <T>(method: string, path: string, body?: unknown, raw?: RawBody): Promise<T> => {
     // 네트워크 결과 알림(onNetwork)은 요청당 최대 1회 — 헤더 수신과 시간 초과를 실패 두 건으로 세지 않는다(Codex r1 P2).
     let notified = false;
     const notify = (ok: boolean) => {
@@ -86,7 +94,11 @@ export function createApi(deps: ApiDeps) {
       notified = true;
       deps.onNetwork?.(ok);
     };
-    if (raw !== undefined) return send<T>(method, path, { body, raw, notify, isTimedOut: () => false, onStatus: () => undefined });
+    if (raw !== undefined) {
+      // 원시 업로드는 20초 상한 면제(UI-D4) — 끊기는 호출자 signal(「첨부 제거」)뿐이다.
+      const ctx: SendContext = { body, raw, notify, isTimedOut: () => false, onStatus: () => undefined, ...(raw.signal === undefined ? {} : { signal: raw.signal }) };
+      return send<T>(method, path, ctx);
+    }
     // 상한에 닿으면 fetch를 abort하고 끝낸다. signal을 무시하는 fetch여도 race로 끝난다.
     // 헤더 전이면 TimeoutError, 오류 상태 헤더를 이미 받았으면 그 상태의 HttpStatusError(코드 미상)다(Codex r1 P2).
     const controller = new AbortController();
@@ -113,8 +125,10 @@ export function createApi(deps: ApiDeps) {
   const send = async <T>(method: string, path: string, ctx: SendContext): Promise<T> => {
     const { body, raw, signal, isTimedOut, notify } = ctx;
     const headers: Record<string, string> = { Accept: 'application/json' };
-    if (raw !== undefined) headers['Content-Type'] = raw.type;
-    else if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (raw !== undefined) {
+      headers['Content-Type'] = raw.type;
+      Object.assign(headers, raw.headers);
+    } else if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && method !== 'HEAD' && csrf !== null) headers['X-CSRF-Token'] = csrf;
     let res: Response;
     try {
@@ -127,6 +141,8 @@ export function createApi(deps: ApiDeps) {
       });
     } catch {
       if (isTimedOut()) throw new TimeoutError('timeout');
+      // 호출자가 끊은 업로드(「첨부 제거」)는 연결 실패가 아니다 — 네트워크 알림을 내지 않는다.
+      if (raw?.signal?.aborted === true) throw new NetworkError('network');
       notify(false);
       throw new NetworkError('network');
     }
@@ -152,7 +168,8 @@ export function createApi(deps: ApiDeps) {
     get: <T>(path: string) => request<T>('GET', path),
     post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
     /** 원시 바이트 `POST`(첨부 업로드, W-22). 바이트는 그대로 보내고 어디에도 저장하지 않는다(B7). */
-    upload: <T>(path: string, bytes: Blob, type: string) => request<T>('POST', path, undefined, { bytes, type }),
+    upload: <T>(path: string, bytes: Blob, type: string, extra: Pick<RawBody, 'headers' | 'signal'> = {}) =>
+      request<T>('POST', path, undefined, { bytes, type, ...extra }),
     /** `PATCH`(메시지 수정, W-10i). */
     patch: <T>(path: string, body: unknown) => request<T>('PATCH', path, body),
     /** `PUT`(읽음 위치 저장, TRD §3 `PUT /api/read-state`). */
