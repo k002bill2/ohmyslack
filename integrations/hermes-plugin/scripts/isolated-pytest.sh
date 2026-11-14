@@ -10,13 +10,20 @@
 #                    PYTHONPYCACHEPREFIX·PYTHONPATH)만 뺀 `pytest tests --collect-only`. 가드 표지 + rc 3 이면 EXIT 3(PASS).
 #   --run --confirm=G3-CLEARED-BY-HUMAN [pytest 인자]
 #                    P/tests 실행(사람 전용, G3 = (나) 0–5 확인 뒤). TTY 필수.
+#   --run-attested [-q] [-x] [-k <expr>]
+#                    P/tests 실행(레인·에이전트용, TTY·난수 입력 없음). 시작 전에 scripts/pytest.sb·scripts/_iso_fs.sh 의
+#                    sha256 을 scripts/G3-ATTESTATION(사람 G3 확인 기록)과 대조하고, 없음·형식 오류·불일치면
+#                    아무것도 하지 않고(_iso_fs.sh source·.isolation 재생성 전) EXIT 5 + `re-attestation by human required`.
+#                    env·sandbox·가드는 --run 과 같은 run_tests 경로. 한계: 우발 실행·무심사 프로필 변경 방지일 뿐,
+#                    저장소 쓰기 권한이 있는 행위자의 의도적 우회(래퍼·가드·이 파일 자체 수정)는 막지 못한다 —
+#                    해시는 두 파일만 덮는다.
 #   --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN
 #                    probe_outside 실행(사람 전용). TTY·확인 인자·/dev/tty 난수 왕복 입력 3중 장치.
 #                    이 장치의 효과는 「우발 실행 방지」뿐이다(I-2) — 의도적 우회(pty 래핑 등)는 막지 못하며,
 #                    그 경우는 BRIEF 금지와 에이전트 권한 deny 에 의존한다.
 #
 # 종료 코드: 0 PASS / 1 검사 실패 / 2 경로 검증 실패(I-1, 아무것도 지우지 않음) / 3 probe-guard PASS /
-#           5 사람 전용 모드 거부 / 6 sandbox-exec 없음·사용 불가 / 64 사용법 오류
+#           5 사람 전용 모드 거부·G3 해시 대조 실패(--run-attested) / 6 sandbox-exec 없음·사용 불가 / 64 사용법 오류
 set -euo pipefail
 
 SANDBOX_EXEC=/usr/bin/sandbox-exec
@@ -41,6 +48,40 @@ case "$P" in */integrations/hermes-plugin) ;; *) die 2 "unexpected P: $P" ;; esa
 [ -f "$P/pytest.ini" ] && [ -f "$P/scripts/pytest.sb" ] || die 2 "P layout mismatch: $P"
 ISO="$P/.isolation"
 VENV_PY="$P/.venv/bin/python"
+
+# ---- G3 해시 대조(--run-attested). ATTESTATION 은 source 하지 않고 키별로 grep 한다.
+SHASUM=/usr/bin/shasum
+ATTEST_KEYS=(profile_sha256 iso_fs_sha256 attested_at evidence main_commit)
+attest_value() { sed -n "s/^$2=//p" "$1"; }
+sha256_of() { [ -f "$1" ] && [ ! -L "$1" ] || return 1; "$SHASUM" -a 256 < "$1" | cut -d' ' -f1; }
+# $1 = pytest.sb·_iso_fs.sh·G3-ATTESTATION 이 있는 디렉터리. 0 = 일치, 5 = 없음·형식 오류·불일치(사유 stderr).
+attest_verify() {
+  local dir=$1 file="$1/G3-ATTESTATION" key n v
+  [ -f "$file" ] && [ ! -L "$file" ] || { echo "attestation: missing or not a regular file: $file" >&2; return 5; }
+  # -q 를 쓰지 않는다(조기 종료 SIGPIPE 가 pipefail 로 「문제 없음」처럼 보이는 것 방지).
+  v="$(grep -v -E '^(#.*)?$' "$file" | grep -v -E '^(profile_sha256|iso_fs_sha256|attested_at|evidence|main_commit)=' || true)"
+  [ -z "$v" ] || { echo "attestation: unknown or malformed line" >&2; return 5; }
+  for key in "${ATTEST_KEYS[@]}"; do
+    n="$(grep -c -E "^$key=" "$file" || true)"
+    [ "$n" = 1 ] || { echo "attestation: $key must appear exactly once (found $n)" >&2; return 5; }
+  done
+  for key in profile_sha256 iso_fs_sha256; do
+    v="$(attest_value "$file" "$key")"
+    [[ "$v" =~ ^[0-9a-f]{64}$ ]] || { echo "attestation: $key is not 64 lowercase hex" >&2; return 5; }
+  done
+  [[ "$(attest_value "$file" attested_at)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "attestation: attested_at is not YYYY-MM-DD" >&2; return 5; }
+  [[ "$(attest_value "$file" main_commit)" =~ ^[0-9a-f]{7,40}$ ]] || { echo "attestation: main_commit is not a commit id" >&2; return 5; }
+  [ -n "$(attest_value "$file" evidence)" ] || { echo "attestation: evidence is empty" >&2; return 5; }
+  [ "$(sha256_of "$dir/pytest.sb" || true)" = "$(attest_value "$file" profile_sha256)" ] \
+    || { echo "attestation: scripts/pytest.sb sha256 differs from G3-ATTESTATION" >&2; return 5; }
+  [ "$(sha256_of "$dir/_iso_fs.sh" || true)" = "$(attest_value "$file" iso_fs_sha256)" ] \
+    || { echo "attestation: scripts/_iso_fs.sh sha256 differs from G3-ATTESTATION" >&2; return 5; }
+  return 0
+}
+attest_gate() { attest_verify "$1" || die 5 "G3 attestation check failed — re-attestation by human required (nothing was run)"; }
+# 바뀐 _iso_fs.sh 가 source 되기 전에, .isolation 을 건드리기 전에 대조한다.
+if [ "${1:-}" = --run-attested ]; then attest_gate "$P/scripts"; fi
+
 # shellcheck source=_iso_fs.sh
 . "$P/scripts/_iso_fs.sh"
 case "$PY_HOME$HERMES_SRC$P" in *'"'*|*'|'*|*$'\n'*) die 2 "path contains a forbidden character" ;; esac
@@ -152,10 +193,27 @@ preflight_stop_if_fatal() {
 }
 preflight_fail() { echo "PREFLIGHT FAIL: $*"; echo "PREFLIGHT STOPPED: no further collection after the first failure"; exit 1; }
 
+# --run-attested 해시 대조 자기시험(sandbox 밖, sandbox 안에서는 bash·shasum 을 exec 할 수 없음).
+# $ISO/tmp 안 복사본만 바꾼다(작업 트리 파일 불변). 결과는 tests_isolation/test_attestation.py 가 sandbox 안에서 단언.
+attest_selftest() {
+  local d="$ISO/tmp/attest-selftest" rc_ok=0 rc_profile=0 rc_isofs=0
+  mkdir -- "$d" || die 1 "attest selftest: mkdir failed: $d"
+  cp -- "$P/scripts/pytest.sb" "$P/scripts/_iso_fs.sh" "$P/scripts/G3-ATTESTATION" "$d/"
+  ( attest_gate "$d" ) 2> "$d/unmodified.err" || rc_ok=$?
+  cp -- "$P/scripts/pytest.sb" "$d/pytest.sb.orig"
+  printf ' ' >> "$d/pytest.sb"
+  ( attest_gate "$d" ) 2> "$d/profile_modified.err" || rc_profile=$?
+  mv -- "$d/pytest.sb.orig" "$d/pytest.sb"
+  printf '\n' >> "$d/_iso_fs.sh"
+  ( attest_gate "$d" ) 2> "$d/iso_fs_modified.err" || rc_isofs=$?
+  printf 'unmodified=%s\nprofile_modified=%s\niso_fs_modified=%s\n' "$rc_ok" "$rc_profile" "$rc_isofs" > "$d/result"
+}
+
 mode_preflight() {
   local label
   base_env
   SB_FATAL=0
+  attest_selftest
   sandboxed preflight-tests_isolation "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" tests_isolation -q
   preflight_stop_if_fatal preflight-tests_isolation
   [ "$SB_RC" = 0 ] || preflight_fail "tests_isolation rc=$SB_RC"
@@ -212,13 +270,37 @@ require_human() {            # $1 = 기대 확인 인자
   [ "$answer" = "$code" ] || die 5 "code mismatch"
 }
 
-mode_run() {
-  require_human "G3-CLEARED-BY-HUMAN"
+# --run·--run-attested 공통 실행 경로(env·sandbox·가드 동일). 두 모드의 차이는 시작 조건뿐이다.
+run_tests() {
   base_env; ENV_ARGS+=(PYTHONPATH="$HERMES_SRC")
   SB_FATAL=0
   sandboxed run "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" tests "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
   [ "$SB_FATAL" = 0 ] || die 6 "sandbox-exec failed"
   exit "$SB_RC"
+}
+
+mode_run() {
+  require_human "G3-CLEARED-BY-HUMAN"
+  run_tests
+}
+
+# 해시 대조는 스크립트 앞부분(attest_gate)에서 이미 끝났다 — 여기 오면 일치한 것.
+mode_run_attested() { run_tests; }
+
+# --run-attested 는 -q·-x·-k <식> 만 받는다(-p·-c·--rootdir 등으로 수집 대상·플러그인을 바꾸지 못하게).
+check_attested_args() {
+  local i=0 n=${#EXTRA_ARGS[@]}
+  [ -z "$CONFIRM" ] || die 64 "--run-attested takes no --confirm"
+  while [ "$i" -lt "$n" ]; do
+    case "${EXTRA_ARGS[$i]}" in
+      -q|-x) ;;
+      -k) i=$((i + 1))
+          [ "$i" -lt "$n" ] || die 64 "-k needs an expression"
+          case "${EXTRA_ARGS[$i]}" in -*) die 64 "-k expression must not start with -" ;; esac ;;
+      *) die 64 "--run-attested accepts only -q, -x, -k <expr> (got: ${EXTRA_ARGS[$i]})" ;;
+    esac
+    i=$((i + 1))
+  done
 }
 
 mode_prove_outside() {
@@ -247,10 +329,11 @@ while [ $# -gt 0 ]; do
 done
 REAL_HOME="${HOME:-}"
 case "$MODE" in
-  --preflight|--probe-guard|--run|--prove-outside) ;;
-  *) die 64 "usage: $0 --preflight | --probe-guard | --run --confirm=G3-CLEARED-BY-HUMAN [args] | --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN" ;;
+  --preflight|--probe-guard|--run|--run-attested|--prove-outside) ;;
+  *) die 64 "usage: $0 --preflight | --probe-guard | --run --confirm=G3-CLEARED-BY-HUMAN [args] | --run-attested [-q] [-x] [-k <expr>] | --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN" ;;
 esac
-if [ "$MODE" != --run ] && [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then die 64 "extra arguments are only accepted with --run"; fi
+if [ "$MODE" = --run-attested ]; then check_attested_args
+elif [ "$MODE" != --run ] && [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then die 64 "extra arguments are only accepted with --run or --run-attested"; fi
 
 require_sandbox
 recreate_iso
@@ -263,5 +346,6 @@ case "$MODE" in
   --preflight) mode_preflight ;;
   --probe-guard) mode_probe_guard ;;
   --run) mode_run ;;
+  --run-attested) mode_run_attested ;;
   --prove-outside) mode_prove_outside ;;
 esac

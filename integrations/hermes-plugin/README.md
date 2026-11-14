@@ -123,6 +123,14 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 | 에이전트 점검 | `bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` | `tests_isolation` 통과 → 수집 4조합 rc 0·outside 0건 → 직접 지정 rc 4 + outside 표지 → `PREFLIGHT PASS`, `EXIT=0`. 실패 때 `PREFLIGHT FAIL: …`·`PREFLIGHT STOPPED`, `EXIT=1`(sandbox 오류·신호는 `EXIT=6`) |
 | 가드 거부 점검 | `bash scripts/isolated-pytest.sh --probe-guard; echo EXIT=$?` | `OHMYSLACK-ISOLATION-GUARD-REFUSED: …`, `PROBE-GUARD PASS`, `EXIT=3` |
 | 전체 실행(G3 뒤, 사람) | `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` | TTY·난수 입력 뒤 `tests` 실행 |
+| 전체 실행(레인·에이전트, 해시 대조) | `bash scripts/isolated-pytest.sh --run-attested [-q] [-x] [-k <식>]; echo EXIT=$?` | `scripts/pytest.sb`·`scripts/_iso_fs.sh` sha256 이 `scripts/G3-ATTESTATION` 과 같으면 `--run` 과 같은 경로(env·sandbox·가드)로 `tests` 실행. 없음·형식 오류·불일치면 아무것도 하지 않고 `re-attestation by human required`, `EXIT=5`. 그 밖 인자는 `EXIT=64` |
+
+### `--run-attested` 와 G3-ATTESTATION — 한계
+
+- `scripts/G3-ATTESTATION` 은 사람 G3 확인((나)-0 `--prove-outside`·(나)-2 `--run`)을 통과한 프로필·정리 함수의 sha256 기록입니다(`main_commit`·`evidence`·`attested_at` 포함). **사람만 갱신합니다.** `pytest.sb`·`_iso_fs.sh` 를 바꾸는 변경은 사람이 (나)-0·(나)-2 를 다시 확인한 뒤 이 파일을 고칩니다.
+- 해시 대조는 **우발 실행·무심사 프로필 변경 방지**입니다. 저장소 쓰기 권한이 있는 행위자의 의도적 우회(래퍼·이 파일 자체 수정)는 막지 못합니다.
+- 해시는 두 파일만 덮습니다. 래퍼(`isolated-pytest.sh`)·가드(`tests/_isolation_guard.py`)·`tests/conftest.py` 변경은 감지하지 않습니다.
+- 대조는 `_iso_fs.sh` 를 source 하기 전, `.isolation/` 을 건드리기 전에 합니다. EXIT 5 경로는 `--preflight` 가 `.isolation/tmp` 안 복사본을 바꿔 자기시험하고 `tests_isolation/test_attestation.py` 가 결과를 단언합니다(작업 트리 파일은 바꾸지 않음).
 
 ### 사람 실행 (나) 0–5 — 에이전트는 실행하지 않습니다
 

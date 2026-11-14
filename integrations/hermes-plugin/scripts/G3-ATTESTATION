@@ -1,0 +1,8 @@
+# G3 사람 확인(H1) 기록 — scripts/isolated-pytest.sh --run-attested 가 이 값과 현재 파일 해시를 대조한다.
+# 값은 main fa28bed 의 두 파일로 계산(git show fa28bed:<path> | shasum -a 256). 사람만 갱신한다:
+# pytest.sb·_iso_fs.sh 를 바꾸면 사람이 (나)-0 --prove-outside·(나)-2 --run 을 다시 확인한 뒤 이 파일을 고친다.
+profile_sha256=31573e62a148fe59d42cfe501356676a5015eeb8343575f38648c8383049402a
+iso_fs_sha256=b016c4274effd6b2bc66ae2f6047d5b134c5a9022ab28d92ae3e968f6b5b3c59
+attested_at=2026-11-14
+evidence=dev/handoff/briefs/p2s1-1a-isolation-recheck-r4/G1.md
+main_commit=fa28bed
