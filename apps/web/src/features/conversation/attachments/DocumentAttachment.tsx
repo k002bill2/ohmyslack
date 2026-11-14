@@ -44,10 +44,12 @@ function DownloadIcon() {
  * 「받기」 클릭 처리: 기본 동작을 잠시 막고 HEAD로 만료를 확인한 뒤, 만료면 `onGone`, 아니면 같은 링크를 다시 눌러
  * 원래 링크 동작(다운로드·새 창)을 그대로 진행한다. 보조키·가운데 버튼 클릭은 확인 없이 브라우저에 맡긴다.
  */
-function useExpiryCheckedClick(href: string, onGone: () => void) {
+function useExpiryCheckedClick(href: string, onGone: () => void, skip: boolean) {
   const passThrough = useRef(false);
   const checking = useRef(false);
   return (e: MouseEvent<HTMLAnchorElement>) => {
+    // 새 창(target=_blank) 링크는 확인하지 않는다: HEAD 뒤 재클릭은 사용자 제스처 밖이라 iOS 팝업 차단에 걸릴 수 있다.
+    if (skip) return;
     if (passThrough.current) {
       passThrough.current = false;
       return;
@@ -73,13 +75,13 @@ function useExpiryCheckedClick(href: string, onGone: () => void) {
 export function DocumentAttachment({ attachment }: { readonly attachment: AttachmentView }) {
   const [goneSinceRender, setGone] = useState(false);
   const href = attachmentUrl(attachment.id);
-  const onDownloadClick = useExpiryCheckedClick(href, () => setGone(true));
+  const target = downloadLinkTarget(attachment.mime, isStandaloneDisplay());
+  const onDownloadClick = useExpiryCheckedClick(href, () => setGone(true), target.target === '_blank');
   const expired = attachment.expired || goneSinceRender;
   const filename = attachment.filename ?? ATTACHMENT_FILENAME_FALLBACK_STEM;
   const kind = documentKindLabel(attachment.mime) ?? '';
   const macros = attachment.has_macros === true;
   const size = formatBytes(attachment.byte_size);
-  const target = downloadLinkTarget(attachment.mime, isStandaloneDisplay());
   return (
     <div className={expired ? 'attachment doc-attachment doc-attachment-expired' : 'attachment doc-attachment'}>
       <FileTextIcon />
