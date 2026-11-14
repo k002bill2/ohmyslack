@@ -992,7 +992,7 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
                 return send_error("ohmyslack standalone send: home channel must be the owner DM")
             me_id = str(me.get("id") or "")
             budget = min(upload_budget, left() - STANDALONE_TEXT_RESERVE_S)
-            record.attachment_ids, names, record.warnings = await _upload_standalone_media(
+            record.attachment_ids, names, record.file_warnings = await _upload_standalone_media(
                 client, str(chat_id), media_files, budget=budget, clock=clock)
             text = message or (names[0] if names else "")
             chunks = BasePlatformAdapter.truncate_message(text, OhmySlackAdapter.MAX_MESSAGE_LENGTH)
@@ -1028,7 +1028,7 @@ class _SendRecord:
 
     chunks: list[_ChunkRecord] = field(default_factory=list)
     attachment_ids: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    file_warnings: list[str] = field(default_factory=list)  # 업로드 단계 파일별 경고(텍스트 경고는 조립 때 따로)
     reason: str = ""  # 청크 시도 밖의 실패(`/me`·deadline 등)
 
 
@@ -1071,13 +1071,18 @@ async def _post_chunk(client: BotClient, chat_id: str, body: str, rec: _ChunkRec
 
 
 def _standalone_result(record: _SendRecord) -> dict:
-    """기록 → sender 결과(설계 r4 §Q1-7 반환표). 청크 0 불명·충돌은 성공으로 숨기지 않는다."""
+    """기록 → sender 결과(설계 r4 §Q1-7 반환표·§Q3 M1). 청크 0 불명·충돌은 성공으로 숨기지 않는다.
+
+    경고는 파일 경고(업로드 단계)와 텍스트 경고(청크 결과)로 따로 모아 그 순서로 싣는다. `media_delivered`는
+    첨부 ID 있음 ∧ 파일 경고 0 ∧ 청크 0 confirmed일 때만 — 텍스트 경고(`partial_delivery` 등)와 독립이다.
+    """
     from gateway.platforms._shared import send_error
-    warnings = list(record.warnings)
+    file_warnings = list(record.file_warnings)
+    text_warnings: list[str] = []
     n = len(record.chunks)
     k = next((i for i, c in enumerate(record.chunks) if c.state != "confirmed"), n)
     if k == 0:
-        suffix = f"; warnings: {', '.join(warnings)}" if warnings else ""
+        suffix = f"; warnings: {', '.join(file_warnings)}" if file_warnings else ""
         first = record.chunks[0] if record.chunks else None
         if first is not None and first.state == "ambiguous":
             logger.warning("ohmyslack: standalone delivery_unknown chunk 1/%d", n)
@@ -1091,16 +1096,17 @@ def _standalone_result(record: _SendRecord) -> dict:
     if k < n:  # 부분 게시: 재전달(전체 재전송)을 타지 않게 성공 + 보이는 경고
         state = record.chunks[k].state
         logger.warning("ohmyslack: standalone send partial (%d/%d chunks, %s)", k, n, state)
-        warnings.append(f"text: partial_delivery {k}/{n}")
+        text_warnings.append(f"text: partial_delivery {k}/{n}")
         if state == "ambiguous":
             logger.warning("ohmyslack: standalone delivery_unknown chunk %d/%d", k + 1, n)
-            warnings.append(f"text: delivery_unknown chunk {k + 1}")
+            text_warnings.append(f"text: delivery_unknown chunk {k + 1}")
         elif state == "conflict":
             logger.warning("ohmyslack: standalone idempotency_conflict chunk %d/%d", k + 1, n)
-            warnings.append(f"text: idempotency_conflict chunk {k + 1}")
+            text_warnings.append(f"text: idempotency_conflict chunk {k + 1}")
     out: dict[str, Any] = {"success": True, "message_id": record.chunks[k - 1].message_id}
+    warnings = file_warnings + text_warnings
     if warnings:
         out["warnings"] = warnings
-    elif record.attachment_ids:
+    if record.attachment_ids and not file_warnings and record.chunks[0].state == "confirmed":
         out["media_delivered"] = True  # Hermes generic 경로가 "MEDIA attachments were omitted"를 붙이지 않게
     return out
