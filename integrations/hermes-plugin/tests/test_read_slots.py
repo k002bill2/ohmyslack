@@ -20,6 +20,8 @@ MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" * 64
 SLOTS = 4  # 설계 r4 §Q2 READ_SLOTS = ATTACHMENTS_PER_MESSAGE_MAX
 WATCHDOG_S = 5.0
 JOIN_S = 2.0
+READ_UNAVAILABLE_NOTICE = "첨부 파일을 읽을 수 없습니다. 잠시 후 다시 시도해 주세요."  # 브리프 고정 문구
+READ_THREAD = "ohmyslack-attachment-read"
 
 
 def _fresh_slots(monkeypatch) -> threading.BoundedSemaphore:
@@ -181,7 +183,9 @@ async def test_live_attachment_reports_read_unavailable(server, make_adapter, tm
     assert res.success
     assert server.uploads == []
     posts = [p for p in server.posts if p["_status"] == 200]
-    assert len(posts) == 1 and "attachment_ids" not in posts[0] and posts[0]["body"].startswith("오늘 브리핑\n")
+    assert len(posts) == 1 and "attachment_ids" not in posts[0]
+    assert posts[0]["body"] == "오늘 브리핑\n" + READ_UNAVAILABLE_NOTICE  # 사용자 본문에도 사유(미지원 문구 아님)
+    assert "아직 지원하지 않습니다" not in posts[0]["body"] and str(tmp_path) not in posts[0]["body"]
     assert "ohmyslack: attachment read_unavailable" in caplog.text
     assert "file read unavailable (reader busy); sending text fallback" in caplog.text
     assert "file rejected" not in caplog.text
@@ -204,3 +208,69 @@ async def test_standalone_full_slots_warn_read_unavailable(server, tmp_path, mon
     assert out["warnings"] == ["briefing.mp3: read_unavailable"]
     assert "media_delivered" not in out and server.uploads == []
     assert len([p for p in server.posts if p["_status"] == 200]) == 1
+
+
+async def test_slot_returned_before_result_notified(monkeypatch, tmp_path):
+    """순서 회귀(Codex P2): 슬롯 3개 점유 + 4번째 읽기 완료. worker를 통지 예약 직후 경계에서 Event로 멈추고,
+    루프가 결과를 받은 뒤 다음 읽기를 시작한다. 완료된 읽기의 슬롯은 통지 전에 이미 반환됐어야 하므로 다음 읽기가
+    실제로 성공해야 한다(구 순서 = 통지 → 반환이면 `read_unavailable`). 고정 sleep 없음, watchdog이 Event를 푼다."""
+    import ohmyslack.adapter as adapter_mod
+    slots = _fresh_slots(monkeypatch)
+    errors = _thread_errors(monkeypatch)
+    for _ in range(SLOTS - 1):
+        assert slots.acquire(blocking=False)  # 다른 읽기 3개가 슬롯을 쥔 상태
+    loop = asyncio.get_running_loop()
+    real_notify = loop.call_soon_threadsafe
+    gate = threading.Event()
+    watchdog = threading.Timer(WATCHDOG_S, gate.set)
+    watchdog.daemon = True
+    watchdog.start()
+    held: list[threading.Thread] = []
+
+    def notify_then_stall(*args, **kwargs):
+        handle = real_notify(*args, **kwargs)  # 통지는 예약된다 → 루프가 결과를 받는다
+        if threading.current_thread().name == READ_THREAD and not held:
+            held.append(threading.current_thread())
+            gate.wait()  # 4번째 읽기 worker를 통지 예약 경계에서 멈춘다
+        return handle
+    loop.call_soon_threadsafe = notify_then_stall  # 인스턴스 속성(아래 finally에서 지운다)
+    try:
+        first = await adapter_mod._read_off_loop(_write(tmp_path, "a.mp3", MP3), adapter_mod.VOICE_TYPES)
+        stalled = len(held)
+        second = await adapter_mod._read_off_loop(_write(tmp_path, "b.mp3", MP3), adapter_mod.VOICE_TYPES)
+    finally:
+        del loop.call_soon_threadsafe
+        gate.set()
+        watchdog.cancel()
+        for t in held:
+            t.join(JOIN_S)
+        for _ in range(SLOTS - 1):
+            slots.release()
+    assert stalled == 1, "first worker must stall at the notify boundary"
+    assert first[1] == "" and first[0] is not None and first[0][2] == "a.mp3"
+    assert second[1] == "", f"next read got {second[1]!r}: slot was not returned before notification"
+    assert second[0] is not None and second[0][2] == "b.mp3"  # 다음 정상 읽기의 실제 성공
+    assert not [t for t in held if t.is_alive()]
+    assert errors == [] and _free(slots) == SLOTS
+
+
+def test_production_read_slots_initial_capacity_is_four():
+    """운영 모듈의 실제 `_READ_SLOTS`(교체하지 않음)의 초기 용량 = 4. 비차단 acquire로 최대 SLOTS+1개까지 세고
+    finally에서 센 만큼 정확히 되돌린다. 격리 근거: 세기 전에 이름이 `ohmyslack-attachment-read`인 스레드(다른 테스트의
+    정지 읽기 등)를 모두 join해 살아 있는 worker 0을 단언한다 — worker는 읽기 완료 즉시 반환하므로 남은 점유가 없다.
+    `_fresh_slots`를 쓰는 테스트는 별도 객체를 쓰고 monkeypatch가 테스트 끝에 운영 객체를 되돌린다."""
+    import ohmyslack.adapter as adapter_mod
+    for t in [t for t in threading.enumerate() if t.name == READ_THREAD]:
+        t.join(WATCHDOG_S)
+    assert not [t for t in threading.enumerate() if t.name == READ_THREAD and t.is_alive()]
+    slots = adapter_mod._READ_SLOTS
+    assert isinstance(slots, threading.BoundedSemaphore)
+    taken = 0
+    try:
+        while taken <= SLOTS and slots.acquire(blocking=False):  # 용량이 더 커도 SLOTS+1에서 멈춘다
+            taken += 1
+    finally:
+        for _ in range(taken):
+            slots.release()
+    assert taken == SLOTS, f"production _READ_SLOTS capacity {taken} (expected {SLOTS})"
+    assert _free(slots) == SLOTS  # 정확히 복구됐다
