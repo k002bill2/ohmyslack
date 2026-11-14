@@ -61,7 +61,8 @@ export function DocumentAttachment({ attachment }: { readonly attachment: Attach
         <a
           className="doc-download"
           href={attachmentUrl(attachment.id)}
-          download={filename}
+          // 값 없는 download: 저장 파일명은 서버 Content-Disposition 하나가 정한다(QA iPhone r2 W2).
+          download=""
           aria-label={documentDownloadName(filename, kind, size, macros)}
         >
           <DownloadIcon />
