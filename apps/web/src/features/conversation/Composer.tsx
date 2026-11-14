@@ -10,7 +10,7 @@ import {
 import type { DraftStore } from './drafts.js';
 import { MENTION_DRAFT_SUFFIX, filterCandidates, insertMention, mentionIdsIn, mentionQuery, parseSelections, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
 import { ComposerAttachments } from './attachments/ComposerAttachments.js';
-import { useComposerAttachments, type UploadFn } from './attachments/composer-upload.js';
+import { useComposerAttachments, type AttachmentDraft, type UploadFn } from './attachments/composer-upload.js';
 import { COMPOSER_COPY, MENTION_EMPTY_TEXT, MENTION_POPOVER_COPY, overText, remainingText } from '../../ui/copy.js';
 import './composer-copy.css';
 
@@ -30,6 +30,8 @@ export interface ComposerProps {
   readonly onMentionKey?: (key: MentionKey) => void;
   /** 대상별 초안 보존(디자인 §7-3 초안 규칙). 마운트 시 복원하고 입력마다 저장, 전송으로 비우면 지운다. */
   readonly draft?: { readonly store: DraftStore; readonly key: string };
+  /** 대상별 첨부 초안(칩·진행 중 업로드). 작성기보다 오래 사는 소유자가 넘기면 다시 마운트돼도 이어진다. 없으면 작성기 지역 상태. */
+  readonly attachmentDraft?: AttachmentDraft;
   /** CMP-12 멘션 후보(현재 대화 참여자). 있으면 `@` 입력으로 후보 목록을 연다(자기 자신 제외). */
   readonly mentions?: { readonly candidates: readonly MentionCandidate[]; readonly selfId?: string };
   /** 작성기 도움말 표시(결정 3: wide·medium만). 표시할 때만 렌더하고 `aria-describedby`로 잇는다. */
@@ -57,9 +59,9 @@ export function counterAnnouncement(length: number, max: number): string {
 }
 
 /** CMP-11 Composer — IME 안전 Enter(디자인 §7-4). 키 판정은 `ime.ts`의 순수 함수가 한다. */
-export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = false, onMentionKey, draft, mentions, showHint = false, mentionScope = 'channel' }: ComposerProps) {
+export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = false, onMentionKey, draft, attachmentDraft, mentions, showHint = false, mentionScope = 'channel' }: ComposerProps) {
   const [text, setText] = useState(() => draft?.store.get(draft.key) ?? '');
-  const files = useComposerAttachments(onUpload);
+  const files = useComposerAttachments(onUpload, attachmentDraft);
   const [picker, setPicker] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   // 선택한 멘션도 초안과 함께 보존·복원한다(Codex r1 P2).
