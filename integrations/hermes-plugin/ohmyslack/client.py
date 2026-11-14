@@ -274,6 +274,10 @@ class BotClient:
                 outcome, status, may, retry, delay, mid = "ambiguous", None, True, "backoff", float(2 ** index), None
             except (aiohttp.ContentTypeError, ValueError):
                 outcome, status, may, retry, delay, mid = "ambiguous", None, True, "once", 0.0, None
+            except aiohttp.ClientResponseError:
+                # 상태줄·헤더 파싱 실패(aiohttp ClientResponse.start) — 상태 응답 객체를 받기 전이라 서버 거부가 아니다.
+                # 상태 응답(4xx 등)은 `_post_once`가 예외 없이 돌려주므로 여기 오지 않는다. 저장 후 가능 → 모호.
+                outcome, status, may, retry, delay, mid = "ambiguous", None, True, "once", 0.0, None
             maybe = maybe or may
             observe(Attempt(index, outcome, status, may))
             if outcome == "ack":

@@ -874,11 +874,14 @@ async def _upload_one(client: BotClient, chat_id: str, data: bytes, mime: str,
     try:
         uploaded = await asyncio.wait_for(client.upload_attachment(chat_id, data, mime, remaining=remaining),
                                           timeout=max(remaining(), 0.0))
-    except (BotApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+    except (BotApiError, aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:  # ValueError = 깨진 JSON
         logger.warning("ohmyslack: standalone upload failed (%s)",
                        exc.status if isinstance(exc, BotApiError) else type(exc).__name__)
         timed_out = isinstance(exc, asyncio.TimeoutError) and remaining() <= 0
         return None, "budget_exceeded" if timed_out else "upload_failed"
+    if not isinstance(uploaded, dict):  # 빈 2xx(json() None)·배열 등
+        logger.warning("ohmyslack: standalone upload failed (invalid_response)")
+        return None, "upload_failed"
     attachment_id = str(uploaded.get("attachment_id") or "")
     return (attachment_id, "") if _is_uuid(attachment_id) else (None, "upload_failed")
 
@@ -978,7 +981,12 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
     async with session_factory() as session:
         client = BotClient(base, token, session)
         try:
-            me = await _within(client.get_me(), left)
+            try:
+                me = await _within(client.get_me(), left)
+            except ValueError:  # 2xx 깨진 JSON(ContentTypeError는 아래 ClientError로)
+                me = None
+            if not isinstance(me, dict):  # 빈 2xx(json() None)·배열 등 — 대상 판정 불가, 아무것도 보내지 않는다
+                return send_error("ohmyslack standalone send: invalid /me response")
             kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
             if kinds.get(str(chat_id)) != "dm":
                 return send_error("ohmyslack standalone send: home channel must be the owner DM")
