@@ -158,7 +158,8 @@ mode_probe_guard() {
   # PYTEST_DISABLE_PLUGIN_AUTOLOAD)는 유지 — OS 격리는 그대로.
   ENV_ARGS=(PATH=/usr/bin:/bin LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1)
   SB_FATAL=0
-  sandboxed probe-guard "${PYTEST_ARGS[@]}" tests -q --collect-only
+  # TMPDIR 이 없으면 pytest 출력 캡처가 임시 파일을 못 만들어 가드 전에 끝난다(/tmp 등 쓰기 거부 — probe-guard-1 실측).
+  sandboxed probe-guard "${PYTEST_ARGS[@]}" --capture=no tests -q --collect-only
   [ "$SB_FATAL" = 0 ] || die 6 "sandbox-exec or sandboxed child failed (signal or sandbox error) — no fallback"
   if [ "$SB_RC" = 3 ] && grep -q 'OHMYSLACK-ISOLATION-GUARD-REFUSED' "$SB_OUT"; then
     echo "PROBE-GUARD PASS: rc=3 with guard marker"

@@ -26,6 +26,8 @@
   (subpath "/System/Cryptexes/OS")
   (subpath "/private/var/db/timezone")
   (literal "/private/etc/localtime")
+  ;; 좁히기 1줄(preflight-4 실측): aiohttp web_fileresponse 의 mimetypes.init() 가 import 시 읽음
+  (literal "/private/etc/apache2/mime.types")
   (literal "/dev/urandom")
   (literal "/dev/random")
   (literal "/dev/null")

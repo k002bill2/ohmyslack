@@ -19,6 +19,8 @@ EXPECTED_ENV = {
 }
 # pytest 자신이 실행 중에 넣는 키(main()의 PYTEST_VERSION, 테스트별 PYTEST_CURRENT_TEST)
 PYTEST_OWN_ENV = {"PYTEST_VERSION", "PYTEST_CURRENT_TEST"}
+# macOS 가 프로세스 기동 때 넣는 키(env -i 뒤에도 생김 — preflight-4 실측). 값은 문자 인코딩 코드뿐.
+OS_OWN_ENV = {"__CF_USER_TEXT_ENCODING"}
 HERMES_TOPLEVEL = ("ohmyslack", "gateway", "hermes_cli", "hermes_bootstrap", "agent", "cron", "tools")
 
 
@@ -47,7 +49,7 @@ def test_preflight_iso_tmp_writable():
 
 
 def test_preflight_env_is_allowlist():
-    assert set(os.environ) - PYTEST_OWN_ENV == EXPECTED_ENV
+    assert set(os.environ) - PYTEST_OWN_ENV - OS_OWN_ENV == EXPECTED_ENV
     assert "PYTHONPATH" not in os.environ
     assert os.environ["PATH"] == "/usr/bin:/bin"
     assert sys.flags.no_user_site == 1
