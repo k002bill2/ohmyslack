@@ -7,7 +7,7 @@ created: 2026-11-07
 
 # TRD — ohmyslack (내부 코드명)
 
-- 상태: R3 최종안 (R3.3 개정, 2026-11-08 ADR-001 채택; R3.5 문서 첨부 계약 §6-1-1, 2026-11-13 — 구현 대기; R3.6 정본 정합 — 415 하위 코드·텍스트 계열 첨부·기기 세션 계약, 2026-11-13 — 구현 대기)
+- 상태: R3 최종안 (R3.3 개정, 2026-11-08 ADR-001 채택; R3.5 문서 첨부 계약 §6-1-1, 2026-11-13 — 구현 대기; R3.6 정본 정합 — 415 하위 코드·텍스트 계열 첨부·기기 세션 계약, 2026-11-13 — 구현 대기; R3.7 첨부 표시 순서 = 요청 `attachment_ids` 순서·`attachments.bind_order`, 2026-11-14)
 - 작성자: GPT-Luna
 - 입력: BUZZ_ROUND2_DOCS.md, BUZZ_ROUND3_FINAL.md, PRD v1.3(R3.3 반영), `docs/decisions/ADR-001-hermes-agent-integration.md`, R1 개발설계서·디자인 레퍼런스, GPT-Sol·Claude-Opus·Claude-Fable R2 리뷰
 - 정합성: FR ID·우선순위·수용 기준은 PRD 정본을 따릅니다. 저장소·단계·테스트 계약은 개발설계서 정본을 따르고, 토큰·브레이크포인트·레이아웃·컴포넌트·IME 규칙은 디자인 레퍼런스 정본을 따릅니다.
@@ -61,7 +61,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `thread_unread_targets` | `(root_message_id,user_id)` PK, `qualified_at timestamptz NOT NULL` | PRD §7-7의 스레드 대상 자격을 기록; 편집·삭제 뒤에도 자격 유지. root/user FK `RESTRICT` |
 | `message_mentions` | `(message_id,user_id)` PK | 메시지와 멤버 FK `RESTRICT`; 수정 시 재계산, 삭제 시 같은 트랜잭션에서 제거 |
 | `bot_tokens` | `id uuid PK`, `bot_user_id uuid NOT NULL` FK users `ON DELETE CASCADE`, `token_hash text UNIQUE NOT NULL`(SHA-256), `label text NOT NULL`, `created_at`, nullable `last_used_at`, nullable `revoked_at`; 부분 unique: 봇당 미폐기 토큰 **최대 2개**(회전 겹침용, 서비스 검사) | 봇 인증(§5-2). 원문 미저장 |
-| `attachments` | `id uuid PK`, `conversation_id uuid NOT NULL`, `uploader_id uuid NOT NULL`, nullable `message_id uuid`(결속 전 NULL), `mime text CHECK (mime IN ('audio/mpeg','image/png','image/jpeg','image/webp'))`, `byte_size integer CHECK (byte_size BETWEEN 1 AND 10485760)`, `sha256 text NOT NULL`, nullable `duration_ms`/`width`/`height`, `created_at`, `expires_at timestamptz NOT NULL`, nullable `deleted_at` | 첨부 메타데이터(§6-1). `(conversation_id,message_id)`→messages 복합 FK `RESTRICT`. 문서 확장(`filename`·`has_macros`·MIME 12종 = 문서 9 + 텍스트 3·상한 26,214,400)은 §6-1-1 마이그레이션 `0005`(1b 구현 시 반영) |
+| `attachments` | `id uuid PK`, `conversation_id uuid NOT NULL`, `uploader_id uuid NOT NULL`, nullable `message_id uuid`(결속 전 NULL), `mime text CHECK (mime IN ('audio/mpeg','image/png','image/jpeg','image/webp'))`, `byte_size integer CHECK (byte_size BETWEEN 1 AND 10485760)`, `sha256 text NOT NULL`, nullable `duration_ms`/`width`/`height`, `created_at`, `expires_at timestamptz NOT NULL`, nullable `deleted_at` | 첨부 메타데이터(§6-1). `(conversation_id,message_id)`→messages 복합 FK `RESTRICT`. 문서 확장(`filename`·`has_macros`·MIME 12종 = 문서 9 + 텍스트 3·상한 26,214,400)은 §6-1-1 마이그레이션 `0005`(1b 구현 시 반영). nullable `bind_order smallint`(R3.7, 마이그레이션 `0007`): 결속 때 요청 `attachment_ids`에서의 0부터 위치. 0007 이전에 결속된 행은 NULL(백필 없음) |
 | `attachment_blobs` | `attachment_id uuid PK` FK `ON DELETE CASCADE`, `bytes bytea NOT NULL` | 바이트 분리 저장(목록 조회가 bytea를 읽지 않게). 보존 만료·메시지 삭제 시 행 삭제 |
 | `push_subscriptions` | `id uuid PK`, `user_id uuid NOT NULL` FK `CASCADE`, `session_id uuid` FK sessions `CASCADE`, `endpoint text UNIQUE NOT NULL`, `p256dh text NOT NULL`, `auth text NOT NULL`, `vapid_key_id text NOT NULL`, `created_at`, nullable `last_success_at` | 기기(세션)별 구독(§6-2). 로그아웃·세션 폐기 시 함께 삭제 |
 
@@ -100,7 +100,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/conversations/{id}/members` | 활성 참여자 목록. 참여자만 접근 |
 | `GET /api/conversations/{id}/messages?before_seq=&after_seq=&around_seq=&limit=` | 접근 가능한 대화 이력. `roots_only=true`로 본문만, 기본 최대 100건 |
 | `GET /api/messages/{root_id}/replies?before_seq=&after_seq=&limit=` | 1단 답글 목록. root 대화 접근 검사 |
-| `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?,attachment_ids?}`; 생성 메시지(`client_message_id` 포함)·seq·global `change_id` 반환. `attachment_ids`는 최대 4개, 같은 요청자가 올리고 아직 결속되지 않은 같은 대화 첨부만(§6-1). 멱등 payload 비교에 포함 |
+| `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?,attachment_ids?}`; 생성 메시지(`client_message_id` 포함)·seq·global `change_id` 반환. `attachment_ids`는 최대 4개, 같은 요청자가 올리고 아직 결속되지 않은 같은 대화 첨부만(§6-1). 멱등 payload 비교에 포함(첨부 ID **집합** 비교 — 순서만 바꾼 같은 키 재시도는 원결과·첫 요청의 순서를 반환). **R3.7:** 응답·이력·답글·`GET /api/sync`·WS 이벤트(사람·봇 경로 공통)의 `attachments` 배열은 이 요청 `attachment_ids`의 순서입니다. 같은 ID가 두 번 든 새 요청은 지금처럼 400 `invalid_attachments`(결속 0)이므로 순서는 첫 등장 위치 = 유일 위치입니다 |
 | `POST /api/conversations/{id}/messages` — 비활성 상대 DM | DM 상대(보내는 사람 외 멤버, 봇 owner DM의 봇 포함)가 비활성이면 루트·답글 모두 403 `forbidden`(새 오류 코드 없음). DB·이벤트·push 변화 없음. 판정 전에 같은 멱등 키 재시도는 원결과를 반환. 편집·삭제·읽기·읽음·첨부 업로드/다운로드는 변경 없음 |
 | `PATCH /api/messages/{id}` | 작성자만 수정. 새 `change_id`, 수정된 mention ID 반환 |
 | `DELETE /api/messages/{id}` | 작성자만 tombstone 처리. 과거 본문/mention replay 방지 |
@@ -259,7 +259,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 - 허용 형식: `audio/mpeg`(mp3), `image/png`, `image/jpeg`, `image/webp`. **서버가 매직 바이트로 판정**하고 선언 `Content-Type`·파일명과 다르면 415입니다. SVG·HTML·PDF 등은 FR-OPS-09(P1) 전까지 거부합니다.
 - 상한: 파일당 10 MiB(10,485,760바이트), 메시지당 4개. 업로드 라우트만 body 상한 예외입니다. 초과 시 413, 저장 0.
 - 저장: PostgreSQL `attachment_blobs`(ADR-001 D-4 ★ — 단일 원장·백업/복원 일관성). 대안(로컬 디스크 디렉터리)은 ADR-001 §3-g.
-- 결속: 업로드 → `attachment_id`(미결속, 1시간 내 메시지에 결속 안 되면 삭제) → 메시지 생성 시 `attachment_ids`로 결속합니다.
+- 결속: 업로드 → `attachment_id`(미결속, 1시간 내 메시지에 결속 안 되면 삭제) → 메시지 생성 시 `attachment_ids`로 결속합니다. 결속 때 요청 배열에서의 위치를 `bind_order`에 기록하고, 첨부 projection은 `bind_order NULLS LAST, created_at, id`로 정렬합니다(R3.7 — 0007 이전 결속 행은 NULL이라 기존 표시 순서 유지). 잠금 순서(ID 정렬 `FOR UPDATE`)와 결속 검증은 그대로입니다.
 - 보존: 오디오 30일, 이미지 90일(제안) 경과 시 바이트를 삭제하고 메타데이터는 「만료된 첨부」 자리표시자로 유지합니다. 메시지 삭제 시 즉시 바이트를 삭제합니다.
 - 다운로드 응답: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: inline`(허용 미디어만), **HTTP Range(206) 지원**(iOS 오디오 재생 — 실기 QA 확인 필요).
 - 권한: `access: attachment` 메타 → 첨부의 `conversation_id`로 `assertAccess(read)`. 비참여자 404.
@@ -415,6 +415,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 | R3.3 (ADR-001) | 2026-11-08 | Hermes 연동 P0 승격(영환님 결정, ADR-001 D-1–D-7 ★ 채택): `users.kind`·`bot_tokens`·`attachments`·`attachment_blobs`·`push_subscriptions`, 봇 리스너(§5-2), 첨부(§6-1)·Web Push(§6-2) 라우트, `author_kind`·`attachments` projection, 413/415, TR-SEC-13–15, §1·§6 「파일·Push MVP 제외」 문장 정정, 계측 2종 |
 | R3.4 (BOT_CHANNEL_SPEC) | 2026-11-10 | 봇 채널 참여 P1 FR(영환님 결정, BOT_CHANNEL_SPEC §10-1 Q1–Q8 ★ 채택): §3 봇 추가·제거 라우트, §4 `membership.changed`, §5-2 (5) 공개 채널·수치 상한 없음·봇 읽기 `joined_seq` 이후, (6) 봇 `/me` 대화 종류·표시 이름 |
 | R3.5 (ADR-002 §4) | 2026-11-13 | 문서 첨부 계약 §6-1-1 신설(영환님 결정 §4-3 5개 불변): 허용 형식 9종·ZIP/OLE 목록 판정·단일 일치·판정기 자원 상한·`has_macros`·확장자 일치 415·25 MiB 상수·업로드/봇 리스너 상한·파일명 정규화·`attachment` 다운로드·90일·드릴 측정 항목·Hermes 경계. §2 `attachments` 행에 `0005` 지시. 구현 전 계약(1b 레인) |
+| R3.7 (p2s1-attach-order) | 2026-11-14 | 첨부 표시 순서(영환님 결정 2026-11-14): 메시지의 `attachments` 배열 = 전송 요청 `attachment_ids` 순서(응답·이력·답글·sync·WS·봇 경로 공통, 중복 ID 새 요청은 기존대로 400). §2 `attachments.bind_order`(마이그레이션 `0007`, 기존 행 NULL·백필 없음), §3 messages 행, §6-1 결속·projection 정렬. 멱등 비교는 집합 그대로(순서만 다른 재시도 = 원결과) |
 
 ## 리뷰 반영 기록
 

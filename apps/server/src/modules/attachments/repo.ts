@@ -71,12 +71,12 @@ function toMeta(r: MetaRow): AttachmentMeta {
 }
 
 /**
- * 메시지 projection의 첨부 열(TRD §4). `expired` = 바이트 삭제됨(`deleted_at`) 또는 보존 기한 경과. bytea는 읽지 않는다.
+ * 메시지 projection의 첨부 열(TRD §4). 순서 = 결속 요청 순서, 0007 이전 결속 행(NULL)은 뒤에 created_at, id 순(TRD R3.7). `expired` = 바이트 삭제됨(`deleted_at`) 또는 보존 기한 경과. bytea는 읽지 않는다.
  * `m`은 messages 별칭이다(messages repo의 MESSAGE_COLUMNS에 끼워 쓴다).
  */
 export const ATTACHMENTS_PROJECTION_SQL = `COALESCE((SELECT json_agg(json_build_object(
     'id', a.id, 'mime', a.mime, 'byte_size', a.byte_size, 'duration_ms', a.duration_ms, 'width', a.width, 'height', a.height,
-    'filename', a.filename, 'has_macros', a.has_macros, 'expires_at', a.expires_at, 'expired', (a.deleted_at IS NOT NULL OR a.expires_at <= now())) ORDER BY a.created_at, a.id)
+    'filename', a.filename, 'has_macros', a.has_macros, 'expires_at', a.expires_at, 'expired', (a.deleted_at IS NOT NULL OR a.expires_at <= now())) ORDER BY a.bind_order NULLS LAST, a.created_at, a.id)
   FROM attachments a WHERE a.message_id = m.id), '[]'::json) AS attachments`;
 
 export interface AttachmentProjectionRow {
@@ -110,7 +110,12 @@ export async function bindInTx(
     [[...input.ids], input.conversationId, input.uploaderId, input.notBefore],
   );
   if (locked.rows.length !== input.ids.length) return 'invalid';
-  await client.query('UPDATE attachments SET message_id = $2 WHERE id = ANY($1::uuid[])', [[...input.ids], input.messageId]);
+  // 위치 = 요청 배열에서의 0부터 순번(TRD R3.7). 중복 ID는 위에서 이미 'invalid'라 순번은 유일하다.
+  await client.query(
+    `UPDATE attachments a SET message_id = $2, bind_order = o.ord - 1
+       FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, ord) WHERE a.id = o.id`,
+    [[...input.ids], input.messageId],
+  );
   return 'ok';
 }
 
