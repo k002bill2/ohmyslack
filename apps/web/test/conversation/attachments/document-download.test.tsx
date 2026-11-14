@@ -1,13 +1,12 @@
 /**
- * QA iPhone r2(2026-11-14) 문서 「받기」 링크 — W1 standalone 직접 렌더 형식은 새 창, W2 파일명 단일 출처(서버 Content-Disposition),
- * W3 클릭 때 HEAD로 만료 사전 확인.
- * 참고 출처: 일반 관념, 저장소 내부 문서.
+ * QA iPhone r2·r3(2026-11-14) 문서 「받기」 링크 — W2 파일명 단일 출처(서버 Content-Disposition), W3 클릭 때 HEAD로 만료 사전 확인,
+ * r3: 모든 형식이 같은 링크(`download=""`, target 없음) — PDF·텍스트의 iOS 시트는 서버 octet-stream이 맡는다.
+ * 참고 출처: 일반 관념, 저장소 내부 문서, 실기 관찰(dev/handoff/qa-iphone-r3-20261114).
  */
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AttachmentView } from '../../../../../packages/shared/src/index.js';
 import { AttachmentList } from '../../../src/features/conversation/attachments/index.js';
-import { downloadLinkTarget, isStandaloneDisplay, rendersInline } from '../../../src/features/conversation/attachments/download-link.js';
 import { EXPIRY_CHECK_TIMEOUT_MS, isAttachmentGone } from '../../../src/features/conversation/attachments/expiry-check.js';
 import { ATTACHMENT_COPY } from '../../../src/ui/copy.js';
 import { attachment } from './fixtures.js';
@@ -17,7 +16,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   vi.restoreAllMocks();
-  Reflect.deleteProperty(window.navigator, 'standalone');
 });
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -32,56 +30,36 @@ describe('W2 「받기」 파일명은 서버 헤더가 정한다', () => {
   });
 });
 
-/** jsdom에는 matchMedia가 없다 — standalone 질의만 참으로 돌려준다. */
-function stubStandalone(on: boolean) {
-  vi.stubGlobal('matchMedia', (q: string) => ({ matches: on && q === '(display-mode: standalone)', media: q, addEventListener() {}, removeEventListener() {} }));
+const FORMATS = [
+  ['application/pdf', 'a.pdf'],
+  ['text/plain', 'a.txt'],
+  ['text/markdown', 'a.md'],
+  ['text/csv', 'a.csv'],
+  [DOCX, 'a.docx'],
+  ['application/x-hwp', 'a.hwp'],
+] as const;
+
+/** jsdom에는 matchMedia가 없다 — 홈 화면 앱(standalone) 환경을 흉내 낸다(분기가 없어야 함을 보이려고). */
+function stubStandalone() {
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(display-mode: standalone)', media: q, addEventListener() {}, removeEventListener() {} }));
+  Object.defineProperty(window.navigator, 'standalone', { value: true, configurable: true });
 }
 
-describe('W1 standalone에서 iOS 직접 렌더 형식 「받기」는 새 창', () => {
-  it.each([
-    ['application/pdf', 'a.pdf'],
-    ['text/plain', 'a.txt'],
-    ['text/markdown', 'a.md'],
-    ['text/csv', 'a.csv'],
-  ] as const)('standalone + %s → target=_blank rel=noopener', (mime, filename) => {
-    stubStandalone(true);
-    const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
-    expect(link(container).getAttribute('target')).toBe('_blank');
-    expect(link(container).getAttribute('rel')).toBe('noopener');
-    // FIX2: WebKit은 download가 있으면 target을 무시한다 — 새 창 형식은 속성 없음.
-    expect(link(container).hasAttribute('download')).toBe(false);
+describe('r3 모든 형식 「받기」는 같은 링크(standalone 분기 없음)', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(window.navigator, 'standalone');
   });
 
-  it('iOS navigator.standalone === true 도 standalone으로 본다', () => {
-    Object.defineProperty(window.navigator, 'standalone', { value: true, configurable: true });
-    const { container } = render(<AttachmentList attachments={[doc({ mime: 'application/pdf', filename: 'a.pdf' })]} />);
-    expect(link(container).getAttribute('target')).toBe('_blank');
-  });
-
-  it.each([
-    ['비standalone + PDF', false, 'application/pdf', 'a.pdf'],
-    ['standalone + docx', true, DOCX, 'a.docx'],
-    ['standalone + hwp', true, 'application/x-hwp', 'a.hwp'],
-  ] as const)('%s → 기존 속성 그대로(target·rel 없음)', (_n, on, mime, filename) => {
-    stubStandalone(on);
+  it.each(FORMATS.flatMap(([mime, filename]) => [
+    [mime, filename, false],
+    [mime, filename, true],
+  ] as const))('%s (standalone=%s) → target·rel 없음, download 빈 값', (mime, filename, standalone) => {
+    if (standalone) stubStandalone();
     const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
     expect(link(container).hasAttribute('target')).toBe(false);
     expect(link(container).hasAttribute('rel')).toBe(false);
     expect(link(container).getAttribute('download')).toBe('');
     expect(link(container).getAttribute('href')).toMatch(/^\/api\/attachments\//);
-  });
-
-  it('matchMedia가 없는 환경은 일반 브라우저', () => {
-    expect(isStandaloneDisplay({})).toBe(false);
-    expect(isStandaloneDisplay({ matchMedia: () => ({ matches: true }) })).toBe(true);
-    expect(isStandaloneDisplay({ navigator: { standalone: false }, matchMedia: () => ({ matches: false }) })).toBe(false);
-  });
-
-  it('판정 helper: 직접 렌더 형식은 PDF·텍스트 3종뿐', () => {
-    expect(['application/pdf', 'text/plain', 'text/markdown', 'text/csv'].every(rendersInline)).toBe(true);
-    expect(rendersInline(DOCX)).toBe(false);
-    expect(downloadLinkTarget('application/pdf', false)).toEqual({ download: true });
-    expect(downloadLinkTarget(DOCX, true)).toEqual({ download: true });
   });
 });
 
@@ -186,32 +164,18 @@ describe('W3 「받기」 클릭 때 HEAD 만료 사전 확인', () => {
     expect(clicks.log).toEqual([false, false, false]);
   });
 
-  describe('FIX1 새 창(target=_blank) 링크는 사전 확인 없이 제스처 유지', () => {
-    it('standalone + PDF → fetch 0회, 기본 동작 유지', () => {
-      stubStandalone(true);
-      const fetchSpy = vi.spyOn(globalThis, 'fetch');
-      const { container } = render(<AttachmentList attachments={[doc({ mime: 'application/pdf', filename: 'a.pdf' })]} />);
-      const clicks = recordClicks();
-      fireEvent.click(link(container));
-      clicks.stop();
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(clicks.log).toEqual([false]);
-    });
-
-    it.each([
-      ['standalone + docx', true, DOCX, 'a.docx'],
-      ['비standalone + PDF', false, 'application/pdf', 'a.pdf'],
-    ] as const)('%s → HEAD 1회(기존)', async (_n, on, mime, filename) => {
-      stubStandalone(on);
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
-      const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
-      const clicks = recordClicks();
-      fireEvent.click(link(container));
-      await flush();
-      clicks.stop();
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(clicks.log).toEqual([true, false]);
-    });
+  it.each(FORMATS.map(([mime, filename]) => [mime, filename] as const))('standalone + %s → HEAD 1회 뒤 링크 동작 진행', async (mime, filename) => {
+    stubStandalone();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+    const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
+    const clicks = recordClicks();
+    fireEvent.click(link(container));
+    await flush();
+    clicks.stop();
+    Reflect.deleteProperty(window.navigator, 'standalone');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0]?.[1]?.method).toBe('HEAD');
+    expect(clicks.log).toEqual([true, false]);
   });
 
   it('isAttachmentGone: 404만 true, 본문 없는 HEAD 한 번', async () => {

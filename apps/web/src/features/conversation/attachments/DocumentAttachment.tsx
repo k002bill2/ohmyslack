@@ -3,7 +3,6 @@ import { ATTACHMENT_FILENAME_FALLBACK_STEM, type AttachmentView } from '../../..
 import { ATTACHMENT_COPY, documentDownloadName } from '../../../ui/copy.js';
 import { attachmentUrl } from './attachment-url.js';
 import { formatBytes } from './composer-upload.js';
-import { downloadLinkTarget, isStandaloneDisplay } from './download-link.js';
 import { isAttachmentGone } from './expiry-check.js';
 import { documentKindLabel } from './file-kinds.js';
 import { FileName } from './FileName.js';
@@ -38,18 +37,16 @@ function DownloadIcon() {
  * 「받기」는 일반 `<a download>` 링크(서버 `Content-Disposition: attachment`) — 바이트를 JS로 받지 않는다(UI-D5, B7).
  * 단, 누를 때 `HEAD`로 만료만 먼저 확인한다(QA iPhone r2 W3 — 화면을 연 뒤 만료되면 오류 JSON이 파일로 내려오던 문제).
  * 사람·봇 문서가 같은 DOM이다(UI-D9). 만료면 「받기」·크기 없이 자리표시자만.
- * standalone(홈 화면 앱)에서 iOS가 직접 렌더하는 형식은 새 창으로 받는다 — 창 전체가 뷰어로 바뀌어 돌아올 수 없던 문제(QA iPhone r2 W1).
+ * iOS 홈 화면 앱에서 PDF·텍스트가 창 안에 열리지 않는 것은 서버가 사람 다운로드를 octet-stream으로 보내서다(실기 r3, TRD §6-1-1 (6)).
  */
 /**
  * 「받기」 클릭 처리: 기본 동작을 잠시 막고 HEAD로 만료를 확인한 뒤, 만료면 `onGone`, 아니면 같은 링크를 다시 눌러
- * 원래 링크 동작(다운로드·새 창)을 그대로 진행한다. 보조키·가운데 버튼 클릭은 확인 없이 브라우저에 맡긴다.
+ * 원래 링크 동작(다운로드)을 그대로 진행한다. 보조키·가운데 버튼 클릭은 확인 없이 브라우저에 맡긴다.
  */
-function useExpiryCheckedClick(href: string, onGone: () => void, skip: boolean) {
+function useExpiryCheckedClick(href: string, onGone: () => void) {
   const passThrough = useRef(false);
   const checking = useRef(false);
   return (e: MouseEvent<HTMLAnchorElement>) => {
-    // 새 창(target=_blank) 링크는 확인하지 않는다: HEAD 뒤 재클릭은 사용자 제스처 밖이라 iOS 팝업 차단에 걸릴 수 있다.
-    if (skip) return;
     if (passThrough.current) {
       passThrough.current = false;
       return;
@@ -75,8 +72,7 @@ function useExpiryCheckedClick(href: string, onGone: () => void, skip: boolean) 
 export function DocumentAttachment({ attachment }: { readonly attachment: AttachmentView }) {
   const [goneSinceRender, setGone] = useState(false);
   const href = attachmentUrl(attachment.id);
-  const target = downloadLinkTarget(attachment.mime, isStandaloneDisplay());
-  const onDownloadClick = useExpiryCheckedClick(href, () => setGone(true), target.target === '_blank');
+  const onDownloadClick = useExpiryCheckedClick(href, () => setGone(true));
   const expired = attachment.expired || goneSinceRender;
   const filename = attachment.filename ?? ATTACHMENT_FILENAME_FALLBACK_STEM;
   const kind = documentKindLabel(attachment.mime) ?? '';
@@ -104,10 +100,7 @@ export function DocumentAttachment({ attachment }: { readonly attachment: Attach
           className="doc-download"
           href={href}
           // 값 없는 download: 저장 파일명은 서버 Content-Disposition 하나가 정한다(QA iPhone r2 W2).
-          // 새 창 형식(target=_blank)은 download를 렌더하지 않는다 — WebKit이 target을 무시하기 때문(FIX2).
-          download={target.download ? '' : undefined}
-          target={target.target}
-          rel={target.rel}
+          download=""
           onClick={onDownloadClick}
           aria-label={documentDownloadName(filename, kind, size, macros)}
         >
