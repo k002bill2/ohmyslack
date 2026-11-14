@@ -184,6 +184,34 @@ describe('W3 「받기」 클릭 때 HEAD 만료 사전 확인', () => {
     expect(clicks.log).toEqual([false, false, false]);
   });
 
+  describe('FIX1 새 창(target=_blank) 링크는 사전 확인 없이 제스처 유지', () => {
+    it('standalone + PDF → fetch 0회, 기본 동작 유지', () => {
+      stubStandalone(true);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const { container } = render(<AttachmentList attachments={[doc({ mime: 'application/pdf', filename: 'a.pdf' })]} />);
+      const clicks = recordClicks();
+      fireEvent.click(link(container));
+      clicks.stop();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(clicks.log).toEqual([false]);
+    });
+
+    it.each([
+      ['standalone + docx', true, DOCX, 'a.docx'],
+      ['비standalone + PDF', false, 'application/pdf', 'a.pdf'],
+    ] as const)('%s → HEAD 1회(기존)', async (_n, on, mime, filename) => {
+      stubStandalone(on);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+      const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
+      const clicks = recordClicks();
+      fireEvent.click(link(container));
+      await flush();
+      clicks.stop();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(clicks.log).toEqual([true, false]);
+    });
+  });
+
   it('isAttachmentGone: 404만 true, 본문 없는 HEAD 한 번', async () => {
     const calls: RequestInit[] = [];
     const f = (status: number) => (_u: string, init: RequestInit) => {
