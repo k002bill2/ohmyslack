@@ -332,8 +332,8 @@ describe('FR-OPS-09 메시지 안 문서 행', () => {
     expect(container.querySelectorAll('a[href], button, [tabindex]')).toHaveLength(0);
   });
 
-  it('UI-AC-11 「받기」는 /api/attachments/{id} download 링크(JS fetch 없음), 봇·사람 메시지의 문서 행 DOM 동일', () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  it('UI-AC-11 「받기」는 /api/attachments/{id} download 링크(바이트 fetch 없음 — 만료 확인 HEAD만), 봇·사람 메시지의 문서 행 DOM 동일', () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>(() => undefined));
     const a = doc();
     const base = { id: 'm1', createdAt: '2026-11-08T00:00:00Z', body: '보고서', attachments: [a] };
     const { container: bot } = render(<ul><MessageItem message={{ ...base, author: 'Jarvis', authorKind: 'bot' }} /></ul>);
@@ -346,7 +346,9 @@ describe('FR-OPS-09 메시지 안 문서 행', () => {
     expect(link.getAttribute('href')).toBe(`/api/attachments/${a.id}`);
     expect(link.hasAttribute('download')).toBe(true);
     fireEvent.click(link);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // QA iPhone r2 W3: 클릭 때 HEAD 만료 확인 1회만(본문 GET·blob 없음 — B7).
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0]?.[1]?.method).toBe('HEAD');
     fetchSpy.mockRestore();
   });
 });

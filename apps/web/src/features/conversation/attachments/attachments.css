@@ -279,6 +279,10 @@
   .doc-head {
     flex-wrap: wrap;
   }
+  /* 이름부가 2줄로 접히면 확장자부를 끝 줄 옆에 둔다(위 정렬이면 첫 줄 끝에 와 이름이 확장자에서 끝나 보임 — QA iPhone r2 W4). */
+  .doc-name {
+    align-items: flex-end;
+  }
   .doc-name-stem {
     display: -webkit-box;
     -webkit-box-orient: vertical;
