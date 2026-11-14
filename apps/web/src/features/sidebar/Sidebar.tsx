@@ -2,11 +2,12 @@ import { useId, type ReactNode } from 'react';
 import type { Account, ListState, Space } from '../../data';
 import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { isSplitName, NameParts } from '../../ui/NameParts.js';
-import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
+import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SESSION_LIST_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { SIDEBAR_SHELL_COPY } from './copy.js';
 import { AppMark, HashIcon, LogOutIcon, MessageSquareIcon, PanelLeftIcon, PlusIcon, SearchIcon, UsersIcon } from './icons.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
+import { SmartphoneIcon } from '../sessions';
 
 export interface SidebarProps {
   readonly spaces: readonly Space[];
@@ -34,6 +35,8 @@ export interface SidebarProps {
   readonly onRetryList?: () => void;
   /** owner 전용 하단 「멤버 관리」(`/settings/members`). role이 owner가 아니면 렌더하지 않는다. */
   readonly onManageMembers?: () => void;
+  /** 모든 역할 하단 「로그인한 기기」(`/settings/sessions`, G-63·UI-D10). 「로그아웃」 옆. */
+  readonly onManageSessions?: () => void;
   /** 하단 「로그아웃」. */
   readonly onLogout?: () => void;
   /** 계정 영역 알림 설정(CMP-30, ★Q-H4). 없으면 렌더하지 않는다. */
@@ -245,6 +248,11 @@ export function Sidebar(props: SidebarProps) {
             {account.role === 'owner' && props.onManageMembers && (
               <IconAction label={MEMBER_ADMIN_COPY.title} onClick={props.onManageMembers}>
                 <UsersIcon />
+              </IconAction>
+            )}
+            {props.onManageSessions && (
+              <IconAction label={SESSION_LIST_COPY.title} onClick={props.onManageSessions}>
+                <SmartphoneIcon />
               </IconAction>
             )}
             {props.onLogout && (

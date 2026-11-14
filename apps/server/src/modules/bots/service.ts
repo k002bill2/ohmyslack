@@ -51,6 +51,11 @@ export interface BotService {
   visibleMessageIds(botUserId: string, messageIds: readonly string[]): Promise<ReadonlySet<string>>;
   /** 활성 멤버십의 joined_seq(없으면 undefined). 봇 이력·snapshot 페이지를 숨김 구간에서 자른다(F-2·F-4). */
   joinedSeq(botUserId: string, conversationId: string): Promise<number | undefined>;
+  /**
+   * 봇 업로드 저장 트랜잭션 안(호출자의 client)에서 토큰 미폐기·봇 활성·대화 활성 멤버십을 다시 확인하고 그 행들을 COMMIT까지
+   * 잠근다(W-26 Codex r3). 대화 접근 **판정**은 라우트 가드의 assertAccess가 이미 했다 — 이것은 회수와의 직렬화용 재확인이다.
+   */
+  holdUploadGrant(client: pg.PoolClient, grant: { readonly botUserId: string; readonly tokenId: string; readonly conversationId: string }): Promise<repo.UploadGrant>;
 }
 
 export interface BotServiceDeps {
@@ -181,5 +186,6 @@ export function createBotService(deps: BotServiceDeps): BotService {
     me: (botUserId) => repo.botMe(pool, botUserId),
     visibleMessageIds: (botUserId, messageIds) => repo.visibleMessageIds(pool, botUserId, messageIds),
     joinedSeq: (botUserId, conversationId) => repo.joinedSeq(pool, botUserId, conversationId),
+    holdUploadGrant: (client, grant) => repo.lockUploadGrant(client, grant),
   };
 }

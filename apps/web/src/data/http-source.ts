@@ -16,6 +16,7 @@ import type {
   MessageView,
   MessageWriteResponse,
   RepliesResponse,
+  SessionsResponse,
   SnapshotResponse,
   ReadStateResponse,
   SyncResponse,
@@ -24,6 +25,7 @@ import type {
 import { createSendController, type PendingMessage, type PostResult } from '../features/conversation';
 import { adoptAccount, clearCheckpoints, readCheckpoint, writeCheckpoint, type SessionBus, type StorageLike } from '../features/sync';
 import { pushSubscriptionCreatedSchema, pushSubscriptionCreateSchema, vapidPublicKeyResponseSchema } from '../../../../packages/shared/src/push.js';
+import { ATTACHMENT_FILENAME_HEADER } from '../../../../packages/shared/src/attachments.js';
 import { createApi, HttpStatusError, isUnreachable, NetworkError, TimeoutError, type FetchLike } from './api.js';
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
@@ -1078,6 +1080,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         noteGone([userId]);
         return null;
       }),
+    listSessions: () =>
+      attempt(async () => {
+        const res = await api.get<SessionsResponse>('/api/sessions');
+        return res.sessions.map((x) => ({ id: x.id, deviceLabel: x.device_label, createdAt: x.created_at, lastSeenAt: x.last_seen_at, current: x.current }));
+      }),
+    revokeSession: (sessionId) =>
+      attempt(async () => {
+        await api.del<undefined>(`/api/sessions/${encodeURIComponent(sessionId)}`);
+        return null;
+      }),
     startDm: (userId) => attempt(async () => refreshThen((await api.post<ConversationRef>('/api/dms', { user_id: userId })).id)),
     reload: () => {
       if (listState === 'error') {
@@ -1117,12 +1129,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         await api.del(`/api/push/subscriptions/${encodeURIComponent(id)}`);
       },
     },
-    uploadAttachment(conversationId, file) {
+    uploadAttachment(conversationId, file, options = {}) {
       return attempt(async () => {
+        const headers = options.filename === undefined ? undefined : { [ATTACHMENT_FILENAME_HEADER]: encodeURIComponent(options.filename) };
         const res = await api.upload<AttachmentUploadResponse>(
           `/api/attachments?conversation_id=${encodeURIComponent(conversationId)}`,
           file,
-          file.type,
+          options.type ?? file.type,
+          { ...(headers === undefined ? {} : { headers }), ...(options.signal === undefined ? {} : { signal: options.signal }) },
         );
         return res.attachment;
       });

@@ -1,14 +1,23 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler, RouteHandlerMethod } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest, onRequestAsyncHookHandler, preHandlerAsyncHookHandler, RouteHandlerMethod } from 'fastify';
 import { z } from 'zod';
 import { markAccountGuard, markConversationGuard } from '../../http/access.js';
 import { HttpError } from '../../http/errors.js';
-import { ATTACHMENT_MAX_BYTES, attachmentUploadQuerySchema, type AttachmentUploadResponse, type AttachmentView } from '../../shared.js';
+import {
+  ATTACHMENT_DOC_MAX_BYTES,
+  ATTACHMENT_FILENAME_HEADER,
+  ATTACHMENT_HUMAN_CONCURRENT_UPLOADS,
+  attachmentUploadQuerySchema,
+  isAttachmentFileMime,
+  type AttachmentUploadResponse,
+  type AttachmentView,
+} from '../../shared.js';
 import { accountGuard, requireAuth } from '../auth/guards.js';
 import type { AuthService } from '../auth/service.js';
 import type { ConversationsService } from '../conversations/service.js';
 import { conversationRefGuard } from '../sync/routes.js';
-import type { AttachmentMeta } from './repo.js';
+import type { AttachmentMeta, InTxCheck } from './repo.js';
 import { isExpired, type AttachmentsService } from './service.js';
+import { attachmentDisposition } from './filename.js';
 import { declaredType } from './sniff.js';
 
 /** 첨부 라우트(정본: TRD §3 attachments 행, §6-1, DEV_DESIGN 2-4 `attachment` 행). 사람·봇 라우트가 아래 처리 본문을 공유한다. */
@@ -46,6 +55,7 @@ export function toAttachmentView(meta: AttachmentMeta, now: number): AttachmentV
     duration_ms: meta.durationMs,
     width: meta.width,
     height: meta.height,
+    ...(isAttachmentFileMime(meta.mime) ? { filename: meta.filename, has_macros: meta.hasMacros } : {}),
     expires_at: meta.expiresAt.toISOString(),
     expired: isExpired(meta, now),
   };
@@ -58,11 +68,14 @@ export async function uploadAs(
   request: FastifyRequest,
   reply: FastifyReply,
   now: () => number,
+  check?: InTxCheck,
 ): Promise<AttachmentUploadResponse> {
   const query = attachmentUploadQuerySchema.safeParse(request.query);
   if (!query.success) throw new HttpError(400, 'invalid_request');
   const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-  const meta = await service.upload(uploaderId, query.data.conversation_id, declaredType(request.headers['content-type']), body);
+  const rawName = request.headers[ATTACHMENT_FILENAME_HEADER];
+  if (Array.isArray(rawName)) throw new HttpError(400, 'invalid_request');
+  const meta = await service.upload(uploaderId, query.data.conversation_id, declaredType(request.headers['content-type']), body, rawName, check);
   reply.code(201);
   return { attachment_id: meta.id, attachment: toAttachmentView(meta, now()) };
 }
@@ -94,9 +107,11 @@ export function parseRange(header: string | undefined, size: number): ByteRange 
 /** 다운로드 처리 본문(사람·봇 공용). 첨부는 가드가 해석·판정해 둔 것을 쓴다. */
 export async function downloadAs(service: AttachmentsService, meta: AttachmentMeta, request: FastifyRequest, reply: FastifyReply): Promise<Buffer | undefined> {
   const { bytes } = await service.read(meta);
+  // 문서·텍스트 계열은 `attachment` + RFC 6266/5987 파일명, 미디어는 기존 `inline`(TRD §6-1-1 (6)).
+  const file = isAttachmentFileMime(meta.mime);
   reply
-    .header('content-type', meta.mime)
-    .header('content-disposition', 'inline')
+    .header('content-type', file && meta.mime.startsWith('text/') ? `${meta.mime}; charset=utf-8` : meta.mime)
+    .header('content-disposition', file ? attachmentDisposition(meta.filename ?? 'document') : 'inline')
     .header('accept-ranges', 'bytes')
     .header('cache-control', 'no-store')
     .header('x-content-type-options', 'nosniff');
@@ -117,20 +132,58 @@ export async function attachmentCspOnSend(_request: FastifyRequest, reply: Fasti
 }
 
 /**
- * 업로드 라우트는 별도 캡슐 범위에 등록한다: 이 범위에서만 원시 바이트 파서(모든 Content-Type → Buffer)와 10 MiB body 상한을 쓴다.
- * 전역 64 KiB 상한·JSON 파서는 다른 라우트에 그대로 남는다(TRD §6-1 "업로드 라우트만 body 상한 예외").
+ * 업로드 라우트는 별도 캡슐 범위에 등록한다: 이 범위에서만 원시 바이트 파서(모든 Content-Type → Buffer)와 25 MiB body 상한을 쓴다.
+ * 전역 64 KiB 상한·JSON 파서는 다른 라우트에 그대로 남는다(TRD §6-1-1 (4) "업로드 라우트 body 상한 26,214,400").
  */
 export function registerUploadRoute(
   app: FastifyInstance,
   url: string,
-  options: { readonly access: 'account' | 'bot'; readonly preHandler: preHandlerAsyncHookHandler[] },
+  options: { readonly access: 'account' | 'bot'; readonly preHandler: preHandlerAsyncHookHandler[]; readonly onRequest?: onRequestAsyncHookHandler[] },
   handler: RouteHandlerMethod,
 ): void {
   app.register(async (scope) => {
     scope.removeAllContentTypeParsers();
-    scope.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: ATTACHMENT_MAX_BYTES }, (_request, body, done) => done(null, body));
-    scope.post(url, { config: { access: options.access }, bodyLimit: ATTACHMENT_MAX_BYTES, preHandler: options.preHandler }, handler);
+    scope.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: ATTACHMENT_DOC_MAX_BYTES }, (_request, body, done) => done(null, body));
+    scope.post(
+      url,
+      { config: { access: options.access }, bodyLimit: ATTACHMENT_DOC_MAX_BYTES, onRequest: options.onRequest ?? [], preHandler: options.preHandler },
+      handler,
+    );
   });
+}
+
+/**
+ * 사람 계정 동시 업로드 상한(TRD §6-1-1 (2) ★, 초과 429). body를 버퍼에 쌓기 **전**(onRequest)에 세션을 확인하고 자리를 잡는다.
+ * 종료 감시는 비동기 인증 **전**에 건다: 인증 대기 중 연결이 닫히면 자리를 배정하지 않는다. 배정한 자리는 응답 소켓이 닫힐 때
+ * (정상·오류·중단·타임아웃 모두 `close`) 정확히 1회 돌려준다. 메모리 상태(단일 프로세스).
+ */
+export function concurrentUploadGuard(auth: AuthService, max: number = ATTACHMENT_HUMAN_CONCURRENT_UPLOADS): onRequestAsyncHookHandler {
+  const active = new Map<string, number>();
+  const authenticate = accountGuard(auth);
+  const giveBack = (userId: string): void => {
+    const left = (active.get(userId) ?? 1) - 1;
+    if (left <= 0) active.delete(userId);
+    else active.set(userId, left);
+  };
+  return async (request, reply) => {
+    let closed = false;
+    let heldBy: string | undefined;
+    reply.raw.once('close', () => {
+      closed = true;
+      if (heldBy === undefined) return;
+      const userId = heldBy;
+      heldBy = undefined;
+      giveBack(userId);
+    });
+    await authenticate.call(request.server, request, reply);
+    const userId = requireAuth(request).user.id;
+    // 인증을 기다리는 사이 클라이언트가 끊었으면 자리를 잡지 않는다(잡으면 `close`가 다시 오지 않아 영구 누수).
+    if (closed || request.raw.socket?.destroyed === true) throw new HttpError(400, 'invalid_request');
+    const used = active.get(userId) ?? 0;
+    if (used >= max) throw new HttpError(429, 'rate_limited');
+    active.set(userId, used + 1);
+    heldBy = userId;
+  };
 }
 
 /** `attachment` 메타 가드: 첨부 ID → 대화 해석 → assertAccess(read) 하나(B2). 표식이 없으면 레지스트리가 등록을 거부한다. */
@@ -154,7 +207,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, deps: AttachmentR
   registerUploadRoute(
     app,
     '/api/attachments',
-    { access: 'account', preHandler: [account, conversationRefGuard(deps.conversations, 'query', 'write')] },
+    { access: 'account', onRequest: [concurrentUploadGuard(deps.auth)], preHandler: [account, conversationRefGuard(deps.conversations, 'query', 'write')] },
     (request, reply) => uploadAs(deps.attachments, requireAuth(request).user.id, request, reply, deps.clock),
   );
   app.get(

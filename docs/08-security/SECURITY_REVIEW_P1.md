@@ -337,3 +337,81 @@ PASS 판정이라 차단 요소는 아닙니다. G1 전에 아래 레인으로 �
 - `pnpm verify` EXIT=0
 - Codex `/codex:review` 통과
 - `dev/active/`는 커밋하지 않음
+
+## 부록 — 델타 리뷰 — 5eda7e7 (W-18–W-23)
+
+> 기준 커밋: `main 5eda7e7`(worktree `p2s1-secreview-delta`). 작성일 2026-11-13. 읽기 전용 리뷰라 코드는 바꾸지 않았습니다. 위 본문(기준 `3e83e47`)은 수정하지 않았습니다.
+> 목적: G1 조건 ④(DEV_DESIGN 「Security 리뷰 미해결 Critical·High 0건」). 기존 리뷰 뒤에 추가된 봇·첨부·푸시(`14aaf82` 이후, W-18–W-23)를 다룹니다.
+> 참고 출처: 일반 관념, OWASP ASVS, RFC 8030/8291/8292(공개 표준).
+
+### D-1. 범위
+
+| 영역 | 대상 |
+|---|---|
+| 봇 | `apps/server/src/modules/bots/**`, `apps/server/bin/bot-admin.ts`, 봇 리스너(루프백 `BOT_PORT`) HTTP·WS, B9 분리, `rate-limit.ts`, 가시성 필터(`joined_seq`·숨김 스레드), 봇 채널 참여(TM-BOT-04) |
+| 첨부 | `apps/server/src/modules/attachments/**`, 업로드 body 상한, 매직 바이트 판정, Range(206·416), `access: attachment` IDOR, 응답 헤더, 보존·미결속 삭제, 웹 이미지·오디오 렌더 경로 |
+| 푸시 | `apps/server/src/modules/push/**`, `apps/server/bin/vapid-keygen.ts`, endpoint 허용목록, VAPID 주입·미설정 동작, outbound 전송, payload(TR-SEC-15), 로그, 세션 폐기 시 구독 삭제 |
+| 웹 SW | `apps/web/src/features/pwa/{sw.ts,sw-routing.ts,push-notify.ts}`: `/api/**` 우회, 첨부 미캐시, 알림 탭 이동 URL |
+| 범위 밖 | `integrations/hermes-plugin/**`(별도 레인), TRD §6-1-1 문서 첨부(계약만 있고 미구현) |
+
+### D-2. 방법
+
+- 소스 정적 분석을 기본으로 했습니다. 읽기 전용 서브에이전트 3개(봇 / 첨부 / 푸시+SW)가 병렬로 조사했고, 메인이 모든 채택 항목의 file:line을 직접 다시 확인했습니다.
+- 기존 통합 테스트를 테스트 DB(`.env.test`, 포트 0)에서 실행했습니다: `apps/server/test/{bots,attachments,push}` 15 파일·73 테스트 PASS(EXIT 0).
+- 새 공격 코드·독립 실행형 PoC는 만들지 않았습니다. 재현이 필요한 가설은 `needs_validation`으로 남겼습니다. 운영 서버·운영 DB·운영 `.env`에는 접근하지 않았습니다.
+- 심각도 기준은 위 본문과 같습니다. 노출 가정: 메인 리스너는 tailnet 전용 Serve, 사용자는 1인(owner)과 초대 멤버, 봇 리스너는 `127.0.0.1` 루프백. 이 가정에 기대는 판정은 표의 「영향」 열에 적었습니다.
+
+### D-3. 발견 표
+
+| ID | 심각도 | 위치 | 근거 | 영향 | 권고 | 검증 방법 |
+|---|---|---|---|---|---|---|
+| SR-D-01 | Medium | `apps/server/src/modules/attachments/routes.ts:129-132`, `:157`(사람), `apps/server/src/modules/bots/routes.ts:119`(봇), `apps/server/src/http/security.ts:54-62`, `apps/server/src/modules/bots/listener.ts:56-66` | 업로드 캡슐 범위는 `addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: ATTACHMENT_MAX_BYTES })`로 본문 전체(최대 10 MiB)를 메모리에 받습니다. 인증(`account`·봇 토큰)은 preHandler에 있어 본문 파싱 **뒤**에 돕니다. 본문 앞 단계(onRequest)는 메인이 Host·Origin, 봇이 Host·Origin/Cookie 부재만 봅니다 | 세션·토큰 없는 요청도 10 MiB를 버퍼링시킨 뒤 401을 받습니다. 동시 N건이면 N×10 MiB 메모리 압박(가용성). 가정: 메인은 tailnet 기기만 도달하고 Origin은 브라우저 밖 클라이언트가 위조 가능, 봇 쪽은 같은 기기의 로컬 프로세스만 도달. 기밀성·무결성 영향 없음. 이 가정이 깨지면(공개 노출) High로 올려야 합니다 | 업로드 범위에 `onRequest`(또는 `preParsing`) 인증 선판정을 추가해 본문을 읽기 전에 401로 끊습니다. 사람: 세션 쿠키 검증, 봇: `hasBotTokenShape`+`verifyToken`. 공용 `registerUploadRoute`에 `preParsing` 훅 인자를 추가하는 방식이 두 경로를 함께 닫습니다 | needs_validation. 통합 테스트: 인증 없이 `Content-Length: 10485760` 업로드 시 본문 전송 전 401로 끝나는지(응답 시점·서버 수신 바이트) 확인. 직접 덮는 기존 테스트 없음 |
+| SR-D-02 | Low | `apps/server/src/modules/attachments/routes.ts:154-159`, `apps/server/src/app.ts:212`(로그인 limiter만), 대조 `apps/server/src/modules/bots/routes.ts:119`·`rate-limit.ts:6-10` | 사람 업로드에는 건수·바이트 rate limit과 사용자별 미결속 쿼터가 없습니다. 봇만 10건/분·100 MiB/일입니다. THREAT_MODEL TM-ATT-03이 「사람 계정 일 총량은 현재 통제 없음」으로 이미 기록했고, 같은 행의 「★사람 동시 업로드 2건」 통제는 서버·웹 코드에서 찾지 못했습니다 | 인증된 멤버(또는 탈취 세션·고장 클라이언트)가 반복 업로드로 공용 PG를 채웁니다. 미결속분은 1시간 뒤 5분 주기 정리로 지워지지만 결속분은 보존 기한(30/90일)까지 남습니다. 가정: 멤버는 초대된 소수 | 사람 업로드에도 사용자별 limiter(봇과 같은 구조)와 미결속 개수·바이트 상한을 둡니다. 「동시 업로드 2건」은 구현 위치를 정하거나 TM-ATT-03에서 내립니다 | 통합 테스트: 같은 세션으로 상한+1건 업로드 시 429·저장 0 |
+| SR-D-03 | Low | `apps/server/src/modules/attachments/sniff.ts:22`, `:125`, `apps/server/migrations/0003_attachments.sql:13-15` | PNG IHDR의 `readUInt32BE(16/20)`(최대 4,294,967,295)와 Xing 프레임 수로 계산한 `durationMs`를 범위 검사 없이 저장합니다. 열은 `integer`(int4, 최대 2,147,483,647)입니다 | 조작된 PNG·mp3 업로드가 INSERT에서 numeric out of range → 처리되지 않은 DB 오류 → 500. 저장 0이라 데이터 손상은 없고 인증된 사용자만 가능합니다 | 판정 결과에서 int4 범위 밖(또는 현실 상한 밖) 값은 `null`로 바꾸거나 415로 거부합니다 | needs_validation. 단위 테스트: width `0x80000000` PNG의 `sniff` 결과가 범위 안이거나 null, 통합 테스트: 업로드가 4xx |
+| SR-D-04 | Low | `apps/server/src/modules/attachments/service.ts:70-75`, 대조 `apps/server/src/modules/bots/routes.ts:109-115` | 사람 다운로드 가드는 첨부의 대화로 `assertAccess(read)`만 판정하고 `messageId === null`(미결속)일 때 업로더 여부를 보지 않습니다. 봇 경로는 「미결속은 업로더만」을 추가로 강제합니다 | 같은 대화의 다른 멤버가 미결속 첨부 UUID를 알면 결속 전(최대 1시간) 파일을 읽습니다. UUID v4(`service.ts:56` `randomUUID`)라 추측은 불가능하고, 대화 멤버라 결속 뒤에는 어차피 볼 수 있습니다. 사람·봇 규칙 비대칭이 주된 문제입니다 | 사람 가드에도 `meta.messageId === null && meta.uploaderId !== userId`이면 404를 적용하거나, 현재 동작을 TRD §6-1에 의도로 적습니다 | 통합 테스트: 멤버 B가 A의 미결속 첨부 GET → 404 |
+| SR-D-05 | Low | `apps/server/src/modules/push/service.ts:137-141`, `apps/server/src/modules/push/repo.ts:76-86`, `apps/server/migrations/0004_push.sql:15-16`, 전송 루프 `service.ts:121-128` | 구독 등록은 허용목록 판정 뒤 바로 upsert합니다. 고유 키는 `endpoint` 하나뿐이고 사용자·세션별 구독 수 상한이 없습니다. 전송은 전역 `chain`에서 대상별로 직렬 `await` 합니다(타임아웃 10초) | 인증된 멤버가 허용 호스트의 임의 경로로 구독을 대량 등록하면, 그 멤버가 수신자인 메시지마다 outbound 요청이 그만큼 직렬로 나가 다른 사용자 알림이 지연됩니다. 404/410 응답은 행을 지우므로 영향은 상대 응답에 달려 있습니다. SSRF는 아닙니다(허용목록) | 사용자(또는 세션)당 구독 상한(예: 세션당 1, 사용자당 소수)을 두고 초과 시 가장 오래된 행을 지웁니다 | 통합 테스트: 같은 세션으로 상한+1건 등록 시 행 수가 상한 이하 |
+| SR-D-06 | Low | `apps/server/bin/lib/reset-password.ts:33-36`, `apps/server/src/modules/members/repo.ts:51-56`, 대조 `apps/server/src/modules/auth/repo.ts:92-97`, 전송 필터 `apps/server/src/modules/push/repo.ts:63-64` | 로그아웃·세션 폐기는 같은 SQL에서 `push_subscriptions`를 지웁니다. 반면 `reset-password` CLI와 멤버 비활성화는 `sessions.revoked_at`만 갱신하고, 구독 삭제는 (CLI는 다른 프로세스라 닿지 않는) 이벤트나 비동기 작업에 의존합니다 | TRD §6-2 「세션 폐기 시 구독 함께 삭제」와 어긋나 행이 남습니다. 다만 전송 쿼리가 `s.revoked_at IS NULL`·`u.status='active'`를 요구해 남은 행으로는 알림이 나가지 않습니다(fail-closed). 실질 노출 없음 | 두 경로의 트랜잭션 안에서 `DELETE FROM push_subscriptions WHERE user_id = $1`(또는 폐기 세션 ID)를 함께 실행합니다 | 통합 테스트: reset-password 뒤 해당 사용자 `push_subscriptions` 0행 |
+| SR-D-07 | Low | `apps/server/src/modules/bots/routes.ts:251-253`, `:262-264`, `apps/server/src/modules/bots/ws.ts`, `apps/server/src/modules/bots/repo.ts:164-165` | 봇 rate limit은 생성·수정·업로드(`rateGuard`/`uploadRateGuard`)에만 있습니다. `me`·history·replies·sync·snapshot·read-state·WS 연결에는 없습니다. 형식이 맞는 토큰 요청마다 `last_used_at` UPDATE가 1회 실행됩니다 | 유효 토큰 보유자가 DB 읽기·쓰기를 무제한 일으킵니다. 토큰은 루프백 전용·owner 소유라 영향은 자기 서버 부하로 한정됩니다(TM-BOT-07 범위) | 읽기 경로에 느슨한 상한 또는 WS 동시 연결 상한을 두고, `last_used_at`은 분 단위로만 갱신합니다. 허용한다면 TM-BOT-07에 명시합니다 | 단위 테스트: 읽기 상한+1 → 429 |
+| SR-D-08 | Info | `apps/server/src/modules/bots/repo.ts:165`, `apps/server/migrations/0002_bots.sql:20`, `apps/server/src/modules/bots/token.ts:10-16` | 토큰 비교가 상수 시간 비교가 아니라 `token_hash = $1` 인덱스 동등 비교입니다 | 원문은 CSPRNG 32바이트이고 비교 대상은 SHA-256 해시라 타이밍 오라클이 실용적이지 않습니다. 조치 불필요 | 설계 근거로만 남깁니다 | 해당 없음 |
+| SR-D-09 | Info | `apps/server/src/modules/attachments/sniff.ts:49`, `:85-92`, `apps/server/src/modules/attachments/routes.ts:98-102`, `:39`, `:114-117` | JPEG(`FF D8 FF`)·mp3(프레임 헤더 1개) 판정이 앞부분 위주라 뒤에 다른 내용이 붙은 폴리글랏이 저장될 수 있습니다. 이미지 EXIF도 그대로 저장·제공합니다 | 응답이 판정 형식 고정 Content-Type·`nosniff`·`sandbox; default-src 'none'`·`no-store`이고 SVG·HTML이 허용목록에 없어 같은 출처 스크립트 실행 경로는 없습니다. EXIF(위치 등)는 대화 멤버에게 보입니다 | 현행 유지. EXIF 노출은 정책으로 문서화합니다 | `attachment-headers.int.test.ts` "다운로드 응답은 nosniff·sandbox CSP·no-store·inline…" PASS |
+| SR-D-10 | Info | `apps/server/src/modules/push/sender.ts:20-28`, `apps/server/src/modules/push/service.ts:58-68` | web-push 전송 타임아웃(10초)은 소켓 유휴 기준이고, 응답 본문 크기·전체 소요 시간·대기열 길이 상한이 없습니다 | 허용목록 호스트(FCM·Apple·Mozilla)만 상대하므로 악용 가능성은 낮습니다. 상대가 느리면 전역 직렬 `chain`이 지연됩니다 | 필요해지면 AbortSignal 기반 전체 기한과 대기열 상한을 둡니다 | needs_validation(느린 가짜 push service 통합 테스트) |
+| SR-D-11 | Info | `docs/08-security/THREAT_MODEL.md:221`, `:232`, 실제 테스트 `apps/server/test/push/push.int.test.ts:50-54`, `packages/shared/src/push.ts:14-16` | THREAT_MODEL이 근거로 인용하는 `push-endpoint-allowlist.int.test.ts`·`attachment-limits.int.test.ts`·`document-limits.int.test.ts`가 저장소에 없습니다. TM-PUSH-03은 `*.push.services.mozilla.com`을 적었지만 코드는 `updates.push.services.mozilla.com` 정확 일치만 허용합니다(코드가 더 엄격) | 추적성 문제이고 통제 자체는 `push.int.test.ts:50-54`가 확인합니다 | THREAT_MODEL 담당 레인에서 테스트 이름·허용목록 문구를 실제와 맞춥니다(이 레인은 THREAT_MODEL 수정 금지) | 문서 대조 |
+
+### D-4. 확인한 통제 (위반 없음)
+
+| 영역 | 통제 | 근거(file:line) |
+|---|---|---|
+| 봇 토큰 | CSPRNG 32바이트 + `omsb_` 접두사, DB에는 SHA-256 hex만, 형식 불일치는 DB 조회 없이 401 | `bots/token.ts:10-20`, `bots/routes.ts:39`, `:50-53` |
+| 봇 토큰 | 발급 상한 2개 `FOR UPDATE` 직렬화, 폐기·비활성 즉시 거부, 폐기 뒤 열린 WS는 sweep(2초)·전달 직전 재확인으로 종료(TRD 5초 이내) | `bots/service.ts:103-109`, `bots/repo.ts:113`, `:127-129`, `:165`, `:176-183`, `bots/ws.ts:22`; `bot-token.int.test.ts` PASS |
+| 봇 리스너 | 루프백 바인드, Host 허용목록(`127.0.0.1`·`localhost`+포트, DNS rebinding 차단), Origin·Cookie 동봉 시 400(WS 업그레이드 포함, CSWSH 차단), body 64 KiB | `bots/listener.ts:56-66`, `:79`, `:127-129`; `bot-listener-bind.int.test.ts` PASS |
+| B9 분리 | 메인은 `bot` 메타 라우트 등록 불가, 봇 리스너는 `/api/bot/v1/` 밖 등록 불가, 봇 가드 표식 없으면 기동 실패, 봇 앱엔 쿠키·세션 플러그인 없음 | `http/access.ts:107-113`, `:124-125`, `bots/listener.ts:84-113` |
+| 봇 가시성 | `COALESCE(루트 seq, seq) > joined_seq` + 활성 멤버십을 이력·답글·snapshot·sync·첨부·쓰기·read-state와 WS 실시간·재생에 모두 적용. 메시지 삭제는 소프트 삭제(`deleted_at`)라 삭제 프레임도 같은 필터를 통과 | `bots/repo.ts:221-228`, `bots/routes.ts:109-115`, `:129-222`, `realtime/hub.ts:230-241`, `:305-310`, `messages/repo.ts:28`; `bot-channel-scope`·`bot-channel-p3fix`·`bot-thread` int PASS |
+| TM-BOT-04 | 봇 추가는 워크스페이스 owner·활성 멤버만(403), 채널만(DM 400), 같은 워크스페이스 활성 봇만, 봇은 사람 DM 상대 불가, 봇 라우트에 참여·DM 생성 없음(비공개 채널 개념은 스키마에 없음) | `conversations/service.ts:59-77`, `conversations/repo.ts:52-55`, `:64-65` |
+| 봇 로그 | 리스너 로그는 method·route 템플릿·status·request_id만, CLI는 토큰을 stdout에 1회만 | `bots/listener.ts:87-99`, `bots/admin-cli.ts:40`, `:48-50` |
+| 첨부 업로드 | 업로드 라우트만 캡슐 범위 원시 파서·10 MiB, 나머지 64 KiB 유지, 빈 본문 400, 초과 413, DB CHECK `byte_size BETWEEN 1 AND 10485760` | `attachments/routes.ts:123-134`, `app.ts:155`, `attachments/service.ts:49-50`, `migrations/0003_attachments.sql:21` |
+| 첨부 판정 | 형식은 매직 바이트로만(PNG·JPEG·WebP·mp3), 선언 Content-Type은 일치 여부만(불일치 415), 저장 mime = 판정 결과, DB CHECK로 4종 제한 | `attachments/service.ts:51-59`, `migrations/0003_attachments.sql:20` |
+| Range | 단일 범위만 206, `bytes=0-`·접미 `-N`·끝 클램프·`-0` 416·시작≥크기 416(`bytes */size`)·역순·다중·비숫자는 200. 오프바이원·음수 슬라이스 없음 | `attachments/routes.ts:76-111`; `attachments.unit.test.ts`·`attachments.int.test.ts` PASS |
+| 첨부 IDOR | `attachment` 메타 가드 → 첨부의 대화로 `assertAccess` 하나(B2), 형식 오류·비멤버·퇴장 멤버 모두 404, ID는 UUID v4, 삭제 메시지의 바이트는 같은 트랜잭션에서 삭제 | `attachments/routes.ts:22-29`, `:136-141`, `attachments/service.ts:56`, `:70-81`, `attachments/repo.ts:115-121`(삭제 시 purge) |
+| 첨부 응답 헤더 | `content-type`=판정 mime, `inline`, `no-store`, `nosniff`, 라우트 onSend로 CSP `sandbox; default-src 'none'`(사람·봇 공통), 파일명 필드 없음 | `attachments/routes.ts:39`, `:96-117`, `:162`, `bots/routes.ts:122` |
+| 첨부 보존 | 5분 주기 정리: 미결속 1시간 삭제, 보존 기한(오디오 30일·이미지 90일)·삭제 메시지는 바이트 삭제 | `attachments/service.ts:82-104`, `attachments/repo.ts`(retain) |
+| 웹 첨부 렌더 | `dangerouslySetInnerHTML`·`createObjectURL` 0건, `src`는 `/api/attachments/${encodeURIComponent(id)}`, `alt`는 고정 문구 | `apps/web/src/features/conversation/attachments/attachment-url.ts:5` |
+| 푸시 endpoint | https만, 포트·userinfo 금지, 정확 일치 호스트 + `.push.apple.com` 접미사(접미사 자체 불가). 후행 점·IP 리터럴·`evilfcm.googleapis.com`류 불일치 | `packages/shared/src/push.ts:14-33`, `push/service.ts:139`; `push.int.test.ts:50-54` PASS |
+| 푸시 VAPID | 키 파일·subject 검증, 미설정·오류면 push만 비활성(구독·공개키 404, 전송 0), 키·경로 로그 없음, keygen `wx`·0600 | `push/config.ts:23-73`, `push/routes.ts:26-38`, `bin/vapid-keygen.ts:18-25` |
+| 푸시 outbound | web-push `https.request` 직접 호출(리다이렉트 미추종), 404/410이면 행 삭제, 로그는 결과 코드·상태 코드만 | `push/sender.ts:23-35`, `push/service.ts:72-92` |
+| TR-SEC-15 | payload는 strict 스키마(식별자·`from_bot`만), 전송 전 parse, SW 표시 문구 고정 | `packages/shared/src/push.ts:63-73`, `push/service.ts:111-118`, `apps/web/src/features/pwa/push-notify.ts:16-43`, `:79-88` |
+| 푸시 수신자 | 전송 대상 쿼리가 활성 사람·살아 있는 세션·현재 VAPID 키·활성 멤버십·미읽음을 함께 요구 | `push/repo.ts:60-70` |
+| SW 캐시 | 비GET·타 출처·`/api`·`/api/**`·WS 업그레이드는 respondWith 없이 우회, 런타임 캐시 없음(precache 셸만), precache 목록도 `/api`·`//` 제외, 이전 셸 캐시 정리 | `apps/web/src/features/pwa/sw-routing.ts:44-68`, `:100-138` |
+| 알림 탭 URL | `data.url`은 SW가 UUID 검증 값으로 만든 `/c/{id}` 경로이고, 클릭 시 같은 출처가 아니면 `/` | `apps/web/src/features/pwa/push-notify.ts:24-34`, `:70-76`, `:123-132` |
+
+### D-5. needs_validation
+
+1. SR-D-01: 인증 없는 10 MiB 업로드가 실제로 본문 수신 완료 뒤 401인지(메인·봇 각각).
+2. SR-D-03: width `0xFFFFFFFF` PNG·과대 Xing 프레임 수 mp3 업로드가 500인지.
+3. SR-D-10: 응답이 느린 push service에서 전역 전송 chain 정체 정도.
+4. TM-ATT-03 「★사람 동시 업로드 2건」의 구현 위치(서버·웹 코드에서 찾지 못함).
+
+### D-6. 델타 결론
+
+Critical·High 발견 없음. Medium 1건(SR-D-01)은 가정(tailnet 전용·루프백)에 기댄 가용성 문제라 G1 차단 요소가 아니며, 수정 레인을 권고합니다. 위 가정이 바뀌면(공개 노출) SR-D-01을 다시 판정해야 합니다.
+
+델타 결론: Critical 0 · High 0

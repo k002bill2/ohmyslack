@@ -7,7 +7,9 @@ import {
   createBotService,
   listenBot,
   type BotEvents,
+  type BotRateLimiter,
   type BotService,
+  type BotUploadProbe,
   type CreatedBot,
 } from '../../src/modules/bots/index.js';
 import { createPgSyncStore } from '../../src/modules/sync/index.js';
@@ -31,6 +33,10 @@ export interface BotListenerContext {
 export interface BotListenerOptions {
   /** true면 봇 WS가 같은 프로세스 close 이벤트를 구독하지 않는다(CLI 별도 프로세스 경로 = sweep만 재현). */
   readonly sweepOnly?: boolean;
+  /** 봇 앱에 주입할 rate limiter(테스트가 사용량을 미리 채울 때). */
+  readonly limiter?: BotRateLimiter;
+  /** 봇 업로드 단계 신호·배리어(경쟁 순서 고정용). */
+  readonly uploadProbe?: BotUploadProbe;
 }
 
 export interface HttpResult {
@@ -54,7 +60,7 @@ export async function setupBotListener(options: BotListenerOptions = {}): Promis
     readEvents: conv.app.readEvents,
     ...(options.sweepOnly === true ? {} : { botEvents }),
   };
-  const botApp = buildBotApp({ bots: service, ...services, logger: { log: () => undefined }, realtime });
+  const botApp = buildBotApp({ bots: service, ...services, logger: { log: () => undefined }, realtime, ...(options.limiter === undefined ? {} : { limiter: options.limiter }), ...(options.uploadProbe === undefined ? {} : { uploadProbe: options.uploadProbe }) });
   const env = { HOST: '127.0.0.1' };
   const botAddress = await listenBot(botApp, env, 0);
   await conv.app.listen({ host: '127.0.0.1', port: 0 });

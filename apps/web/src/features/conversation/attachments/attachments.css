@@ -112,16 +112,33 @@
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
 }
+/* 파일명은 문서 행과 같은 말줄임 규칙(UI_STATES §2-13): 이름부만 한 줄 말줄임, 확장자부는 줄이지 않는다. */
 .composer-chip-name {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.composer-chip-name-stem {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.composer-chip-name-ext {
+  flex: none;
+  white-space: nowrap;
+}
 .composer-chip-size,
 .composer-chip-state {
+  flex: none;
   color: var(--text-muted);
   font-size: var(--text-xs);
+  white-space: nowrap;
+}
+/* 「첨부 제거」: 좁은 칩에서 버튼이 줄어 글자 단위로 세로 줄바꿈되지 않게(QA r2 D1). 줄어드는 몫은 이름부가 맡는다. */
+.composer-chip .msg-action {
+  flex: none;
+  white-space: nowrap;
 }
 .composer-chip-failed {
   border-color: var(--danger-solid);
@@ -133,4 +150,141 @@
   gap: var(--space-2);
   color: var(--danger-text);
   font-size: var(--text-sm);
+}
+.composer-chip-kind {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.composer-chip-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+/* 비결정 진행 표시(퍼센트 없음, UI-D3). 움직임 줄이기 설정이면 멈춘 점. */
+.composer-chip-progress {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: composer-chip-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes composer-chip-pulse {
+  from {
+    opacity: 0.3;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-chip-progress {
+    animation: none;
+  }
+}
+
+/*
+ * CMP-32 문서 행(UI_STATES §2-13, D §6-5). 390 = 파일명 블록(이름부 최대 2줄) + 메타 줄 + 오른쪽 「받기」 44×44 이상.
+ * medium·wide = 한 줄. 확장자부는 줄이지 않는다(매크로 확장자 위장 판단).
+ */
+.doc-attachment {
+  --doc-row-max-width: 480px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(100%, var(--doc-row-max-width));
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.doc-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+.doc-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.doc-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.doc-kind {
+  flex: none;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.doc-name {
+  display: flex;
+  min-width: 0;
+}
+.doc-name-stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-name-ext {
+  flex: none;
+  white-space: nowrap;
+}
+.doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+/* 「매크로 포함」 — 텍스트가 본체, 색만으로 구분하지 않도록 테두리도 둔다(FR-CLIENT-07). */
+.doc-macros {
+  padding-inline: var(--space-1);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: var(--warning-text);
+  background: var(--warning-bg);
+}
+.doc-download {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  text-decoration: none;
+}
+.doc-download:hover {
+  background: var(--bg-hover);
+}
+.doc-attachment-expired .doc-head,
+.doc-attachment-expired .doc-meta {
+  color: var(--text-muted);
+}
+.doc-attachment-expired .doc-meta {
+  font-style: italic;
+}
+@media (width <= 640px) {
+  /* compact: 이름부 최대 2줄까지 보이고 그 뒤 말줄임(터치에는 title이 보이지 않음). */
+  .doc-head {
+    flex-wrap: wrap;
+  }
+  .doc-name-stem {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }

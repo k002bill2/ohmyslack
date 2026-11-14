@@ -91,8 +91,52 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
 cd integrations/hermes-plugin
 uv venv .venv --python ~/.hermes/hermes-agent/venv/bin/python3.11
 uv pip install --python .venv/bin/python pytest pytest-asyncio aiohttp pyyaml ruamel.yaml
-PYTHONPATH=~/.hermes/hermes-agent .venv/bin/python -m pytest -q
+bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 아래 「격리 테스트 실행」
 ```
 
 - 테스트는 가짜 aiohttp 봇 서버를 상대로 돌고, `HERMES_HOME`을 tmp로 격리합니다. 실제 서버나 게이트웨이에는 연결하지 않습니다.
 - Hermes 본체는 `PYTHONPATH`로 읽기만 하며, 설치하거나 복사하지 않습니다.
+
+## 격리 테스트 실행 (설계 r4 §Q5 · 단계 1)
+
+`P/tests` 는 autouse session fixture 가 Hermes 를 import 하므로 **래퍼 밖에서 직접 돌리지 않습니다**.
+`tests/conftest.py` 맨 앞 가드가 래퍼 표지·격리 env 없는 실행을 EXIT 3(`OHMYSLACK-ISOLATION-GUARD-REFUSED`)으로 끊습니다.
+가드는 보조 장치이고, OS 수준 차단은 `scripts/pytest.sb`(sandbox-exec 사용자 정의 프로필)의 몫입니다.
+
+- 구성: `scripts/isolated-pytest.sh`(env -i 허용목록 + sandbox-exec), `scripts/pytest.sb`(템플릿 → `.isolation/profile.sb` 렌더링),
+  `tests/_isolation_guard.py`(순수 함수 가드), `tests_isolation/`(Hermes import 0 점검), `probe_outside/`(사람 전용, 기본 수집 제외 — 이름을 `test*` 로 시작하지 않아 pytest 가 그 conftest 를 자동으로 읽지 않음).
+- `.isolation/` 은 실행마다 래퍼가 지우고 다시 만듭니다(gitignore). 지우기 전에 경로·하위가 symlink 가 아니고 realpath 가 기대값인지 확인하고, 어긋나면 아무것도 지우지 않고 EXIT 2. 삭제는 symlink 를 따라가지 않는 `find -P … -delete`(`scripts/_iso_fs.sh`), 재생성은 새 `mkdir`. 회귀: `bash scripts/iso-symlink-regress.sh <worktree 안 대상 디렉터리>` → `SYMLINK-REGRESS PASS`.
+- 거부 포트 줄은 래퍼의 `DENY_PORTS=(8787 8788)` 한 목록에서 생성됩니다(사람 실행 `--prove-outside` 때만 임의 포트 X 추가).
+- `--prove-outside` 의 TTY·확인 인자·`/dev/tty` 난수 왕복 장치는 **우발 실행 방지**일 뿐입니다. 의도적 우회는 막지 못합니다.
+- 무인자(`testpaths = tests`)·`.`·`tests`·`tests_isolation` 수집은 모두 정상 종료(rc 0)하고 `probe_outside` 노드가 0건입니다(`.` 은 `--ignore=probe_outside` 가 막음). `probe_outside` 를 직접 지정하면 그 conftest 첫 동작인 outside 가드가 EXIT 4 + `OHMYSLACK-OUTSIDE-GUARD-REFUSED` 로 끊습니다. `--preflight` 가 이 다섯 경우를 sandbox 안에서 확인하고, 첫 실패에서 즉시 멈춥니다(뒤 수집 0).
+
+| 모드 | 명령(`integrations/hermes-plugin` 에서) | 기대 |
+|---|---|---|
+| 에이전트 점검 | `bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` | `tests_isolation` 통과 → 수집 4조합 rc 0·outside 0건 → 직접 지정 rc 4 + outside 표지 → `PREFLIGHT PASS`, `EXIT=0`. 실패 때 `PREFLIGHT FAIL: …`·`PREFLIGHT STOPPED`, `EXIT=1`(sandbox 오류·신호는 `EXIT=6`) |
+| 가드 거부 점검 | `bash scripts/isolated-pytest.sh --probe-guard; echo EXIT=$?` | `OHMYSLACK-ISOLATION-GUARD-REFUSED: …`, `PROBE-GUARD PASS`, `EXIT=3` |
+| 전체 실행(G3 뒤, 사람) | `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` | TTY·난수 입력 뒤 `tests` 실행 |
+
+### 사람 실행 (나) 0–5 — 에이전트는 실행하지 않습니다
+
+(나)-0 은 `gateway` import·`~/.hermes` 열기를 포함하므로 관찰 동결(11-16) 종료 뒤 또는 영환님 명시 승인 뒤에 실행합니다.
+
+| # | 명령 | 기대 출력 |
+|---|---|---|
+| 0 | `bash scripts/isolated-pytest.sh --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN; echo EXIT=$?` (사람 터미널, 화면의 4자리 입력) | `probe_outside/test_outside_probe.py` 6건 PASS: 홈·`/tmp` 카나리 쓰기 `PermissionError`, `~/.hermes/config.yaml`·`hermes-agent/.git/HEAD` 열기 `PermissionError`, `gateway` import 스모크 성공, 임의 포트 X listen 뒤 연결 `PermissionError`. `EXIT=0` |
+| 1 | `ls -la ~/.ohmyslack-sbx-canary-* /tmp/ohmyslack-sbx-canary-* 2>&1` | `No such file or directory` 2줄 |
+| 2 | `touch .isolation/marker` → `--run` 전체 실행 → `find ~/.hermes/hermes-agent -newer .isolation/marker -not -path '*/.git/*' -print \| head -20` | 0줄(게이트웨이가 쓰는 파일이 섞이면 경로를 붙여 사람이 판정) |
+| 3 | `realpath .venv/bin/python` | `…/generation-1786174606-…/cpython-3.11.15-macos-aarch64-none/bin/python3.11` (래퍼가 이 실경로로 프로필을 렌더링) |
+| 4 | `sandbox-exec -p '(version 1)(allow default)' /usr/bin/true; echo EXIT=$?` (사람 터미널과 Orca 안 각각) | `EXIT=0`. 폐기된 `-n no-network` 는 이 OS 에서 `Killed: 9`(137)라 쓰지 않습니다 |
+| 5 | 별도 명령 없음 — 0행의 임의 포트 X 결과 | X 연결이 sandbox 거부로 PASS. 8787·8788 은 연결하지 않고, 같은 목록에서 생성된 거부 줄 존재만 `grep -n 'localhost:87' .isolation/profile.sb` 로 확인 |
+
+#### (나)-0 에서 import 가 막힐 때 — 진단 (사람 실행)
+
+`ModuleNotFoundError`·`PermissionError` 로 0행이 실패하면 사람 터미널에서 거부 로그를 봅니다.
+
+```
+log show --last 5m --style compact --predicate 'sender == "Sandbox" AND eventMessage CONTAINS "deny"' | grep -i python | tail -30
+```
+
+거부된 경로가 `@HERMES_SRC@`(= `~/.hermes/hermes-agent`) 최상위 `*.py` 이면, 프로필 `scripts/pytest.sb` 에 `(allow file-read* (literal "<그 파일 경로>"))` 를 추가합니다. 단 Hermes 루트 바로 아래 `*.py` 는 정규식 1줄(`^<이스케이프된 루트>/[^/]+\.py$`)로 이미 허용되어 있습니다(설계 N-12 「한 줄씩」 이탈 — 사람 재실행 반복 회피). `.py` 아닌 루트 파일(`.env`·`config.yaml`·`*.json`)은 계속 거부됩니다. 패키지형 최상위 폴더(이름이 소문자·숫자·`_` 만인 폴더 — `agent`·`gateway`·`pm`·`tools` 등)는 폴더 자체와 그 아래 전부를 정규식 1줄(`^<이스케이프된 루트>/[a-z_][a-z0-9_]*(/.*)?$`)로 일괄 허용합니다(설계 N-12 추가 이탈 — (나)-2 `--run` 의 `pm/__init__.py` 114 errors 대응. Hermes 코드는 비밀이 아니고 비밀은 `~/.hermes` 설정·프로필·`.env` 에 있으며 그쪽은 계속 거부). 점으로 시작하는 폴더·파일(`.git`·`.env`)과 대문자 시작 루트 파일도 거부 유지입니다. 다음 거부가 점 폴더이거나 루트의 `.py` 아닌 파일이면 허용 여부는 사람이 판정합니다. 루트 디렉터리 자체의 목록 읽기(`literal "@HERMES_SRC@"`)는 이미 허용되어 있습니다 — FileFinder 의 `os.listdir` 용이며 하위 파일 내용은 열리지 않습니다.
+
+추가 사람 확인: 인터프리터 base 의 `sitecustomize`·`.pth`(H-4). 프로필이 mach*·ipc*·iokit*·sysctl-write·user-preference* 를 다시 거부하므로 0행·`--run` 이 이 이름들에서 막히면 거부 로그로 필요한 이름만 한 줄씩 재허용합니다(N-22).

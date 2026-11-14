@@ -13,6 +13,7 @@ import {
   type MessageView,
   type MessageWriteResponse,
   type RepliesResponse,
+  isAttachmentFileMime,
 } from '../../shared.js';
 import { accountGuard, requireAuth } from '../auth/guards.js';
 import type { AuthService } from '../auth/service.js';
@@ -73,6 +74,8 @@ export function toView(m: MessageRecord): MessageView {
       duration_ms: a.durationMs,
       width: a.width,
       height: a.height,
+      // 문서·텍스트 계열만 filename·has_macros를 싣는다(미디어 projection은 기존 모양 유지, TRD §6-1-1 (5)).
+      ...(isAttachmentFileMime(a.mime) ? { filename: a.filename, has_macros: a.hasMacros } : {}),
       expires_at: a.expiresAt.toISOString(),
       expired: a.expired,
     })),
