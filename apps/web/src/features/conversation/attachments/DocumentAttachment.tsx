@@ -2,7 +2,8 @@ import { ATTACHMENT_FILENAME_FALLBACK_STEM, type AttachmentView } from '../../..
 import { ATTACHMENT_COPY, documentDownloadName } from '../../../ui/copy.js';
 import { attachmentUrl } from './attachment-url.js';
 import { formatBytes } from './composer-upload.js';
-import { documentKindLabel, splitFilename } from './file-kinds.js';
+import { documentKindLabel } from './file-kinds.js';
+import { FileName } from './FileName.js';
 
 /** Lucide `file-text` 형태(장식). */
 function FileTextIcon() {
@@ -37,7 +38,6 @@ function DownloadIcon() {
 export function DocumentAttachment({ attachment }: { readonly attachment: AttachmentView }) {
   const filename = attachment.filename ?? ATTACHMENT_FILENAME_FALLBACK_STEM;
   const kind = documentKindLabel(attachment.mime) ?? '';
-  const { stem, ext } = splitFilename(filename);
   const macros = attachment.has_macros === true;
   const size = formatBytes(attachment.byte_size);
   return (
@@ -46,10 +46,7 @@ export function DocumentAttachment({ attachment }: { readonly attachment: Attach
       <div className="doc-main">
         <span className="doc-head">
           <span className="doc-kind">{kind}</span>
-          <span className="doc-name" title={filename}>
-            <span className="doc-name-stem">{stem}</span>
-            {ext !== '' && <span className="doc-name-ext">{ext}</span>}
-          </span>
+          <FileName name={filename} base="doc-name" />
         </span>
         {attachment.expired ? (
           <span className="doc-meta">{ATTACHMENT_COPY.expired}</span>

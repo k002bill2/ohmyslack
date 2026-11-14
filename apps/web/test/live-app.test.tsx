@@ -13,7 +13,7 @@ const settle = async () => {
   for (let i = 0; i < 6; i += 1) await act(flush);
 };
 
-function mount(server: FakeServer) {
+function mount(server: FakeServer, opts: { readonly lifecycle?: boolean } = {}) {
   const storage = new MemoryStorage();
   const sources: HttpDataSource[] = [];
   render(
@@ -28,6 +28,7 @@ function mount(server: FakeServer) {
           isOnline: () => true,
           setTimer: () => 0,
           clearTimer: () => undefined,
+          ...(opts.lifecycle === true ? { lifecycle: { doc: document, win: window } } : {}),
         });
         sources.push(ds);
         return ds;
@@ -78,5 +79,78 @@ describe('LiveApp', () => {
     expect(screen.queryByLabelText('공간')).toBeNull();
     expect(readCheckpoint(ME, storage)).toBeNull();
     expect(sources.at(-1)?.getSnapshot().spaces).toEqual([]);
+  });
+
+  describe('원격 로그아웃(WS 1008 → GET /api/me 401) 안내 문구 — UI_STATES §2-14 :414·C9', () => {
+    const revokeRemotely = async (server: FakeServer) => {
+      server.on('GET /api/me', () => ({ status: 401 }));
+      await act(async () => {
+        server.socket.serverClose(1008);
+      });
+      await settle();
+    };
+
+    it('복원 경로: 첫 복귀 도중 전경 복귀(visibilitychange)가 끼어도 연결된 세션이면 「세션이 종료되었습니다」', async () => {
+      const server = new FakeServer();
+      const { sources } = mount(server, { lifecycle: true });
+      // 페이지를 연 직후 탭이 전경으로 오면 첫 start()의 복귀 절차가 새 복귀 절차로 대체된다(QA r2 D2 재현).
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await settle();
+      expect(sources.at(-1)?.getSnapshot().connection).toBe('connected');
+      await revokeRemotely(server);
+      expect(screen.getByRole('button', { name: '로그인' })).toBeTruthy();
+      expect(screen.getByText(SESSION_ENDED_TEXT)).toBeTruthy();
+    });
+
+    it('폼 로그인 경로: 로그인 뒤 원격 로그아웃이면 「세션이 종료되었습니다」', async () => {
+      const server = new FakeServer();
+      let authed = false;
+      server.on('GET /api/me', () =>
+        authed ? { status: 200, body: { user: { id: ME, email: 'a@x', display_name: 'A', role: 'member' }, csrf_token: 'c' } } : { status: 401 },
+      );
+      server.on('POST /api/auth/login', () => {
+        authed = true;
+        return { status: 204 };
+      });
+      mount(server, { lifecycle: true });
+      await settle();
+      fireEvent.change(screen.getByLabelText('이메일'), { target: { value: 'a@x.test' } });
+      fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'pw' } });
+      fireEvent.submit(screen.getByRole('button', { name: '로그인' }).closest('form') as HTMLFormElement);
+      await settle();
+      expect(screen.getByLabelText('공간')).toBeTruthy();
+      await revokeRemotely(server);
+      expect(screen.getByText(SESSION_ENDED_TEXT)).toBeTruthy();
+    });
+
+    it('첫 진입 401(세션 없음): 전경 복귀가 끼어도 안내 문구 없음', async () => {
+      const server = new FakeServer();
+      server.on('GET /api/me', () => ({ status: 401 }));
+      mount(server, { lifecycle: true });
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await settle();
+      expect(screen.getByRole('button', { name: '로그인' })).toBeTruthy();
+      expect(screen.queryByText(SESSION_ENDED_TEXT)).toBeNull();
+    });
+
+    it('직접 로그아웃(복원 경로): 안내 문구 없음(UI_STATES :413)', async () => {
+      const server = new FakeServer();
+      server.on('POST /api/auth/logout', () => ({ status: 204 }));
+      const { sources } = mount(server, { lifecycle: true });
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await settle();
+      await act(async () => {
+        await sources.at(-1)?.logout();
+      });
+      await settle();
+      expect(screen.getByRole('button', { name: '로그인' })).toBeTruthy();
+      expect(screen.queryByText(SESSION_ENDED_TEXT)).toBeNull();
+    });
   });
 });

@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+# 격리 가드 — Hermes 관련 어떤 import·session fixture보다 먼저(설계 r4 §Q5 ★구성 4). 어긋나면 EXIT 3.
+from _isolation_guard import enforce as _enforce_isolation  # noqa: E402
+
+_enforce_isolation()
+
+import sys as _sys  # noqa: E402
+import types as _types  # noqa: E402
+
+# probe2형 의존성 준비·재실행 방지 스텁 + 바이트코드 쓰기 끔(가드 뒤).
+_sys.modules.setdefault("hermes_bootstrap", _types.ModuleType("hermes_bootstrap"))
+_sys.dont_write_bytecode = True
+
 import asyncio
 import sys
 import threading

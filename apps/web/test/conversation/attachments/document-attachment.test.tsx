@@ -105,7 +105,7 @@ describe('FR-OPS-09 작성기 문서 칩', () => {
       expect(opts?.filename).toBe(name);
       expect(opts?.type).toBe('application/octet-stream');
       expect(opts?.signal).toBeInstanceOf(AbortSignal);
-      const chip = screen.getByText(name).closest('li') as HTMLElement;
+      const chip = screen.getByTitle(name).closest('li') as HTMLElement;
       expect(within(chip).getByText(name.split('.')[1]?.toUpperCase() ?? '')).toBeTruthy();
     },
   );
@@ -158,7 +158,7 @@ describe('FR-OPS-09 작성기 문서 칩', () => {
     const upload = vi.fn<Upload>(() => d.promise);
     const { pick, sendBtn } = mount(upload);
     await pick(file('plan.hwp'));
-    const chip = screen.getByText('plan.hwp').closest('li') as HTMLElement;
+    const chip = screen.getByTitle('plan.hwp').closest('li') as HTMLElement;
     expect(chip.getAttribute('aria-busy')).toBe('true');
     expect(within(chip).getByText(ATTACHMENT_COPY.uploading)).toBeTruthy();
     expect(within(chip).getByText(DOCUMENT_KIND_COPY.hwp)).toBeTruthy();
@@ -168,11 +168,11 @@ describe('FR-OPS-09 작성기 문서 칩', () => {
       fireEvent.click(screen.getByRole('button', { name: `${ATTACHMENT_COPY.remove}: plan.hwp` }));
     });
     expect(signal?.aborted).toBe(true);
-    expect(screen.queryByText('plan.hwp')).toBeNull();
+    expect(screen.queryByTitle('plan.hwp')).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '메시지' }));
     // 늦은 응답은 버린다.
     await act(async () => d.resolve({ ok: true, value: attachment({ mime: 'application/x-hwp', filename: 'plan.hwp' }) }));
-    expect(screen.queryByText('plan.hwp')).toBeNull();
+    expect(screen.queryByTitle('plan.hwp')).toBeNull();
   });
 
   it('제거 뒤 포커스: 다음 칩의 「첨부 제거」', async () => {
@@ -184,6 +184,30 @@ describe('FR-OPS-09 작성기 문서 칩', () => {
       await Promise.resolve();
     });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: `${ATTACHMENT_COPY.remove}: b.pdf` }));
+  });
+
+  it('QA r2 D1 긴 파일명 칩: 메시지 행과 같은 규칙으로 이름부·확장자부를 나누고 title은 전체 파일명', async () => {
+    const upload = vi.fn<Upload>(() => new Promise<Result>(() => undefined));
+    const { pick } = mount(upload);
+    const long = `${'분기 보고서_최종_수정본_'.repeat(6)}.docm`;
+    await pick(file(long), file('README'), file('.bashrc', 100, 'text/plain'));
+    const chips = document.querySelectorAll('.composer-chip');
+    const parts = (i: number) => {
+      const name = chips[i]?.querySelector('.composer-chip-name');
+      return {
+        title: name?.getAttribute('title'),
+        stem: name?.querySelector('.composer-chip-name-stem')?.textContent,
+        ext: name?.querySelector('.composer-chip-name-ext')?.textContent ?? null,
+      };
+    };
+    expect(parts(0)).toEqual({ title: long, stem: long.slice(0, -'.docm'.length), ext: '.docm' });
+    // 확장자가 없거나 이름부가 비면 한 덩어리(UI_STATES §2-13 말줄임 규칙).
+    expect(parts(1)).toEqual({ title: 'README', stem: 'README', ext: null });
+    expect(parts(2)).toEqual({ title: '.bashrc', stem: '.bashrc', ext: null });
+    // 같은 이름의 메시지 행과 나눈 결과가 같다(공유 로직).
+    const { container } = render(<AttachmentList attachments={[attachment({ filename: long, mime: 'application/vnd.ms-word.document.macroEnabled.12', byte_size: 2048, has_macros: false })]} />);
+    expect(container.querySelector('.doc-name-stem')?.textContent).toBe(parts(0).stem);
+    expect(container.querySelector('.doc-name-ext')?.textContent).toBe(parts(0).ext);
   });
 
   it('사람 동시 업로드 상한(ATTACHMENT_HUMAN_CONCURRENT_UPLOADS)을 넘는 칩은 차례를 기다린다', async () => {

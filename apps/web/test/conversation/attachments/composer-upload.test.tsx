@@ -53,7 +53,7 @@ describe('Composer 이미지 첨부', () => {
     const { pick, sendBtn, type, onSend } = mount(() => d.promise);
     type('사진');
     await pick(png('cat.png', 2048));
-    expect(screen.getByText('cat.png')).toBeTruthy();
+    expect(screen.getByTitle('cat.png')).toBeTruthy();
     expect(screen.getByText('2KB')).toBeTruthy();
     expect(sendBtn().disabled).toBe(true);
     expect(sendBtn().getAttribute('aria-busy')).toBe('true');
@@ -63,7 +63,7 @@ describe('Composer 이미지 첨부', () => {
     expect(sendBtn().hasAttribute('aria-busy')).toBe(false);
     fireEvent.click(sendBtn());
     expect(onSend).toHaveBeenCalledWith('사진', undefined, [a.id]);
-    expect(screen.queryByText('cat.png')).toBeNull();
+    expect(screen.queryByTitle('cat.png')).toBeNull();
   });
 
   it('본문이 비면 자리 문구 「[이미지]」를 본문으로 보낸다', async () => {
@@ -135,6 +135,30 @@ describe('Composer 이미지 첨부', () => {
     expect(screen.queryByText('x.png')).toBeNull();
     fireEvent.click(sendBtn());
     expect(onSend).toHaveBeenCalledWith('본문');
+  });
+
+  it('칩 순서 ≠ 업로드 완료 순서여도 전송 인자의 attachment_ids는 칩 순서다(TRD R3.7, UI_STATES §2-13)', async () => {
+    const pending: { name: string; d: ReturnType<typeof deferred> }[] = [];
+    const upload = (f: File) => {
+      const d = deferred();
+      pending.push({ name: f.name, d });
+      return d.promise;
+    };
+    const { pick, sendBtn, type, onSend } = mount(upload);
+    type('세 장');
+    await pick(png('1.png'), png('2.png'), png('3.png'));
+    const byName = new Map(['1.png', '2.png', '3.png'].map((n) => [n, attachment({ mime: 'image/png' })]));
+    // 가장 늦게 시작한 업로드부터 끝낸다(동시 슬롯 상한과 무관하게 완료 순서가 칩 순서와 달라진다).
+    const finished: string[] = [];
+    while (pending.length > 0) {
+      const last = pending.pop();
+      if (last === undefined) break;
+      finished.push(last.name);
+      await act(async () => last.d.resolve({ ok: true, value: byName.get(last.name) ?? attachment() }));
+    }
+    expect(finished).not.toEqual(['1.png', '2.png', '3.png']);
+    fireEvent.click(sendBtn());
+    expect(onSend).toHaveBeenCalledWith('세 장', undefined, ['1.png', '2.png', '3.png'].map((n) => byName.get(n)?.id));
   });
 
   it('메시지당 상한(4)을 넘는 파일은 칩을 만들지 않고 첨부 버튼을 비활성', async () => {

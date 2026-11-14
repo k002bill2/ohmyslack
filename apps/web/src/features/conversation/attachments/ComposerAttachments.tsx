@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { ATTACHMENT_COPY } from '../../../ui/copy.js';
 import { formatBytes, type ComposerChip } from './composer-upload.js';
 import { COMPOSER_ACCEPT, composerKindLabel } from './file-kinds.js';
+import { FileName } from './FileName.js';
 import './attachments.css';
 
 export interface ComposerAttachmentsProps {
@@ -77,9 +78,7 @@ export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, o
             return (
               <li key={c.key} className={`composer-chip composer-chip-${c.status}`} aria-busy={c.status === 'uploading'}>
                 {label !== null && <span className="composer-chip-kind">{label}</span>}
-                <span className="composer-chip-name" title={c.file.name}>
-                  {c.file.name}
-                </span>
+                <FileName name={c.file.name} base="composer-chip-name" />
                 <span className="composer-chip-size">{formatBytes(c.file.size)}</span>
                 {c.status === 'uploading' && (
                   <span className="composer-chip-state">

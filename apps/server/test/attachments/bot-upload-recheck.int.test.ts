@@ -67,8 +67,28 @@ function uploadProbe(pauseAt?: PausePoint): UploadProbe {
   };
 }
 
-/** 다른 세션이 행 잠금을 기다리는 상태가 되면 'blocked'. 회수가 먼저 끝나면 'done'. 둘 다 아니면 'timeout'. */
-async function lockWaitOrDone(ctx: BotListenerContext, work: Promise<unknown>): Promise<'blocked' | 'done' | 'timeout'> {
+/**
+ * 잠금 지점에서 멈춘 업로드 트랜잭션의 backend PID. 이 테스트 스키마의 테이블에 잠금을 쥔 채 `idle in transaction`인 세션이다
+ * (DB를 함께 쓰는 다른 테스트·세션은 다른 스키마라 섞이지 않는다 — Codex r4 P3).
+ */
+async function uploadPid(ctx: BotListenerContext): Promise<number> {
+  const res = await ctx.conv.schema.pool.query<{ pid: number }>(
+    `SELECT DISTINCT l.pid FROM pg_locks l
+       JOIN pg_class c ON c.oid = l.relation
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE n.nspname = $1 AND l.granted AND a.state = 'idle in transaction' AND l.pid <> pg_backend_pid()`,
+    [ctx.conv.schema.name],
+  );
+  expect(res.rows, '잠금 지점의 업로드 세션은 정확히 1개').toHaveLength(1);
+  return res.rows[0]?.pid ?? -1;
+}
+
+/**
+ * 업로드 PID가 막고 있는 잠금 대기 세션(회수)이 생기면 'blocked'(`pg_blocking_pids(<회수 PID>)`에 업로드 PID 포함).
+ * 회수가 먼저 끝나면 'done'. 둘 다 아니면 'timeout'. 막힌 회수 PID는 `blockedPids`에 남긴다.
+ */
+async function lockWaitOrDone(ctx: BotListenerContext, upload: number, work: Promise<unknown>, blockedPids: number[] = []): Promise<'blocked' | 'done' | 'timeout'> {
   let settled = false;
   const done = work.then(() => {
     settled = true;
@@ -77,8 +97,14 @@ async function lockWaitOrDone(ctx: BotListenerContext, work: Promise<unknown>): 
   const poll = (async () => {
     const until = Date.now() + LOCK_WAIT_MS;
     while (!settled && Date.now() < until) {
-      const waiting = await count(ctx, "SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype IN ('transactionid', 'tuple')", []);
-      if (waiting > 0) return 'blocked' as const;
+      const waiting = await ctx.conv.schema.pool.query<{ pid: number }>(
+        'SELECT DISTINCT pid FROM pg_locks WHERE NOT granted AND $1::int = ANY(pg_blocking_pids(pid))',
+        [upload],
+      );
+      if (waiting.rows.length > 0) {
+        blockedPids.push(...waiting.rows.map((r) => r.pid));
+        return 'blocked' as const;
+      }
       await sleep(10);
     }
     return 'timeout' as const;
@@ -257,8 +283,12 @@ describe('봇 업로드 — 재판정 뒤·INSERT 전 권한 회수 경쟁(저�
       let revoking: Promise<void> | undefined;
       try {
         await probe.reached;
+        const upload = await uploadPid(lc);
         revoking = r.revoke(lc, room);
-        expect(await lockWaitOrDone(lc, revoking)).toBe('blocked');
+        const blocked: number[] = [];
+        expect(await lockWaitOrDone(lc, upload, revoking, blocked)).toBe('blocked');
+        expect(blocked.length).toBeGreaterThan(0);
+        expect(blocked).not.toContain(upload);
         expect(await stored(lc)).toBe(0); // 아직 커밋 전
       } finally {
         probe.release();

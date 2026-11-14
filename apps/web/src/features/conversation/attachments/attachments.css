@@ -112,16 +112,33 @@
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
 }
+/* 파일명은 문서 행과 같은 말줄임 규칙(UI_STATES §2-13): 이름부만 한 줄 말줄임, 확장자부는 줄이지 않는다. */
 .composer-chip-name {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.composer-chip-name-stem {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.composer-chip-name-ext {
+  flex: none;
+  white-space: nowrap;
+}
 .composer-chip-size,
 .composer-chip-state {
+  flex: none;
   color: var(--text-muted);
   font-size: var(--text-xs);
+  white-space: nowrap;
+}
+/* 「첨부 제거」: 좁은 칩에서 버튼이 줄어 글자 단위로 세로 줄바꿈되지 않게(QA r2 D1). 줄어드는 몫은 이름부가 맡는다. */
+.composer-chip .msg-action {
+  flex: none;
+  white-space: nowrap;
 }
 .composer-chip-failed {
   border-color: var(--danger-solid);

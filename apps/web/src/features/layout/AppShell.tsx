@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space, UploadAttachmentOptions } from '../../data';
-import type { UploadFn } from '../conversation/attachments/composer-upload.js';
+import { createAttachmentDraftStore, type AttachmentDraftStore, type UploadFn } from '../conversation/attachments/composer-upload.js';
 import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useFocusOnLock, useMessageRoving, withDiscardFocus, MAIN_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
@@ -129,6 +129,8 @@ function ConversationPane(props: {
   readonly breakpoint: Breakpoint;
   readonly inert: boolean;
   readonly drafts: DraftStore;
+  /** 첨부 초안(칩·진행 중 업로드) — 글 초안과 같은 소유자·같은 키라 폭 구간 전환으로 작성기가 다시 마운트돼도 유지된다. */
+  readonly attachmentDrafts: AttachmentDraftStore;
   readonly onBack: () => void;
   readonly onReply: (id: string) => void;
   readonly onSend: (body: string, mentionUserIds?: readonly string[], attachmentIds?: readonly string[]) => void;
@@ -278,6 +280,7 @@ function ConversationPane(props: {
             onSend={props.onSend}
             {...(props.onUpload === undefined ? {} : { onUpload: props.onUpload })}
             draft={{ store: props.drafts, key: space.id }}
+            attachmentDraft={{ store: props.attachmentDrafts, key: space.id }}
             {...(membership?.mentions === undefined ? {} : { mentions: membership.mentions })}
           />
         </div>
@@ -295,6 +298,9 @@ interface MembershipProps {
 /** CMP-01 AppShell — 3/2/1단, §5-2 접힘 규칙, 포커스 관리(디자인 §5·§7-3, UI_STATES §2-2·§3·§4-2). */
 export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShellProps) {
   const [drafts] = useState(() => injectedDrafts ?? createDraftStore());
+  const [attachmentDrafts] = useState(createAttachmentDraftStore);
+  // 셸이 내려가면(로그아웃·401 — LiveApp이 셸 대신 로그인 화면을 그린다) 글 초안과 함께 첨부 초안도 버리고 진행 중 업로드를 끊는다.
+  useEffect(() => () => attachmentDrafts.discardAll(), [attachmentDrafts]);
   const snap = useSyncExternalStore(dataSource.subscribe, dataSource.getSnapshot, dataSource.getSnapshot);
   const viewport = useViewport();
   // 설치 프롬프트는 셸이 계속 붙잡는다 — 카드가 목록 화면에서만 마운트돼도 이벤트를 놓치지 않게(Codex r1 P2).
@@ -492,6 +498,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   };
   // 링크 함수는 대화·스레드가 바뀔 때만 새로 — memo(MessageItem) 얕은 비교를 깨지 않게(F-1).
   const spaceId = space?.id;
+  // 대화를 떠나면 그 대화의 첨부 초안은 지금처럼 남기지 않는다(진행 중 업로드는 끊는다). 폭 구간 전환은 대화가 같아 유지된다.
+  useEffect(() => {
+    if (spaceId === undefined) return undefined;
+    return () => attachmentDrafts.discard(spaceId);
+  }, [spaceId, attachmentDrafts]);
   const mainLink = useMemo(() => (spaceId === undefined ? undefined : messageLinkIn(spaceId, null)), [spaceId]);
   const threadLink = useMemo(
     () => (spaceId === undefined || state.threadRootId === null ? undefined : messageLinkIn(spaceId, state.threadRootId)),
@@ -611,6 +622,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       breakpoint={bp}
       inert={bp === 'medium' && threadOpen}
       drafts={drafts}
+      attachmentDrafts={attachmentDrafts}
       onBack={() => dispatch({ type: 'back' })}
       onReply={(id) => dispatch({ type: 'open-thread', rootId: id })}
       onSend={(body, mentionUserIds, attachmentIds) => dataSource.send({ conversationId: space.id }, body, mentionUserIds, attachmentIds)}
