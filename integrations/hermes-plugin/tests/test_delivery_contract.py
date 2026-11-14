@@ -249,3 +249,86 @@ async def test_429_after_ambiguous_goes_to_history_without_wait(server, monkeypa
     stored = _stored(server)
     assert len(stored) == 1
     assert out["message_id"] == _stored_id(server, stored[0]["client_message_id"])
+
+
+# 단계 3 Codex 1차 수정 ---------------------------------------------------------------------------
+# P1: 커밋 후 상태줄 파싱 실패(일반 ClientResponseError)도 모호 시도로 기록 → 확인 GET·반환표 경로.
+async def test_bad_status_line_after_commit_history_confirms(server, monkeypatch):
+    _record_sleep(monkeypatch)
+    server.post_body_fault_after_commit = ["bad_status_line", "bad_status_line"]  # 같은 키 1회 더도 깨짐
+    out = await _send(server)
+    assert "error" not in out and out.get("success") is True
+    stored = _stored(server)
+    assert len(stored) == 1
+    assert out["message_id"] == _stored_id(server, stored[0]["client_message_id"])
+    assert server.history_calls == 1
+
+
+async def test_bad_status_line_and_check_failed_is_delivery_unknown(server, monkeypatch):
+    _record_sleep(monkeypatch)
+    server.post_body_fault_after_commit = ["bad_status_line", "bad_status_line"]
+    server.history_disconnect = 2  # aiohttp GET 자동 재전송 1회 흡수(위 chunk0_unknown 테스트 참조)
+    out = await _send(server)
+    assert "success" not in out
+    assert "ohmyslack standalone send: delivery_unknown chunk 1/1" in out["error"]
+    assert len(_stored(server)) == 1
+
+
+async def test_bad_status_line_on_later_chunk_warns_delivery_unknown(server, monkeypatch):
+    _record_sleep(monkeypatch)
+
+    def break_rest() -> None:
+        server.post_body_fault_after_commit = ["bad_status_line", "bad_status_line"]
+    _after_first_store(server, break_rest)
+    server.history_status = [403]
+    out = await _send(server, TWO_CHUNKS)
+    assert "error" not in out and out.get("success") is True
+    assert "text: partial_delivery 1/2" in out["warnings"]
+    assert "text: delivery_unknown chunk 2" in out["warnings"]
+    first = _stored(server)[0]
+    assert out["message_id"] == _stored_id(server, first["client_message_id"])
+
+
+# P2: /me·업로드 2xx 본문이 JSON 아님·dict 아님 → 함수 밖으로 새지 않는다.
+async def test_upload_broken_json_warns_that_file_only(server, monkeypatch, tmp_path):
+    _record_sleep(monkeypatch)
+    first, second = tmp_path / "a.mp3", tmp_path / "b.mp3"
+    first.write_bytes(MP3)
+    second.write_bytes(MP3)
+    server.upload_body_fault = ["json_invalid"]  # 첫 파일만
+    out = await _send(server, "아침 브리핑", [(str(first), True), (str(second), True)])
+    assert "error" not in out and out.get("success") is True
+    assert out["warnings"] == ["a.mp3: upload_failed"]
+    stored = _stored(server)
+    assert len(stored) == 1 and stored[0]["body"] == "아침 브리핑"
+    assert stored[0]["attachment_ids"] == [server.uploads[1]["attachment_id"]]  # 다른 파일은 진행
+
+
+async def test_upload_empty_2xx_warns_and_text_sent(server, monkeypatch, tmp_path):
+    _record_sleep(monkeypatch)
+    mp3 = tmp_path / "briefing.mp3"
+    mp3.write_bytes(MP3)
+    server.upload_body_fault = ["empty"]  # 201 + 빈 본문 → aiohttp json() None
+    out = await _send(server, "아침 브리핑", [(str(mp3), True)])
+    assert "error" not in out and out.get("success") is True
+    assert out["warnings"] == ["briefing.mp3: upload_failed"]
+    stored = _stored(server)
+    assert len(stored) == 1 and "attachment_ids" not in stored[0]
+
+
+async def test_me_broken_json_is_send_error(server, monkeypatch):
+    _record_sleep(monkeypatch)
+    server.me_body_fault = ["json_invalid"]
+    out = await _send(server)
+    assert "success" not in out
+    assert out["error"].startswith("ohmyslack standalone send: ")
+    assert _post_requests(server) == [] and server.uploads == []
+
+
+async def test_me_empty_2xx_is_send_error(server, monkeypatch):
+    _record_sleep(monkeypatch)
+    server.me_body_fault = ["empty"]
+    out = await _send(server)
+    assert "success" not in out
+    assert out["error"].startswith("ohmyslack standalone send: ")
+    assert _post_requests(server) == []

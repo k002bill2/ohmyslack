@@ -108,6 +108,19 @@ class _ShortBody:
         raise _Disconnect()
 
 
+class _BadStatusLine(_ShortBody):
+    """HTTP 응답 대신 잘못된 상태줄을 소켓에 직접 쓰고 닫는다 → 클라이언트 응답 시작 단계 파싱 실패.
+
+    aiohttp `ClientResponse.start`가 `HttpProcessingError`를 일반 `ClientResponseError`로 바꾼다
+    (`.venv/.../aiohttp/client_reqrep.py:744-753`) — 상태 응답 객체는 호출자에게 오지 않는다.
+    """
+
+    async def send(self, request: web.Request):
+        if request.transport is not None:
+            request.transport.write(b"HTTP/1.1 2x1 Created\r\nContent-Length: 0\r\n\r\n")
+        raise _Disconnect()
+
+
 class FakeBotServer:
     def __init__(self) -> None:
         self.changes: list[tuple[int, str, dict]] = []
@@ -158,7 +171,12 @@ class FakeBotServer:
         self.post_disconnect_after_commit = 0  # 다음 N회: 응답 없이 연결 끊기(ServerDisconnectedError)
         # "json_truncated"·"json_invalid" = 완전한 응답의 잘린/깨진 JSON(파싱 실패), 상태 200/201 그대로.
         # "short_body" = Content-Length 보다 적게 보내고 연결 닫기(수신 단계 ClientPayloadError).
+        # "bad_status_line" = 잘못된 상태줄 원시 쓰기 후 닫기(응답 시작 단계 일반 ClientResponseError).
         self.post_body_fault_after_commit: list[str] = []
+        # /me·업로드 2xx 응답 본문 이상: "json_invalid"(깨진 JSON) | "empty"(빈 본문 → aiohttp json() None).
+        # 업로드는 첨부 저장 뒤에 적용(실제 서버도 커밋 후 응답).
+        self.me_body_fault: list[str] = []
+        self.upload_body_fault: list[str] = []
         self.post_redirect_after_commit: list[int] = []  # 3xx 상태(Location = /me)
         self.history_status: list[int] = []  # 이력 GET 강제 상태(예: [401], [403])
         self.history_disconnect = 0  # 이력 GET 다음 N회 연결 끊기
@@ -222,6 +240,8 @@ class FakeBotServer:
         self._log(request)
         if self.me_status != 200:
             return web.json_response({"error": "unauthorized"}, status=self.me_status)
+        if self.me_body_fault:
+            return self._broken(self.me_body_fault.pop(0), {}, 200)
         if self.conversations is None:  # 구 서버 모양(conversations·display_name 없음)
             return web.json_response({"id": BOT_ID, "owner_user_id": OWNER_ID, "conversation_ids": [DM_ID]})
         return web.json_response({"id": BOT_ID, "owner_user_id": OWNER_ID, "display_name": self.display_name,
@@ -398,7 +418,9 @@ class FakeBotServer:
         raw = json.dumps(body).encode()
         if kind == "short_body":
             return _ShortBody(raw, status)
-        data = {"json_truncated": raw[: len(raw) // 2], "json_invalid": b'{"message": nope'}[kind]
+        if kind == "bad_status_line":
+            return _BadStatusLine(raw, status)
+        data = {"json_truncated": raw[: len(raw) // 2], "json_invalid": b'{"message": nope', "empty": b""}[kind]
         return web.Response(body=data, status=status, content_type="application/json")
 
     async def history(self, request):
@@ -445,6 +467,8 @@ class FakeBotServer:
         self.uploads.append({**rec, "_status": 201, "attachment_id": aid})
         self.attachments[aid] = {"conversation_id": rec["conversation_id"], "uploader_id": BOT_ID,
                                  "created_at": self.clock(), "message_id": None, "deleted": False}
+        if self.upload_body_fault:
+            return self._broken(self.upload_body_fault.pop(0), {}, 201)
         return web.json_response({"attachment_id": aid, "attachment": {
             "id": aid, "mime": rec["content_type"], "byte_size": len(data), "expires_at": iso(0), "expired": False}},
             status=201)
