@@ -228,9 +228,12 @@ async def test_slot_returned_before_result_notified(monkeypatch, tmp_path):
     held: list[threading.Thread] = []
 
     def notify_then_stall(*args, **kwargs):
-        handle = real_notify(*args, **kwargs)  # 통지는 예약된다 → 루프가 결과를 받는다
-        if threading.current_thread().name == READ_THREAD and not held:
+        # 첫 worker 선택·held 등록은 통지 예약 전에 끝낸다(루프 재개 후 held 관측 경쟁 제거).
+        is_first = threading.current_thread().name == READ_THREAD and not held
+        if is_first:
             held.append(threading.current_thread())
+        handle = real_notify(*args, **kwargs)  # 통지는 여전히 먼저 예약된다 → 루프가 결과를 받는다
+        if is_first:
             gate.wait()  # 4번째 읽기 worker를 통지 예약 경계에서 멈춘다
         return handle
     loop.call_soon_threadsafe = notify_then_stall  # 인스턴스 속성(아래 finally에서 지운다)
