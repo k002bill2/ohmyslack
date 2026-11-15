@@ -8,6 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import pathlib
 import threading
 import time
 
@@ -53,6 +56,14 @@ class _Hang:
                 loop.call_soon_threadsafe(event.set)
             except RuntimeError:  # 그 사이 루프가 닫힘
                 pass
+
+
+def _persist_raw(filename: str, record: dict) -> None:
+    """측정 raw 숫자만 sandbox TMPDIR(= P/.isolation/tmp)에 JSON으로 남긴다. 범위 밖 경로면 쓰지 않고 실패."""
+    iso = (pathlib.Path(__file__).resolve().parent.parent / ".isolation").resolve()
+    target = (pathlib.Path(os.environ["TMPDIR"]) / filename).resolve()
+    assert iso in target.parents, f"raw path outside .isolation: {target}"
+    target.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _cancel_runner(ctl: dict) -> None:
@@ -382,6 +393,11 @@ def test_n8_actual_total25_close_hang_wallclock(thread_server):
                                                                   session_factory=_factory(sessions, hang=hang)),
                               hang, actual + N8_WATCHDOG_SLACK)
     print(f"N8-RAW total={actual} wall={box.get('wall')!r} elapsed={box.get('elapsed')!r} alive={alive}")
+    _persist_raw("n8-total25.json", {
+        "case": "n8_total25_cooperative_close_hang", "total": actual,
+        "elapsed_coroutine_s": box.get("elapsed"), "wall_asyncio_run_thread_s": box.get("wall"),
+        "close_calls": sessions[0].close_calls if sessions else None, "posts_count": len(_ok_posts(thread_server)),
+        "unfinished_tasks": len(box.get("leftover", [])), "alive": alive})
     assert not alive and "wall" in box and "exc" not in box, box.get("exc")
     assert box["wall"] <= actual + BOUND_SLACK
     assert box["out"].get("success") is True and len(_ok_posts(thread_server)) == 1
@@ -405,6 +421,12 @@ def test_noncooperative_close_overruns_total_outside_guarantee(thread_server, to
         timer.join(5.0)
     print(f"NONCOOP-RAW total={total} release_at={release_at} wall={box.get('wall')!r} "
           f"elapsed={box.get('elapsed')!r} suppressed={sessions[0].suppressed if sessions else None}")
+    _persist_raw("n8-stubborn.json", {
+        "case": "noncooperative_close_overrun", "total": total, "release_at": release_at,
+        "elapsed_coroutine_s": box.get("elapsed"), "wall_asyncio_run_thread_s": box.get("wall"),
+        "close_calls": sessions[0].close_calls if sessions else None, "posts_count": len(_ok_posts(thread_server)),
+        "unfinished_tasks": len(box.get("leftover", [])), "alive": alive,
+        "suppressed": sessions[0].suppressed if sessions else None})
     assert not alive and not timer.is_alive() and box["leftover"] == []
     assert box["elapsed"] > total + BOUND_SLACK
     assert sessions[0].close_calls == 1 and sessions[0].suppressed >= 1
