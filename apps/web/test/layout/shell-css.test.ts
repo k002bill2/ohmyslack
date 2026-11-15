@@ -46,4 +46,10 @@ describe('스레드 작성기 하단 고정(R5 실렌더 834 — 시안 「중�
       .at(-1)?.[2] ?? '';
     expect(rule).toMatch(/margin: auto var\(--space-3\) var\(--space-3\)/);
   });
+  it('긴 스레드(패널 스크롤)에서도 sticky 작성기가 바닥 여백 space-3을 지킨다 — bottom 0이면 margin이 무시돼 패널 끝에 붙는다(운영 실렌더 834, 1px)', () => {
+    const rule = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => (m[1] ?? '').trim() === ".app-shell:not([data-layout='compact']) .thread-panel > .composer")
+      .at(-1)?.[2] ?? '';
+    expect(rule).toMatch(/bottom: var\(--space-3\)/);
+  });
 });
