@@ -44,8 +44,9 @@
 .app-shell:not([data-layout='compact']) .composer {
   background: var(--bg-app);
 }
+/* margin-top은 auto 유지(layout.css 기본 규칙) — 답글이 적어도 작성기가 패널 바닥에 붙는다(R5 실렌더 834). */
 .app-shell:not([data-layout='compact']) .thread-panel > .composer {
-  margin: var(--space-2) var(--space-3) var(--space-3);
+  margin: auto var(--space-3) var(--space-3);
   border-radius: var(--radius-xl);
   box-shadow: none;
 }

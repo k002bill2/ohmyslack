@@ -37,3 +37,13 @@ describe('알림 탭 대상 없음 안내(W-23b Codex 확인 라운드 P2)', () 
     expect(rule).toContain('top: 0');
   });
 });
+
+describe('스레드 작성기 하단 고정(R5 실렌더 834 — 시안 「중간 폭 · 2단 + 스레드 시트」)', () => {
+  const refresh = readFileSync(fileURLToPath(new URL('../../src/features/layout/refresh.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  it('떠 있는 패널 여백 규칙이 margin-top: auto(패널 바닥으로 밀기)를 덮어쓰지 않는다', () => {
+    const rule = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => (m[1] ?? '').trim() === ".app-shell:not([data-layout='compact']) .thread-panel > .composer")
+      .at(-1)?.[2] ?? '';
+    expect(rule).toMatch(/margin: auto var\(--space-3\) var\(--space-3\)/);
+  });
+});
