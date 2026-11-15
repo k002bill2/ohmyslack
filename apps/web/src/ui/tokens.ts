@@ -74,13 +74,11 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
   '--bg-elevated': { scale: 'slate', step: 3, role: 'surface', dark: { step: 1 } },
   '--bg-hover': { scale: 'slate', step: 4, role: 'surface' },
   '--bg-active': { scale: 'slate', step: 5, role: 'surface' },
-  '--border-subtle': {
-    scale: 'slate', step: 6, role: 'nontext', on: BG_APP,
-    override: {
-      light: { step: 9, reason: 'slate6/bg-app 1.37 < 3 (§2-3 4항 보더 3:1)' },
-      dark: { step: 9, reason: 'slate6/bg-app(slate2) 1.5 < 3, slate8 2.81 < 3 (§2-3 4항 보더 3:1)' },
-    },
-  },
+  /**
+   * 장식 구분선·패널 테두리(시안 R5 slate6). 컴포넌트 식별 경계가 아니라 WCAG 1.4.11 대비 대상 밖(§2-3 4항 예외) —
+   * --danger-line과 같이 surface 역할. 조작 대상의 유일한 경계(입력란·분할 손잡이)는 --border를 쓴다.
+   */
+  '--border-subtle': { scale: 'slate', step: 6, role: 'surface' },
   '--border': {
     scale: 'slate', step: 7, role: 'nontext', on: BG_APP,
     override: {

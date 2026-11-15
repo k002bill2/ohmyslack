@@ -423,7 +423,7 @@
   width: 4px;
   height: 32px;
   border-radius: 2px;
-  background: var(--border-subtle);
+  background: var(--border); /* 끌기 조작 대상 자체 — 3:1 유지(§2-3 4항, --border-subtle은 장식 전용) */
   transition: height var(--motion-fast), background var(--motion-fast);
 }
 .splitter:hover .splitter-handle,
@@ -592,10 +592,3 @@
   padding-inline-start: var(--msg-gutter);
 }
 
-/* R5 데스크톱 시안: 타임라인은 읽기 폭(본문 760px + 항목 여백) 안에서 왼쪽 정렬, 떠 있는 작성기는 830px 상한. */
-.app-shell:not([data-layout='compact']) .conversation-pane > .message-list {
-  padding-inline-end: max(var(--space-4), 100% - 800px);
-}
-.app-shell:not([data-layout='compact']) [data-composer='main'] > .composer {
-  max-width: 830px;
-}

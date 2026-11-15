@@ -53,3 +53,15 @@ describe('스레드 작성기 하단 고정(R5 실렌더 834 — 시안 「중�
     expect(rule).toMatch(/bottom: var\(--space-3\)/);
   });
 });
+
+describe('넓은 화면 폭(B1, 2026-11-16)·분할 손잡이 대비(A1)', () => {
+  const refresh = readFileSync(fileURLToPath(new URL('../../src/features/layout/refresh.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  it('타임라인·작성기에 시안 읽기 폭 상한(800/830px)을 두지 않는다', () => {
+    expect(refresh).not.toMatch(/100% - 800px/);
+    expect(refresh).not.toMatch(/max-width: 830px/);
+  });
+  it('분할 손잡이는 조작 대상이라 장식 토큰이 아닌 --border(3:1)를 쓴다', () => {
+    const rule = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => (m[1] ?? '').trim() === '.splitter-handle').at(-1)?.[2] ?? '';
+    expect(rule).toContain('background: var(--border);');
+  });
+});
