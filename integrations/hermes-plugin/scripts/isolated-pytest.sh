@@ -238,20 +238,22 @@ preflight_fail() { echo "PREFLIGHT FAIL: $*"; echo "PREFLIGHT STOPPED: no furthe
 # --run-attested 해시 대조 자기시험(sandbox 밖, sandbox 안에서는 bash·shasum 을 exec 할 수 없음).
 # $ISO/tmp 안 복사본만 바꾼다(작업 트리 파일 불변). 결과는 tests_isolation/test_attestation.py 가 sandbox 안에서 단언.
 # 사례마다 복사본 디렉터리 하나: 메모리 스냅숏 → 변형 → 실제 attest_gate(서브셸) 종료 코드·stderr 기록(Codex 1차 P3-2).
-ATTEST_CASES=(unmodified comment_and_blank profile_modified iso_fs_modified leading_space spaced_equals trailing_space
+ATTEST_CASES=(unmodified eof_with_newline eof_without_newline comment_and_blank profile_modified iso_fs_modified leading_space spaced_equals trailing_space
               duplicate_key missing_key value_mismatch missing_profile missing_iso_fs missing_attestation)
 attest_case_mutate() {       # $1 = 사례, $2 = 디렉터리(세 파일 복사본). 변형은 printf·grep 리다이렉트만(임시 파일 없음).
   local c=$1 d=$2 a="$2/G3-ATTESTATION" old
   old="$(cat -- "$a")"
   case "$c" in
     unmodified) ;;
-    comment_and_blank) printf '# 사람 메모\n\n' >> "$a" ;;
+    eof_with_newline) printf '%s\n' "$old" > "$a" ;;      # 마지막 줄 뒤 개행 있음(실파일과 달리 명시)
+    eof_without_newline) printf '%s' "$old" > "$a" ;;    # 마지막 줄 뒤 개행 없음(실파일 G3-ATTESTATION 형태)
+    comment_and_blank) printf '\n# 사람 메모\n\n' >> "$a" ;;
     profile_modified) printf ' ' >> "$d/pytest.sb" ;;
     iso_fs_modified) printf '\n' >> "$d/_iso_fs.sh" ;;
     leading_space) printf '%s\n' "$old" | sed 's/^main_commit=/ main_commit=/' > "$a" ;;
     spaced_equals) printf '%s\n' "$old" | sed 's/^evidence=/evidence = /' > "$a" ;;
     trailing_space) printf '%s\n' "$old" | sed 's/^\(profile_sha256=.*\)$/\1 /' > "$a" ;;
-    duplicate_key) printf '%s\n' "$old" | grep '^attested_at=' >> "$a" ;;
+    duplicate_key) { printf '\n'; printf '%s\n' "$old" | grep '^attested_at='; } >> "$a" ;;
     missing_key) printf '%s\n' "$old" | grep -v '^main_commit=' > "$a" ;;
     value_mismatch) printf '%s\n' "$old" | sed 's/^profile_sha256=.*/profile_sha256=0000000000000000000000000000000000000000000000000000000000000000/' > "$a" ;;
     missing_profile) rm -f -- "$d/pytest.sb" ;;

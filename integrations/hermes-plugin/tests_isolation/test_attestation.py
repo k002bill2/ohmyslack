@@ -23,6 +23,8 @@ REFUSAL = "re-attestation by human required"
 # 사례 → (기대 종료 코드, 사유 문구). 0 이면 거부 문구가 없어야 한다.
 CASES = {
     "unmodified": (0, None),
+    "eof_with_newline": (0, None),
+    "eof_without_newline": (0, None),
     "comment_and_blank": (0, None),
     "profile_modified": (5, "scripts/pytest.sb sha256 differs"),
     "iso_fs_modified": (5, "scripts/_iso_fs.sh sha256 differs"),
