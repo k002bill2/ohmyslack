@@ -14,6 +14,11 @@ export const PUSH_COALESCE_WINDOW_MS = 60_000;
 export const PUSH_ENDPOINT_EXACT_HOSTS = Object.freeze(['fcm.googleapis.com', 'updates.push.services.mozilla.com'] as const);
 /** 접미사로 허용하는 endpoint 호스트(`*.push.apple.com`). 접미사 자체(`push.apple.com`)는 허용하지 않는다. */
 export const PUSH_ENDPOINT_HOST_SUFFIXES = Object.freeze(['.push.apple.com'] as const);
+/**
+ * 패턴으로 허용하는 FCM 대체 호스트: Chromium 계열 브라우저가 `https://jmt<n>.google.com/fcm/send/<token>`을 낸다
+ * (2026-11-16 운영 실측 — 구독 등록 400의 원인). 숫자 꼬리표 호스트 + `/fcm/send/` 경로로만 좁힌다(google.com 전체 아님).
+ */
+export const PUSH_ENDPOINT_FCM_ALT = Object.freeze({ host: /^jmt\d{1,3}\.google\.com$/, pathPrefix: '/fcm/send/' } as const);
 
 /**
  * endpoint 허용 판정: https 스킴 + 기본 포트 + 사용자 정보 없음 + 허용목록 호스트.
@@ -29,6 +34,9 @@ export function isAllowedPushEndpoint(endpoint: string): boolean {
   if (url.protocol !== 'https:' || url.port !== '' || url.username !== '' || url.password !== '') return false;
   const host = url.hostname.toLowerCase();
   if ((PUSH_ENDPOINT_EXACT_HOSTS as readonly string[]).includes(host)) return true;
+  if (PUSH_ENDPOINT_FCM_ALT.host.test(host)) {
+    return url.pathname.startsWith(PUSH_ENDPOINT_FCM_ALT.pathPrefix) && url.pathname.length > PUSH_ENDPOINT_FCM_ALT.pathPrefix.length;
+  }
   return PUSH_ENDPOINT_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix) && host.length > suffix.length);
 }
 

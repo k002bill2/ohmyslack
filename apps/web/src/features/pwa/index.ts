@@ -23,4 +23,4 @@ export {
   type PushServerApi,
   type PushState,
 } from './PushSettings.js';
-export { PushBotHint, resetPushBotHint } from './PushBotHint.js';
+export { PushDialog } from './PushDialog.js';

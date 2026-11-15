@@ -678,7 +678,7 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | Q-H1 | 봇 배지 문구·모양(텍스트 "봇" vs "Jarvis" 고정 아이콘 — 후보 표기이며 정본 아님) | CMP-26, CMP-03(Jarvis DM 항목) | Designer → D §6 정본 |
 | Q-H2 | 첨부만 보낼 때 본문으로 채울 자리 문구(후보 예: "[음성]"·"[이미지]"), 작성기 업로드 실패 문구(크기·형식·허용 형식 안내) | CMP-11 | Designer |
 | Q-H3 | 오디오 플레이어 버튼 이름·재생 실패 문구·만료 자리표시자 문구, 이미지 `alt` 기본값 | CMP-27·28·29 | Designer |
-| Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — ★ 설정 화면 + Jarvis DM 첫 진입 시 1회 안내 제안. 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
+| Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — 사이드바 계정 영역 + Jarvis DM 헤더 더보기 「알림 설정…」 Dialog(2026-11-16 영환님 지시, COPY_GAPS G-74 — 본문 위 1회 안내 배너는 폐지). 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
 | Q-H5 | 알림 고정 문구(후보: "Jarvis" / "새 메시지가 있습니다")와 잠금 화면 노출 정책 | CMP-30, 서비스 워커 | 영환님 + TRD 저자(T §6-2) |
 | Q-H6 | 제목(`#`) 서식의 시각 크기 단계와 메시지 목록 밀도 영향 | CMP-08 | Designer |
 
