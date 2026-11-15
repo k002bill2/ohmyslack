@@ -130,7 +130,7 @@ async def test_single_deadline_spans_all_chunks(server, tmp_path, monkeypatch):
 
     async def slow_get_me(self):
         res = await real_get_me(self)
-        clock.now += 20.0  # /me가 20초 걸린 상황(외부 청크마다 부르면 deadline을 여러 번 쓴다)
+        clock.now += 16.0  # /me가 16초(prep 몫 15초 초과·post 몫 20초 안) — 외부 청크마다 부르면 deadline을 여러 번 쓴다
         return res
     monkeypatch.setattr(adapter_mod.BotClient, "get_me", slow_get_me)
     _no_retry_sleep(monkeypatch, sleep=clock.sleep)
