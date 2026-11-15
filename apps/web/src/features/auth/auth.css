@@ -2,7 +2,8 @@
  * 로그인 전 화면(SCR-01 로그인·SCR-02 초대 수락, CMP-19). 토큰 변수만 쓴다(§3-2·§3-5).
  * 입력·버튼 최소 높이 44px는 §7-1 히트 영역. compact 경계는 `tokens.ts` mediaQueries.compact와 같아야 한다(테스트 고정).
  * 시안 03(W-11c) → R4 시안 Login: 바탕 slate3(--bg-elevated) 위 slate1(--bg-app) 카드 400px, 패딩 40(--space-10),
- * 반경 --radius-2xl(시안 24px → 최대 토큰), overlay 그림자. 시안의 카드 아래 초대 안내 문구는 정본(COPY_GAPS) 밖이라 넣지 않음.
+ * 반경 --radius-2xl(시안 24px → 최대 토큰), overlay 그림자. 카드 아래 초대 안내는 R5에서 G-73으로 정본화해 넣었다
+ * (「홈 화면에 설치하는 방법」 링크는 웹에 /install 화면이 없어 보류).
  */
 .auth-screen {
   display: flex;
@@ -82,12 +83,12 @@
   font-weight: 600;
   cursor: pointer;
 }
-/* accent 위 글자 역할 토큰이 없어(§3-3) accent-solid 면 대신 accent-bg 면 + accent-text 글자(두 스킴 4.5:1 이상, 테스트 고정). */
+/* 시안 R5: 채운 teal 버튼(--accent-strong 면 + --on-accent-strong 글자, 두 스킴 4.5:1 이상, 테스트 고정). */
 .auth-card button[type='submit'] {
   margin-top: var(--space-4);
-  border: 1px solid var(--accent-solid);
-  background: var(--accent-bg);
-  color: var(--accent-text);
+  border: 0;
+  background: var(--accent-strong);
+  color: var(--on-accent-strong);
 }
 .auth-card button[type='button'] {
   border: 1px solid var(--border);
@@ -141,6 +142,14 @@
 }
 .auth-card .error-state > p {
   display: flex;
+}
+/* 시안 R5 카드 아래 안내: 구분선 위 가운데 작은 글자(G-73). */
+.auth-card .auth-foot {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+  text-align: center;
 }
 .auth-card a {
   align-self: flex-start;

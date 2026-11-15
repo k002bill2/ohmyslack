@@ -51,12 +51,12 @@ describe('route', () => {
     installViewport(1280);
     const history = createMemoryHistory('/c/c2');
     render(<AppShell dataSource={memory()} history={history} />);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('#dev');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('dev');
     fireEvent.click(screen.getByRole('button', { name: 'general' }));
     expect(history.entries()).toEqual(['/c/c2', '/c/c1']);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('#general');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('general');
     act(() => history.back());
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('#dev');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('dev');
   });
 
   it('AppShell: 첫 진입 경로가 대화가 아니면 `/`로 replace(히스토리 늘리지 않음)', () => {

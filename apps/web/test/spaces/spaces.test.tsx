@@ -136,7 +136,7 @@ describe('빈 DB 시나리오(회귀): owner, 대화 0개 → 채널 만들기 �
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(history.pathname()).toBe(`/c/${NEW_CH}`);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('#공지');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('공지');
     expect(server.log).toContain('ws conversation.subscribe');
     const listCalls = server.log.filter((l) => l === 'GET /api/conversations');
     expect(listCalls.length).toBeGreaterThanOrEqual(2);
@@ -235,7 +235,7 @@ describe('CMP-23 ChannelBrowser', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '참여' }));
     await settle();
     expect(history.pathname()).toBe(`/c/${CONV}`);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('#general');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('general');
   });
 });
 

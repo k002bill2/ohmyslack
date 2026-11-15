@@ -149,7 +149,7 @@
 .space-item .thread-dot + .unread-badge {
   margin-left: 0;
 }
-/* 시안 01·04: 원형 teal 숫자. accent 위 글자 역할 토큰이 없어 짙은 accent-text 면 + bg-app 글자(라이트·다크 모두 4.5:1 이상). */
+/* 시안 01·04·R5: 원형 teal 숫자 — 채운 버튼과 같은 --accent-strong 면 + --on-accent-strong 글자(두 스킴 4.5:1 이상). */
 .unread-badge {
   flex: none;
   margin-left: auto;
@@ -158,8 +158,8 @@
   padding: 0 var(--space-1);
   border-radius: var(--radius-lg);
   box-sizing: border-box;
-  background: var(--accent-text);
-  color: var(--bg-app);
+  background: var(--accent-strong);
+  color: var(--on-accent-strong);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -324,18 +324,20 @@ body {
 .error-state button:hover {
   background: var(--bg-hover);
 }
-/* accent 위 글자 역할 토큰이 없어(§3-3) auth.css와 같은 accent-bg 면 + accent-text 글자. */
+/* 시안 R5: 기본 버튼은 채운 teal(auth.css 제출 버튼과 같은 역할 토큰), 위험 확인 버튼은 채운 red. */
 .btn-primary,
 .create-channel button[type='submit'],
 .dm-starter button[type='submit'] {
-  border-color: var(--accent-solid);
-  background: var(--accent-bg);
-  color: var(--accent-text);
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--on-accent-strong);
+  font-weight: 600;
 }
 .btn-danger {
-  border-color: var(--danger-solid);
-  background: var(--bg-app);
-  color: var(--danger-text);
+  border-color: var(--danger-strong);
+  background: var(--danger-strong);
+  color: var(--on-danger-strong);
+  font-weight: 600;
 }
 .btn:disabled,
 .create-channel button:disabled,

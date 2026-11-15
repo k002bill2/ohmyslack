@@ -75,7 +75,7 @@ describe('주소의 대화가 목록에 없음', () => {
   it('목록에 있으면 기존 대화 화면(안내 없음)', () => {
     open(1280, `/c/${C1}`, withBrowse(seed()));
     expect(screen.queryByText(ERROR_COPY.notFound)).toBeNull();
-    expect(within(screen.getByRole('main')).getByText('#general')).toBeTruthy();
+    expect(within(screen.getByRole('main')).getByText('general')).toBeTruthy();
   });
 
   it('채널 찾기 API가 없으면 안내만(버튼 없음)', () => {
@@ -140,7 +140,7 @@ describe('주소의 대화가 목록에 없음 — Codex r1 P2×2·QA D1', () =>
     open(1280, `/c/${MISSING}`, ds);
     await joinFromNotice(user);
     set(joined);
-    expect(within(screen.getByRole('main')).getByText('#left-one')).toBeTruthy();
+    expect(within(screen.getByRole('main')).getByText('left-one')).toBeTruthy();
     set(seed());
     expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
   });

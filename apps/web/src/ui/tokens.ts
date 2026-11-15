@@ -6,6 +6,9 @@
 
 const RADIX_SOURCE = 'https://raw.githubusercontent.com/radix-ui/colors/main/LICENSE';
 const RADIX_LICENSE = 'MIT';
+/** Open Color(MIT) `white` — Radix 12단계에 없는 순백. 채운 버튼 위 글자 대비(teal11 4.56·red11 5.21)에만 쓴다. */
+const OPEN_COLOR_SOURCE = 'https://raw.githubusercontent.com/yeun/open-color/master/LICENSE';
+const OPEN_COLOR_WHITE = '#ffffff';
 
 export type Scheme = 'light' | 'dark';
 export type ScaleName = 'slate' | 'teal' | 'green' | 'amber' | 'red';
@@ -38,10 +41,11 @@ export interface ColorToken {
   readonly role: ColorRole;
   /** text·nontext 대비 계산 대상(같은 스킴의 surface 토큰 이름). */
   readonly on?: string;
-  readonly scale: ScaleName;
-  readonly step: Step;
-  /** §3-3 표의 단계. step과 다르면 §7-1 대비 미달로 바꾼 것(deviation에 사유). */
-  readonly canonStep: Step;
+  /** Radix 스케일. Open Color 고정값(순백)이면 'open-color'이고 step·canonStep이 없다. */
+  readonly scale: ScaleName | 'open-color';
+  readonly step?: Step;
+  /** §3-3 표의 (스킴별) 단계. step과 다르면 §7-1 대비 미달로 바꾼 것(deviation에 사유). */
+  readonly canonStep?: Step;
   readonly deviation?: string;
   readonly source: string;
   readonly license: string;
@@ -52,6 +56,10 @@ interface RoleSpec {
   readonly step: Step;
   readonly role: ColorRole;
   readonly on?: string;
+  /** §3-3 표의 다크 열(라이트와 다른 스케일·단계를 정본으로 둔 역할만). 대비 사유가 아니라 시안 정본이다. */
+  readonly dark?: { readonly scale?: ScaleName; readonly step: Step };
+  /** §3-3 표의 라이트 열이 Open Color 순백인 역할(채운 면 위 글자). */
+  readonly lightWhite?: true;
   /** 스킴별 단계 대체(§3-3 단계가 §7-1 대비 기준 미달인 경우만). */
   readonly override?: Partial<Record<Scheme, { readonly step: Step; readonly reason: string }>>;
 }
@@ -60,23 +68,24 @@ const BG_APP = '--bg-app';
 
 /** §3-3 역할 표(이름·스케일·단계 정본 그대로). override만 정본과 다르다 — REPORT "정본 오류" 참조. */
 const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
-  '--bg-app': { scale: 'slate', step: 1, role: 'surface' },
+  /** 시안 R5(아티팩트 7266210d 재반영): 다크는 패널 slate2·바닥(ground) slate1 — 라이트(패널 1·바닥 3)와 밝기 관계를 맞춘다. */
+  '--bg-app': { scale: 'slate', step: 1, role: 'surface', dark: { step: 2 } },
   '--bg-sidebar': { scale: 'slate', step: 2, role: 'surface' },
-  '--bg-elevated': { scale: 'slate', step: 3, role: 'surface' },
+  '--bg-elevated': { scale: 'slate', step: 3, role: 'surface', dark: { step: 1 } },
   '--bg-hover': { scale: 'slate', step: 4, role: 'surface' },
   '--bg-active': { scale: 'slate', step: 5, role: 'surface' },
   '--border-subtle': {
     scale: 'slate', step: 6, role: 'nontext', on: BG_APP,
     override: {
       light: { step: 9, reason: 'slate6/bg-app 1.37 < 3 (§2-3 4항 보더 3:1)' },
-      dark: { step: 8, reason: 'slate6/bg-app 1.65 < 3 (§2-3 4항 보더 3:1)' },
+      dark: { step: 9, reason: 'slate6/bg-app(slate2) 1.5 < 3, slate8 2.81 < 3 (§2-3 4항 보더 3:1)' },
     },
   },
   '--border': {
     scale: 'slate', step: 7, role: 'nontext', on: BG_APP,
     override: {
       light: { step: 9, reason: 'slate7/bg-app 1.53 < 3 (§7-1 1.4.11)' },
-      dark: { step: 8, reason: 'slate7/bg-app 2.04 < 3 (§7-1 1.4.11)' },
+      dark: { step: 9, reason: 'slate7/bg-app(slate2) 1.9 < 3, slate8 2.81 < 3 (§7-1 1.4.11)' },
     },
   },
   '--text-muted': { scale: 'slate', step: 11, role: 'text', on: BG_APP },
@@ -100,6 +109,20 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
   '--danger-bg': { scale: 'red', step: 3, role: 'surface' },
   '--danger-text': { scale: 'red', step: 11, role: 'text', on: BG_APP },
   '--danger-solid': { scale: 'red', step: 9, role: 'nontext', on: BG_APP },
+  /** 시안 R5 채운 버튼(로그인·기본 버튼·전송·멘션 배지): 라이트 teal11·다크 teal9. 글자는 --on-accent-strong. */
+  '--accent-strong': { scale: 'teal', step: 11, role: 'surface', dark: { step: 9 } },
+  '--on-accent-strong': {
+    scale: 'slate', step: 1, role: 'text', on: '--accent-strong', lightWhite: true,
+  },
+  /** 시안 R5 위험 확인 버튼: 라이트 red11·다크 red9 면 + --on-danger-strong 글자. */
+  '--danger-strong': { scale: 'red', step: 11, role: 'surface', dark: { step: 9 } },
+  '--on-danger-strong': {
+    scale: 'slate', step: 1, role: 'text', on: '--danger-strong', lightWhite: true,
+  },
+  /** 시안 R5 「여기부터 새 메시지」 구분선(red 6, 장식 — 라벨이 의미를 전달). */
+  '--danger-line': { scale: 'red', step: 6, role: 'surface' },
+  /** 시안 R5 본문 @멘션 글자: 라이트 slate12(굵게)·다크 teal11. 멘션 블록(--accent-bg) 위. */
+  '--mention-text': { scale: 'slate', step: 12, role: 'text', on: '--accent-bg', dark: { scale: 'teal', step: 11 } },
   '--focus-ring': {
     scale: 'teal', step: 8, role: 'nontext', on: BG_APP,
     override: { light: { step: 10, reason: 'teal8/bg-app 2.30 < 3 (§7-1 1.4.11)' } },
@@ -110,13 +133,21 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
 export const ROLE_TOKEN_NAMES: readonly string[] = Object.freeze(Object.keys(ROLE_SPECS));
 
 function buildToken(spec: RoleSpec, scheme: Scheme): ColorToken {
+  const on = spec.on === undefined ? {} : { on: spec.on };
+  if (scheme === 'light' && spec.lightWhite === true) {
+    return Object.freeze({
+      value: OPEN_COLOR_WHITE, role: spec.role, scale: 'open-color' as const, ...on,
+      source: OPEN_COLOR_SOURCE, license: 'MIT',
+    });
+  }
+  const canon = scheme === 'dark' && spec.dark !== undefined ? spec.dark : spec;
+  const scale = canon.scale ?? spec.scale;
   const over = spec.override?.[scheme];
-  const step = over?.step ?? spec.step;
-  const value = radixScales[scheme][spec.scale][step - 1];
-  if (value === undefined) throw new Error(`radix ${scheme}.${spec.scale}${step} 없음`);
+  const step = over?.step ?? canon.step;
+  const value = radixScales[scheme][scale][step - 1];
+  if (value === undefined) throw new Error(`radix ${scheme}.${scale}${step} 없음`);
   return Object.freeze({
-    value, role: spec.role, scale: spec.scale, step, canonStep: spec.step,
-    ...(spec.on === undefined ? {} : { on: spec.on }),
+    value, role: spec.role, scale, step, canonStep: canon.step, ...on,
     ...(over === undefined ? {} : { deviation: over.reason }),
     source: RADIX_SOURCE, license: RADIX_LICENSE,
   });

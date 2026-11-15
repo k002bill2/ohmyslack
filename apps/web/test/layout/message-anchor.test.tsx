@@ -145,7 +145,7 @@ describe('알림 탭 위치 복원', () => {
     act(() => vi.advanceTimersByTime(ANCHOR_GRACE_MS));
     expect(screen.getByText(MESSAGE_ANCHOR_COPY.notFound)).toBeTruthy();
     expect(scrollIntoView).not.toHaveBeenCalled();
-    expect(view.container.querySelector('.conversation-title')?.textContent).toBe('#dev');
+    expect(view.container.querySelector('.conversation-title')?.textContent).toBe('dev');
     expect(history.entries()).toEqual([`/c/${C2}`]);
   });
 
@@ -155,7 +155,7 @@ describe('알림 탭 위치 복원', () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(view.container.querySelector('[data-highlighted]')).toBeNull();
     expect(screen.queryByText(MESSAGE_ANCHOR_COPY.notFound)).toBeNull();
-    expect(view.container.querySelector('.conversation-title')?.textContent).toBe('#general');
+    expect(view.container.querySelector('.conversation-title')?.textContent).toBe('general');
     expect(history.entries()).toEqual([`/c/${C1}${hash}`]);
   });
 
