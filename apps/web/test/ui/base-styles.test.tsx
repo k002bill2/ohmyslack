@@ -90,8 +90,9 @@ describe('auth.css 글자 대비(§7-1 1.4.3, 두 스킴)', () => {
     return contrast(a, b);
   };
 
-  it('제출 버튼은 accent-bg 면 위 accent-text 글자다', () => {
-    expect(css).toMatch(/button\[type='submit'\] \{[^}]*background: var\(--accent-bg\);\s*color: var\(--accent-text\)/);
+  // 시안 R5(아티팩트 7266210d 재반영): 채운 teal 버튼 — 라이트 teal11+순백 4.56, 다크 teal9+slate1 6.14.
+  it('제출 버튼은 accent-strong 채운 면 위 on-accent-strong 글자다', () => {
+    expect(css).toMatch(/button\[type='submit'\] \{[^}]*background: var\(--accent-strong\);\s*color: var\(--on-accent-strong\)/);
   });
 
   it.each(['light', 'dark'] as const)('%s: 카드·입력(bg-elevated·bg-app)·버튼 위 글자 4.5:1 이상', (scheme) => {
@@ -100,6 +101,7 @@ describe('auth.css 글자 대비(§7-1 1.4.3, 두 스킴)', () => {
       expect(ratio(scheme, fg, '--bg-app')).toBeGreaterThanOrEqual(4.5);
     }
     expect(ratio(scheme, '--accent-text', '--accent-bg')).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(scheme, '--on-accent-strong', '--accent-strong')).toBeGreaterThanOrEqual(4.5);
   });
 });
 

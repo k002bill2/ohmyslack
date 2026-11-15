@@ -85,7 +85,29 @@ export function asciiFallback(value: string): string {
   return out;
 }
 
+const nfdBytes = (value: string): number => Buffer.byteLength(value.normalize('NFD'), 'utf8');
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/**
+ * 헤더용 이름 맞춤(§6-1-1 (6)): 저장 시 NFD로 바꿔 255바이트에서 자르는 클라이언트(iOS 「파일」)에서 음절이 자모로 깨지지 않게,
+ * `NFD(이름)`이 상한을 넘으면 줄기를 자소(한글 음절·결합 문자·이모지 시퀀스) 경계에서 줄인다. 확장자는 보존. 저장 이름은 바꾸지 않는다.
+ */
+export function fitDownloadFilename(filename: string): string {
+  if (nfdBytes(filename) <= ATTACHMENT_FILENAME_MAX_BYTES) return filename;
+  const dot = filename.lastIndexOf('.');
+  const suffix = dot > 0 ? filename.slice(dot) : '';
+  const stem = dot > 0 ? filename.slice(0, dot) : filename;
+  let out = '';
+  for (const { segment } of GRAPHEMES.segment(stem)) {
+    if (nfdBytes(`${out}${segment}${suffix}`) > ATTACHMENT_FILENAME_MAX_BYTES) break;
+    out += segment;
+  }
+  const trimmed = out.replace(EDGE_TRIM, '');
+  return `${trimmed === '' ? ATTACHMENT_FILENAME_FALLBACK_STEM : trimmed}${suffix}`;
+}
+
 /** 문서·텍스트 다운로드 헤더(§6-1-1 (6)). 원문 문자열을 그대로 넣지 않는다(CR·LF 주입 불가). */
 export function attachmentDisposition(filename: string): string {
-  return `attachment; filename="${asciiFallback(filename)}"; filename*=UTF-8''${encodeRfc5987(filename)}`;
+  const fitted = fitDownloadFilename(filename);
+  return `attachment; filename="${asciiFallback(fitted)}"; filename*=UTF-8''${encodeRfc5987(fitted)}`;
 }

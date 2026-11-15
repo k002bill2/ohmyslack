@@ -220,6 +220,9 @@ def resolve_bot_url(extra: Optional[dict]) -> str:
 
 class OhmySlackAdapter(BasePlatformAdapter):
     MAX_MESSAGE_LENGTH = 4000
+    # `send`가 `truncate_message`로 직접 나눠 게시하므로, cron 라우터(gateway/delivery.py `_cap_oversized_output`)가
+    # 4,000자 초과 출력을 「truncated, full output saved to …」 표지로 자르지 않고 전문을 넘기게 한다(base 공개 속성).
+    splits_long_messages = True
 
     def __init__(self, config: PlatformConfig, *, session_factory: Callable[[], aiohttp.ClientSession] = new_session,
                  sleep=asyncio.sleep, clock: Callable[[], float] = time.time,

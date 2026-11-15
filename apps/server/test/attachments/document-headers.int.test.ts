@@ -61,12 +61,13 @@ describe('문서 다운로드 헤더·파일명(FR-OPS-09 보조)', () => {
     const channel = await createChannel(c.app, a, 'dl');
 
     const cases: [Buffer, string, string, string][] = [
-      [PDF, 'report.pdf', 'application/pdf', `attachment; filename="report.pdf"; filename*=UTF-8''report.pdf`],
-      [TEXT, encodeURIComponent('메모.txt'), 'text/plain; charset=utf-8', `attachment; filename="__.txt"; filename*=UTF-8''%EB%A9%94%EB%AA%A8.txt`],
+      [PDF, 'report.pdf', 'application/octet-stream', `attachment; filename="report.pdf"; filename*=UTF-8''report.pdf`],
+      [TEXT, encodeURIComponent('메모.txt'), 'application/octet-stream', `attachment; filename="__.txt"; filename*=UTF-8''%EB%A9%94%EB%AA%A8.txt`],
       [
         DOCX,
         encodeURIComponent('보고서.DOCX'),
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        // 사람 다운로드의 문서·텍스트는 octet-stream(실기 r3, TRD §6-1-1 (6)) — 본래 mime은 projection에 남는다.
+        'application/octet-stream',
         `attachment; filename="___.docx"; filename*=UTF-8''%EB%B3%B4%EA%B3%A0%EC%84%9C.docx`,
       ],
     ];

@@ -85,9 +85,12 @@ function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
 }
 
-/** 대화 머리 H1. 비활성 DM 상대는 이름만 말줄임하고 「(비활성)」은 항상 보인다 — 전체 이름은 title(QA D3). */
+/**
+ * 대화 머리 H1. 비활성 DM 상대는 이름만 말줄임하고 「(비활성)」은 항상 보인다 — 전체 이름은 title(QA D3).
+ * 시안 R5: 머리 제목은 「#」 없이 이름만 — 채널/대화 구분은 옆 보조 줄(「채널 · 멤버 N」)이 맡는다.
+ */
 function ConversationTitle({ space }: { readonly space: Space }) {
-  const title = spaceTitle(space);
+  const title = space.name;
   const inactive = space.kind === 'dm' ? space.peerInactiveName : undefined;
   const split = isSplitName(title, inactive);
   return (
@@ -677,7 +680,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onDiscard={discard}
       messageActions={threadLink === undefined ? messageActions : { ...messageActions, messageLink: threadLink }}
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
-      spaceTitle={spaceTitle(space)}
+      spaceTitle={space.name}
       notice={anchorNoticeEl(true)}
       {...(composerLocked(space) ? { composerNotice: COMPOSER_COPY.inactivePeer } : {})}
       {...(mentionNames === undefined ? {} : { mentionNames })}
