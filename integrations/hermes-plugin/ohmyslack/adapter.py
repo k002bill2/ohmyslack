@@ -862,7 +862,8 @@ def _media_path(descriptor: Any) -> Any:
 # standalone 전송 전체 deadline(초, 호출 시작 기준). Hermes 바깥 상한은 정상 분기 60초(`cron.standalone_send_timeout_seconds`
 # 기본값 — 어댑터는 실제 설정값을 알 수 없어 기본값을 가정한다, README)지만, 실행 중인 루프 안에서 불리는 폴백 분기는
 # 30초(`cron/scheduler_delivery.py` `_standalone_send`의 `.result(timeout=30)`)라 그보다 5초 짧게 둔다 — 폴백이 먼저 끊고
-# 재전달 큐에 넣는 동안 이쪽 전송이 성공해 이중 게시되는 것을 막는다. 대상은 루프백 봇 리스너라 정상 경로는 1초 미만이다.
+# 재전달 큐에 넣는 동안 이쪽 전송이 성공해 이중 게시될 위험을 협조적 취소 전제의 상한으로 줄인다(Hermes 폴백과의 중복 없음을
+# 보장하지는 않는다 — 취소를 억제하는 정리·`asyncio.run` 종료 시간은 보장 밖). 대상은 루프백 봇 리스너라 정상 경로는 1초 미만이다.
 STANDALONE_TOTAL_DEADLINE_S = 25.0
 # 절대 deadline 비율(설계 r4 §Q4 ★T1' 표, 한 곳) — 모든 예약은 호출 시작 t0 + 비율·TOTAL. TOTAL만 줄이면 전부 비례한다.
 # me=`/me` 1회, prep=`/me`+읽기+업로드, post=게시·재시도 대기, confirm=확인 GET(게시 deadline 뒤에도), cleanup=session.close().

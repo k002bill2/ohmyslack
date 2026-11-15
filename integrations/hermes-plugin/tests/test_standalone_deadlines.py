@@ -30,19 +30,28 @@ class _Hang:
 
     def __init__(self) -> None:
         self.entered = threading.Event()
+        self._lock = threading.Lock()  # 등록(loop·event)과 sticky 표지 확인을 release와 직렬화
+        self._released = False
         self._loop = None
         self._event = None
 
     async def wait(self) -> None:
-        self._loop, self._event = asyncio.get_running_loop(), asyncio.Event()
+        event = asyncio.Event()
+        with self._lock:
+            self._loop, self._event = asyncio.get_running_loop(), event
+            if self._released:  # 등록 전에 온 release도 잃지 않는다
+                event.set()
         self.entered.set()
-        await self._event.wait()
+        await event.wait()
 
     def release(self) -> None:
-        if self._loop is not None and not self._loop.is_closed():
+        with self._lock:
+            self._released = True
+            loop, event = self._loop, self._event
+        if loop is not None and not loop.is_closed():
             try:
-                self._loop.call_soon_threadsafe(self._event.set)
-            except RuntimeError:
+                loop.call_soon_threadsafe(event.set)
+            except RuntimeError:  # 그 사이 루프가 닫힘
                 pass
 
 
@@ -99,14 +108,21 @@ def _run_bounded(coro_fn, hang: _Hang, limit: float):
 async def _cancel_after_entry(coro, hang: _Hang):
     """`hang` 진입을 기다렸다가 바깥에서 취소한다(Hermes wait_for 흉내). 'cancelled' | 'swallowed'."""
     task = asyncio.ensure_future(coro)
-    while not hang.entered.is_set():
-        await asyncio.sleep(0)
-    task.cancel()
     try:
-        await task
-    except asyncio.CancelledError:
-        return "cancelled"
-    return "swallowed"
+        while not hang.entered.is_set() and not task.done():
+            await asyncio.sleep(0)
+        if task.done():  # 진입 전 종료(조기 실패 등) — 실제 결과·예외를 그대로 낸다
+            return await task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return "cancelled"
+        return "swallowed"
+    finally:
+        if not task.done():  # 바깥 취소·예외로 빠져도 생성 task를 회수(예외는 삼키지 않고 task 안에 둔다)
+            task.cancel()
+            await asyncio.wait({task})
 
 
 @pytest.fixture
