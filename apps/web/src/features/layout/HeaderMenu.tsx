@@ -34,16 +34,21 @@ function MenuButton({ items }: { readonly items: readonly MessageMenuItem[] }) {
 }
 
 /**
- * R4 시안 대화 헤더 더보기(Floating-Menus D): 키보드 단축키 · (구분선) 봇 추가·제거 · (구분선) 채널 나가기…(확인 Dialog는 LeaveChannelControl 그대로).
+ * R4 시안 대화 헤더 더보기(Floating-Menus D): (Jarvis DM) 알림 설정… · 키보드 단축키 · (구분선) 봇 추가·제거 · (구분선) 채널 나가기…(확인 Dialog는 LeaveChannelControl 그대로).
  * menu-bots-touch-focus: 봇 항목은 머리 버튼 줄 대신 여기(확인 Dialog·실패 표시는 `useBotChannelMenu`). 봇 0개면 항목·구분선 없음.
  * 나간 채널에서는 「다시 참여」 버튼이 헤더에 따로 남는다(UI_STATES §2-5).
  */
-export function HeaderMenu({ onShortcuts, onLeave, bots = [] }: {
+export function HeaderMenu({ onNotifications, onShortcuts, onLeave, bots = [] }: {
+  /** Jarvis DM 알림 설정 Dialog 열기(G-74). */
+  readonly onNotifications?: () => void;
   readonly onShortcuts?: () => void;
   readonly onLeave?: () => Promise<ActionResult<null>>;
   readonly bots?: readonly BotMenuItem[];
 }) {
-  const shortcuts: MessageMenuItem[] = onShortcuts === undefined ? [] : [{ key: 'shortcuts', label: HEADER_MENU_COPY.shortcuts, onSelect: onShortcuts }];
+  const shortcuts: MessageMenuItem[] = [
+    ...(onNotifications === undefined ? [] : [{ key: 'notifications', label: HEADER_MENU_COPY.notifications, onSelect: onNotifications }]),
+    ...(onShortcuts === undefined ? [] : [{ key: 'shortcuts', label: HEADER_MENU_COPY.shortcuts, onSelect: onShortcuts }]),
+  ];
   const head: MessageMenuItem[] = [...shortcuts, ...bots.map((b, i) => ({ ...b, separatorBefore: i === 0 && shortcuts.length > 0 }))];
   if (onLeave === undefined) return <MenuButton items={head} />;
   return (

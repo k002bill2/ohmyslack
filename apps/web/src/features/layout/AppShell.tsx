@@ -11,7 +11,7 @@ import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
 import { SessionList } from '../sessions';
 import { ThreadPanel } from '../thread';
-import { browserPushEnv, InstallCard, PushBotHint, PushSettings, useInstallPrompt } from '../pwa';
+import { browserPushEnv, InstallCard, PushDialog, PushSettings, useInstallPrompt } from '../pwa';
 import { canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useBotChannelMenu, useConversationMembers, type BotChannelControlProps } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
@@ -159,10 +159,12 @@ function ConversationPane(props: {
   /** 본문 `@이름` 토큰 근거(대화 멤버 이름)와 내 표시 이름(「나를 멘션」 판정). */
   readonly mentionNames?: readonly string[];
   readonly selfName?: string;
-  /** 헤더 아래 안내(Jarvis DM 알림 1회 안내, W-23 ★Q-H4). */
+  /** 헤더 아래 안내(메시지 링크 대상 안내 등). */
   readonly notice?: ReactNode;
   /** R4 헤더 더보기 「키보드 단축키」(compact는 없음). */
   readonly onShortcuts?: () => void;
+  /** Jarvis DM 헤더 더보기 「알림 설정…」(G-74, 모든 구간). */
+  readonly onNotifications?: () => void;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
@@ -215,6 +217,7 @@ function ConversationPane(props: {
           </span>
         </div>
         <HeaderMenu
+          {...(props.onNotifications === undefined ? {} : { onNotifications: props.onNotifications })}
           {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
           {...(onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave } : {})}
           bots={botMenu.items}
@@ -338,7 +341,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   /** 같은 공간을 다시 골라도(전환기) 작성기 포커스 효과가 돌게 하는 카운터(F4). */
   const [focusTick, bumpFocus] = useReducer((n: number) => n + 1, 0);
   /** D §7-3 `Ctrl/⌘+K` 공간 전환기·`Ctrl/⌘+/` 단축키 안내. */
-  const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | null>(null);
+  const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | 'notifications' | null>(null);
 
   const space = snap.spaces.find((s) => s.id === state.conversationId);
   /** 비동기 참여 완료 시점의 선택 대화(렌더 당시 값이 아니라 최신). */
@@ -615,7 +618,6 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       space={space}
       notice={
         <>
-          {space.bot === true && pushEnv !== null && dataSource.push && <PushBotHint env={pushEnv} server={dataSource.push} />}
           {/* 스레드 대상 안내는 스레드가 닫혀 있을 때만 대화 화면에(열려 있으면 패널이 그린다). */}
           {anchorNoticeEl(false)}
           {!threadOpen && anchorNoticeEl(true)}
@@ -651,6 +653,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       holding={snap.connection === 'catching-up'}
       historyReady={historyReady}
       {...(bp === 'compact' ? {} : { onShortcuts: () => setOverlay('shortcuts') })}
+      {...(space.bot === true && pushEnv !== null && dataSource.push ? { onNotifications: () => setOverlay('notifications') } : {})}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
     />
@@ -727,6 +730,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
           )}
           {overlay === 'shortcuts' && <ShortcutsDialog onClose={() => setOverlay(null)} />}
         </>
+      )}
+      {/* 알림 설정은 compact(iPhone 홈 화면 앱)에서도 연다 — 위 오버레이 묶음은 compact에서 그리지 않는다. */}
+      {overlay === 'notifications' && pushEnv !== null && dataSource.push && (
+        <PushDialog env={pushEnv} server={dataSource.push} onClose={() => setOverlay(null)} />
       )}
       <div className="visually-hidden" aria-live="polite">
         {announcement}
