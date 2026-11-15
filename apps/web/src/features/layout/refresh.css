@@ -535,3 +535,61 @@
   border-radius: var(--radius-xl);
 }
 
+
+/*
+ * R5 모바일 시안(아티팩트 7266210d 재반영 「모바일 · 대화 본문」): 머리는 ‹ + 「제목 / 보조 줄」 두 줄 + 옅은 면 더보기,
+ * 메시지는 왼쪽 42px 시각 열(오른쪽 정렬·고정폭) + 내용 열 — 작성자는 작고 muted. 날짜·새 메시지 구분도 내용 열에 맞춘다.
+ * 시각 열은 흐름 밖(absolute)이라 작성자·「나를 멘션」·본문 줄바꿈 규칙(flex-wrap)은 그대로다.
+ */
+.app-shell[data-layout='compact'] {
+  --msg-gutter: calc(var(--space-3) + 42px + var(--space-3));
+}
+.app-shell[data-layout='compact'] .conversation-header {
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-1);
+}
+.app-shell[data-layout='compact'] .conversation-heading {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+.app-shell[data-layout='compact'] .conversation-title {
+  max-width: 100%;
+  font-size: var(--text-xl);
+  letter-spacing: -0.02em;
+}
+.app-shell[data-layout='compact'] .conversation-meta {
+  font-size: var(--text-xs);
+}
+.app-shell[data-layout='compact'] .header-menu > .icon-button {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+.app-shell[data-layout='compact'] .msg-item:has(> .msg-time-below) {
+  padding-inline-start: var(--msg-gutter);
+}
+.app-shell[data-layout='compact'] .msg-item > .msg-time-below {
+  position: absolute;
+  top: calc(var(--space-2) + 2px);
+  inset-inline-start: var(--space-3);
+  width: 42px;
+  text-align: end;
+}
+.app-shell[data-layout='compact'] .msg-item:has(> .msg-time-below) .msg-author,
+.app-shell[data-layout='compact'] .msg-item:has(> .msg-time-below) .msg-mention-label {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.app-shell[data-layout='compact'] .date-separator,
+.app-shell[data-layout='compact'] .new-messages-divider {
+  padding-inline-start: var(--msg-gutter);
+}
+
+/* R5 데스크톱 시안: 타임라인은 읽기 폭(본문 760px + 항목 여백) 안에서 왼쪽 정렬, 떠 있는 작성기는 830px 상한. */
+.app-shell:not([data-layout='compact']) .conversation-pane > .message-list {
+  padding-inline-end: max(var(--space-4), 100% - 800px);
+}
+.app-shell:not([data-layout='compact']) [data-composer='main'] > .composer {
+  max-width: 830px;
+}

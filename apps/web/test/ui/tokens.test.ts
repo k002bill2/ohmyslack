@@ -24,7 +24,9 @@ const CANON_ROLE_NAMES = [
   '--bg-app', '--bg-sidebar', '--bg-elevated', '--bg-hover', '--bg-active',
   '--border-subtle', '--border', '--text-muted', '--text',
   '--accent-solid', '--accent-text', '--accent-bg', '--success-text',
-  '--warning-bg', '--warning-text', '--danger-bg', '--danger-text', '--danger-solid', '--focus-ring',
+  '--warning-bg', '--warning-text', '--danger-bg', '--danger-text', '--danger-solid',
+  '--accent-strong', '--on-accent-strong', '--danger-strong', '--on-danger-strong', '--danger-line', '--mention-text',
+  '--focus-ring',
 ];
 const SCHEMES = ['light', 'dark'] as const;
 
@@ -70,7 +72,7 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
       ['--text', '--bg-sidebar'], ['--text', '--bg-elevated'], ['--text', '--bg-hover'], ['--text', '--bg-active'],
       ['--text-muted', '--bg-sidebar'], ['--text-muted', '--bg-elevated'], ['--text-muted', '--bg-hover'],
       ['--text-muted', '--bg-active'], ['--text', '--accent-bg'], ['--accent-text', '--accent-bg'],
-      ['--danger-text', '--danger-bg'],
+      ['--danger-text', '--danger-bg'], ['--mention-text', '--bg-app'],
     ];
     for (const s of SCHEMES) {
       for (const [fg, bg] of pairs) {
@@ -96,6 +98,23 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
         else expect(t.deviation, `${s}.${name}`).toBeUndefined();
       }
     }
+  });
+
+  it('maps the R5 design surfaces: dark panel slate2 on a slate1 ground, light panel slate1 on slate3', () => {
+    expect(tok('light', '--bg-app').value).toBe('#fcfcfd');
+    expect(tok('light', '--bg-elevated').value).toBe('#f0f0f3');
+    expect(tok('dark', '--bg-app').value).toBe('#18191b');
+    expect(tok('dark', '--bg-elevated').value).toBe('#111113');
+  });
+
+  it('gives solid buttons white text in light (Open Color) and slate1 text in dark', () => {
+    expect(tok('light', '--accent-strong').value).toBe('#008573');
+    expect(tok('light', '--on-accent-strong')).toMatchObject({ value: '#ffffff', scale: 'open-color' });
+    expect(tok('dark', '--accent-strong').value).toBe('#12a594');
+    expect(tok('dark', '--on-accent-strong').value).toBe('#111113');
+    expect(tok('light', '--danger-strong').value).toBe('#ce2c31');
+    expect(tok('dark', '--danger-strong').value).toBe('#e5484d');
+    expect(tok('dark', '--mention-text').value).toBe('#0bd8b6');
   });
 
   it('lists fonts and icons with provenance', () => {

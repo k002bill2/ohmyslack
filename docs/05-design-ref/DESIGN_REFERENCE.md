@@ -113,9 +113,9 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 
 | 역할 토큰 | 스케일·단계 | 용도 |
 |---|---|---|
-| `--bg-app` | neutral 1 | 본문 배경 |
+| `--bg-app` | neutral 1 (**다크 2**) | 본문·떠 있는 패널 배경 |
 | `--bg-sidebar` | neutral 2 | 사이드바·스레드 패널 배경(**유채색 금지**, §2-2) |
-| `--bg-elevated` | neutral 3 | 입력창·카드·팝오버 |
+| `--bg-elevated` | neutral 3 (**다크 1**) | 앱 바닥(ground)·옅은 카드·키 표시 |
 | `--bg-hover` / `--bg-active` | neutral 4 / 5 | 목록 항목 hover·선택 |
 | `--border-subtle` / `--border` | neutral 6 / 7 | 구분선 / 입력 테두리 |
 | `--text-muted` / `--text` | neutral 11 / 12 | 메타·**상태 라벨(전송 중 등)** / 본문 |
@@ -126,10 +126,15 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | `--warning-bg` / `--warning-text` | amber 3 / 11 | 재연결 중 배너 |
 | `--danger-bg` | red 3 | 「여기부터 새 메시지」 라벨 배경 |
 | `--danger-text` / `--danger-solid` | red 11 / 9 | 전송 실패·연결 끊김·삭제 확인 |
+| `--accent-strong` / `--on-accent-strong` | accent 11 (다크 9) / 라이트 Open Color `white`·다크 neutral 1 | 채운 기본 버튼·전송·멘션 배지(R5) |
+| `--danger-strong` / `--on-danger-strong` | red 11 (다크 9) / 라이트 Open Color `white`·다크 neutral 1 | 채운 위험 확인 버튼(R5) |
+| `--danger-line` | red 6 | 「여기부터 새 메시지」 구분선(장식, R5) |
+| `--mention-text` | neutral 12 (다크 accent 11) | 본문 @멘션 글자(R5) |
 | `--focus-ring` | accent 8 | 2px 포커스 링(WCAG 2.4.7) |
 
 - **기본값(R3 확정, 영환님 번복 가능 §14-1):** neutral = `slate`, accent = `teal`. 대안 `sand` / `jade`·`indigo`. **배제:** `purple`·`plum`·`violet`을 면 배경으로(§2-2).
 - 대비: Radix 문서는 step 11·12 텍스트가 step 1–2 배경에서 AA를 만족하도록 설계되었다고 설명합니다(설계 의도). 우리 조합은 `check:design-tokens`가 두 스킴에서 실측합니다(WCAG 1.4.3 4.5:1, 1.4.11 3:1).
+- **R5 디자인 시안(2026-11-15, 아티팩트 7266210d 재반영):** 굵게 표시한 다크 단계와 R5 행은 시안 정본이다. 다크는 바닥 slate1 위 패널 slate2(라이트의 바닥 3·패널 1과 같은 밝기 관계). 보더 대비 보정은 `tokens.ts` override(다크 slate9).
 - **다크 모드(R3 확정):** MVP 포함. `@media (prefers-color-scheme: dark)`로 같은 토큰 이름에 Radix dark 스케일을 매핑합니다. 수동 토글·저장은 P1. QA 체크리스트(§11)는 두 스킴을 모두 돌립니다. 본문 메시지는 어느 스킴에서도 투명도 처리하지 않습니다(D3).
 
 ### 3-4. 아이콘 토큰 (Lucide, 24px 그리드, 스트로크 1.75–2)
@@ -510,7 +515,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 메시지 액션(답글·수정·삭제) | 길게 누르기 → 액션 시트(`Dialog`) | hover/포커스 시 인라인 툴바 | 동일 |
 | 헤더 | 뒤로 + 제목 + 더보기 | 제목 + 멤버 수 + 더보기 | 동일 |
 | 채널 찾기 / DM 시작 / 멤버 관리 | 라우트 화면 | Dialog / Dialog / 라우트 | 동일 |
-| 타임스탬프 | 메시지 아래 `text-xs` | 작성자 옆 | 작성자 옆 |
+| 타임스탬프 | 왼쪽 42px 시각 열 `text-xs`·고정폭·오른쪽 정렬(R5 시안, 2026-11-15 — DOM 순서는 본문 뒤 그대로) | 작성자 옆 | 작성자 옆 |
 | 가상 키보드 | `VisualViewport` 보정 | — | — |
 
 - 세로 높이: `height: 100dvh` 기본, 미지원 브라우저 폴백 `100vh`(iOS 지원 버전은 ⚖️-4 기기 결정 후 확인).

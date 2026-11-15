@@ -64,7 +64,15 @@ export function LoginForm({ sessionEnded = false, onLogin, onSuccess }: LoginFor
         <AuthBrand title={LOGIN_COPY.title} intro={LOGIN_COPY.intro} />
         {sessionEnded && <p role="status">{SESSION_ENDED_TEXT}</p>}
         <label htmlFor={emailId}>이메일</label>
-        <input id={emailId} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input
+          id={emailId}
+          type="email"
+          autoComplete="username"
+          placeholder={LOGIN_COPY.emailPlaceholder}
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
         <label htmlFor={passwordId}>비밀번호</label>
         <input
           id={passwordId}
@@ -80,6 +88,7 @@ export function LoginForm({ sessionEnded = false, onLogin, onSuccess }: LoginFor
         {error === 'network' && <ErrorState message={LOGIN_COPY.network} onRetry={retry} retryDisabled={pending} />}
         {error === 'server' && <ErrorState message={LOGIN_COPY.server} onRetry={retry} retryDisabled={pending} />}
         <button type="submit" disabled={pending}>로그인</button>
+        <p className="auth-foot">{LOGIN_COPY.inviteOnly}</p>
       </form>
     </div>
   );

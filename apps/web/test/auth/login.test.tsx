@@ -10,10 +10,12 @@ const CREDENTIALS = '로그인할 수 없습니다. 이메일과 비밀번호를
 const NETWORK = '서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.';
 const SERVER = '서버에 문제가 생겨 로그인하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 const INVALID = '입력 형식을 처리할 수 없습니다. 이메일 주소를 확인해 주세요.';
-const INTRO = '초대받은 계정의 이메일과 비밀번호를 입력해 주세요.';
+// G-05 개정(시안 R5): 안내문은 개인 메신저 성격, 「초대로만」 안내는 카드 아래 G-73 줄이 맡는다.
+const INTRO = '본인 기기에서만 접속하는 개인 메신저입니다.';
+const INVITE_ONLY = '계정은 관리자가 보낸 초대 링크로만 만들 수 있습니다.';
 const ALLOWED = [
   '이메일', '비밀번호', '로그인', '세션이 종료되었습니다. 다시 로그인해 주세요.', '잠시 후 다시 시도해 주세요',
-  INTRO, CREDENTIALS, NETWORK, SERVER, INVALID, '다시 시도',
+  INTRO, INVITE_ONLY, CREDENTIALS, NETWORK, SERVER, INVALID, '다시 시도',
 ];
 const EMAIL = 'a@b.c';
 const PASS_INPUT = 'p1';
@@ -123,6 +125,12 @@ describe('CMP-19 LoginForm 문구(COPY_GAPS G-02–G-05)', () => {
     render(<LoginForm onLogin={async () => ({ ok: true })} onSuccess={() => {}} />);
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('로그인');
     expect(screen.getByText(INTRO)).toBeTruthy();
+  });
+
+  it('G-73 카드 아래 구분선 영역에 「초대 링크로만」 안내를 보이고 이메일 예시 placeholder를 둔다', () => {
+    const { container } = render(<LoginForm onLogin={async () => ({ ok: true })} onSuccess={() => {}} />);
+    expect(container.querySelector('.auth-foot')?.textContent).toBe(INVITE_ONLY);
+    expect(screen.getByLabelText('이메일').getAttribute('placeholder')).toBe('name@example.com');
   });
 
   it('G-04 400은 입력 형식 안내만 보이고 「다시 시도」 버튼은 없다', async () => {
