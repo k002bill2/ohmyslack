@@ -38,7 +38,7 @@ created: 2026-11-07
 
 스택은 React + TypeScript + Vite, Node.js + Fastify, PostgreSQL, 같은 앱의 PWA입니다. 설치 기록의 Node 26.12.1은 확인된 설치 버전이지 승인된 runtime pin은 아닙니다. 목표 major는 Node 26이며, 착수 때 공식 Node.js release 표에서 26.x가 지원 LTS인지 확인하고 그 LTS 최신 보안 패치의 정확한 버전을 `.nvmrc`, `engines`, CI, lockfile에 함께 고정합니다. 26.x가 아직 지원 LTS가 아니면 당시 지원 중인 LTS major를 사용하고 이 문서를 갱신합니다. PostgreSQL 운영 버전과 연결 경계는 착수 전 확인 항목입니다.
 
-MVP는 본인 다기기 대화 동기화, 합성 계정으로 초대·DM 권한 검증, 채널·1:1 DM·1단 스레드·수정/삭제·멘션·unread·실시간·복구·모바일 PWA입니다. 타인 초대/tailnet 추가는 별도 승인입니다. Redis, Slack API/브리지, 오프라인 발신 큐, 사용자 본문 지속 캐시, 검색, presence, 네이티브 앱, Electron은 MVP 의존성에서 제외합니다. **최소 첨부(§6-1)·Web Push(§6-2)·Hermes 봇(§5-2)은 v1.3에서 MVP에 포함**하며 일반 파일은 제외합니다.
+MVP는 본인 다기기 대화 동기화, 합성 계정으로 초대·DM 권한 검증, 채널·1:1 DM·1단 스레드·수정/삭제·멘션·unread·실시간·복구·모바일 PWA입니다. 타인 초대/tailnet 추가는 별도 승인입니다. Redis, Slack API/브리지, 지속(영구) 오프라인 발신 큐, 사용자 본문 지속 캐시, 검색, presence, 네이티브 앱, Electron은 MVP 의존성에서 제외합니다. **최소 첨부(§6-1)·Web Push(§6-2)·Hermes 봇(§5-2)은 v1.3에서 MVP에 포함**하며 일반 파일은 제외합니다.
 
 ## 2. 데이터 모델
 
@@ -250,7 +250,7 @@ TR-SEC 추가 행(R3.3, ADR-001): **TR-SEC-13** 봇 토큰 경계(§5-2) — 토
 
 Tailscale Serve HTTPS는 tailnet에서 로컬 reverse proxy로 제안합니다. 앱 백엔드 listener는 `127.0.0.1:<port>`만 사용하며, tailnet HTTPS 접점은 Tailscale Serve가 제공합니다. Funnel, router port forwarding, LAN bind, `0.0.0.0` listener는 금지합니다. Serve hostname은 비밀이 아니므로 앱 인증을 유지하고 Mac sleep/offline은 명시적으로 표시합니다. DB port는 Serve하지 않습니다.
 
-PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=standalone`을 사용합니다. 아이콘 세트와 관련 크기·purpose·apple touch icon은 디자인 레퍼런스 §9-2 정본을 따릅니다. service worker는 해시된 app shell 정적 파일만 캐시하고 `/api/**`, 메시지·읽음·인증·초대 응답과 WS를 우회합니다. 첨부(`/api/attachments/**`)도 우회합니다. push 이벤트 핸들러는 알림 표시만 하고 본문을 저장하지 않습니다. 본문은 Cache API·IndexedDB·localStorage에 저장하지 않고 화면 메모리에서만 일시 보유합니다. 오프라인 발신 큐는 없고 server ACK 전 성공 표시도 없습니다. 로그아웃 시 화면 데이터를 비웁니다.
+PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=standalone`을 사용합니다. 아이콘 세트와 관련 크기·purpose·apple touch icon은 디자인 레퍼런스 §9-2 정본을 따릅니다. service worker는 해시된 app shell 정적 파일만 캐시하고 `/api/**`, 메시지·읽음·인증·초대 응답과 WS를 우회합니다. 첨부(`/api/attachments/**`)도 우회합니다. push 이벤트 핸들러는 알림 표시만 하고 본문을 저장하지 않습니다. 본문은 Cache API·IndexedDB·localStorage에 저장하지 않고 화면 메모리에서만 일시 보유합니다. 지속 발신 큐는 없고 server ACK 전 성공 표시도 없습니다. 예외로 오프라인 때문에 보내지 못한 메시지는 같은 화면 세션 안에서 `online` 복귀 때 같은 `client_message_id`로 한 번 자동 재전송합니다(화면 메모리 한정, 2026-11-17 결정, UI_STATES §2-5). 로그아웃 시 화면 데이터를 비웁니다.
 
 반응형 구간·레이아웃 폭·IME·키보드 동작·상태 문구는 디자인 레퍼런스의 브레이크포인트·레이아웃·IME 규칙을 정본으로 따릅니다. offline messaging은 약속하지 않습니다. Web Push는 §6-2 범위로 제공합니다. iOS Safari별 설치·cookie·WS 동작은 QA 확인 대상입니다.
 

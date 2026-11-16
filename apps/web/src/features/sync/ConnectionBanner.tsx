@@ -3,7 +3,7 @@ import type { ConnectionState } from '../../data';
 /** 디자인 §6-4 ConnectionBanner 문구 정본(§4-3 연결 상태 행). 연결됨은 숨김. */
 export const CONNECTION_TEXT: Readonly<Record<Exclude<ConnectionState, 'connected'>, string>> = Object.freeze({
   reconnecting: '다시 연결 중…',
-  offline: '연결이 끊겼습니다. 지금 보내는 메시지는 저장되지 않습니다. 연결되면 다시 시도하세요.',
+  offline: '연결이 끊겼습니다. 인터넷 연결이 없을 때 보낸 메시지는 연결되면 자동으로 다시 보냅니다.',
   'catching-up': '최신 상태 확인 중…',
 });
 

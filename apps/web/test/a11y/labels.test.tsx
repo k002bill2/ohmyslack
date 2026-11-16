@@ -41,7 +41,7 @@ describe('FR-CLIENT-07 접근성', () => {
     expect(screen.getByRole('alert').textContent).toContain('전송 실패');
     expect(screen.getByRole('button', { name: '전송 실패 · 다시 시도' }).textContent).toBe('다시 시도');
     const banner = screen.getByRole('status', { hidden: true });
-    expect(banner.textContent).toBe('연결이 끊겼습니다. 지금 보내는 메시지는 저장되지 않습니다. 연결되면 다시 시도하세요.');
+    expect(banner.textContent).toBe('연결이 끊겼습니다. 인터넷 연결이 없을 때 보낸 메시지는 연결되면 자동으로 다시 보냅니다.');
     act(() => ds.setConnection('reconnecting'));
     expect(banner.textContent).toBe('다시 연결 중…');
     act(() => ds.setConnection('catching-up'));

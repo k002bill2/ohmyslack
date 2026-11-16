@@ -56,7 +56,7 @@ function view(item: PendingMessage, onRetry = vi.fn(), onDiscard = vi.fn()) {
 const sending = createPending({ conversationId: CONV, authorId: ME, clientMessageId: 'cm-1', body: '안녕', online: true });
 const key = { conversationId: CONV, authorId: ME, clientMessageId: 'cm-1' };
 
-describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
+describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑨)', () => {
   it('① 2xx 전에는 저장 확인을 표시하지 않고 「전송 중」, 2xx 후 저장 확인(표시 없음)', async () => {
     const { ctl, pending, item } = setup();
     const done = ctl.submit(CONV, '안녕');
@@ -163,7 +163,7 @@ describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
     expect(item().status).toBe('confirmed');
   });
 
-  it('⑧ 자동 재전송 0회 — 네트워크 오류·HTTP 오류·WS 재연결 뒤에도 post 호출은 사용자 동작 횟수뿐', async () => {
+  it('⑧ 온라인 상태의 실패는 자동 재전송 0회 — 네트워크 오류·HTTP 오류·WS 재연결 뒤에도 post 호출은 사용자 동작 횟수뿐', async () => {
     vi.useFakeTimers();
     try {
       const { ctl, pending, calls } = setup();
@@ -174,10 +174,109 @@ describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
       await Promise.all([a, b]);
       ctl.wsClosed();
       await vi.advanceTimersByTimeAsync(60_000);
+      await ctl.resendOffline();
       expect(calls).toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('⑨ 오프라인으로 못 보낸 메시지는 온라인 복귀 때 같은 ID로 순서대로 한 번 다시 보낸다(2026-11-17 결정)', async () => {
+    const { ctl, calls, pending, setOnline } = setup(false);
+    await ctl.submit(CONV, '하나');
+    await ctl.submit(CONV, '둘');
+    expect(calls).toHaveLength(0);
+    setOnline(true);
+    const resend = ctl.resendOffline();
+    await Promise.resolve();
+    expect(calls.map((c) => c.clientMessageId)).toEqual(['cm-1']);
+    pending[0]?.resolve({ ok: true, messageId: 'm-1' });
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    pending[1]?.resolve({ ok: true, messageId: 'm-2' });
+    await resend;
+    expect(calls).toEqual([
+      { conversationId: CONV, clientMessageId: 'cm-1', body: '하나' },
+      { conversationId: CONV, clientMessageId: 'cm-2', body: '둘' },
+    ]);
+    expect(ctl.items().map((it) => it.status)).toEqual(['confirmed', 'confirmed']);
+  });
+
+  it('⑨ 오프라인 중 네트워크 오류·오프라인 재시도도 대상이고, 재전송이 다시 실패해도 같은 복귀에서 반복하지 않는다', async () => {
+    const { ctl, calls, pending, setOnline, item } = setup();
+    const first = ctl.submit(CONV, 'x');
+    setOnline(false);
+    pending[0]?.reject(new TypeError('Failed to fetch'));
+    await first;
+    expect(item()).toMatchObject({ status: 'unknown', offline: true });
+    setOnline(true);
+    const r1 = ctl.resendOffline();
+    await Promise.resolve();
+    pending[1]?.reject(new TypeError('Failed to fetch'));
+    await r1;
+    expect(item()).toMatchObject({ status: 'unknown' });
+    expect(item().offline).toBeUndefined();
+    await ctl.resendOffline();
+    expect(calls).toHaveLength(2);
+    setOnline(false);
+    await ctl.retry('cm-1');
+    expect(item()).toMatchObject({ status: 'failed', offline: true });
+    setOnline(true);
+    const r2 = ctl.resendOffline();
+    await Promise.resolve();
+    pending[2]?.resolve({ ok: true, messageId: 'm-1' });
+    await r2;
+    expect(calls.map((c) => c.clientMessageId)).toEqual(['cm-1', 'cm-1', 'cm-1']);
+  });
+
+  it('⑨ 온라인 복귀 전에 삭제한 항목·400/409·아직 오프라인이면 보내지 않는다', async () => {
+    const { ctl, calls, pending, setOnline } = setup();
+    const bad = ctl.submit(CONV, 'bad');
+    pending[0]?.resolve({ ok: false, status: 400 });
+    await bad;
+    setOnline(false);
+    await ctl.submit(CONV, 'gone');
+    await ctl.submit(CONV, 'later');
+    ctl.discard('cm-2');
+    await ctl.resendOffline();
+    expect(calls).toHaveLength(1);
+    setOnline(true);
+    const r = ctl.resendOffline();
+    await Promise.resolve();
+    pending[1]?.resolve({ ok: true, messageId: 'm-3' });
+    await r;
+    expect(calls.map((c) => c.clientMessageId)).toEqual(['cm-1', 'cm-3']);
+  });
+
+  it('⑨ 재전송 중 다시 끊겼다 복귀해도 앞 응답 전에 다음 항목을 보내지 않는다(Codex r1 P2)', async () => {
+    const { ctl, calls, pending, setOnline } = setup(false);
+    await ctl.submit(CONV, '하나');
+    await ctl.submit(CONV, '둘');
+    setOnline(true);
+    const r1 = ctl.resendOffline();
+    await Promise.resolve();
+    const r2 = ctl.resendOffline();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls.map((c) => c.clientMessageId)).toEqual(['cm-1']);
+    pending[0]?.resolve({ ok: true, messageId: 'm-1' });
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    pending[1]?.resolve({ ok: true, messageId: 'm-2' });
+    await Promise.all([r1, r2]);
+    expect(calls.map((c) => c.clientMessageId)).toEqual(['cm-1', 'cm-2']);
+  });
+
+  it('⑨ reset(세션 종료) 뒤에는 진행 중이던 재전송 루프가 남은 항목을 보내지 않는다(Codex r1 P2)', async () => {
+    const { ctl, calls, pending, setOnline } = setup(false);
+    await ctl.submit(CONV, '하나');
+    await ctl.submit(CONV, '둘');
+    setOnline(true);
+    const r = ctl.resendOffline();
+    await Promise.resolve();
+    ctl.reset();
+    pending[0]?.resolve({ ok: true, messageId: 'm-1' });
+    await r;
+    expect(calls).toHaveLength(1);
+    expect(ctl.items()).toHaveLength(0);
   });
 
   it('전이 6: 전송 중 message.created가 먼저 와도 HTTP를 기다리고, 항목은 1개, 이후 응답 없이 끝나면 저장 확인', async () => {
@@ -248,7 +347,7 @@ describe('FR-MSG-02 세부 사례(UI_STATES §7 ①–⑧)', () => {
   });
 });
 
-it('FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 않고 HTTP 오류는 실패와 재시도로 표시하며 연결 단절만으로 미저장을 단정하지 않고 자동 전송 큐를 만들지 않는다', async () => {
+it('FR-MSG-02 HTTP 저장 응답 전에는 저장 확인을 표시하지 않고 HTTP 오류는 실패와 재시도로 표시하며 연결 단절만으로 미저장을 단정하지 않고 지속 전송 큐 없이 오프라인으로 못 보낸 메시지만 복귀 때 한 번 다시 보낸다', async () => {
   const { ctl, pending, calls } = setup();
   const a = ctl.submit(CONV, 'a');
   expect(ctl.items()[0]?.status).toBe('sending');
