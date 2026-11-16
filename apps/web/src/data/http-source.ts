@@ -416,6 +416,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     readTimer = null;
     reloadTimer = null;
     pending = [];
+    // 진행 중인 오프라인 재전송 루프가 남은 항목을 보내지 않게(Codex r1 P2).
+    sendController.reset();
     unlisted = new Map();
     checkpoint = null;
     clearCheckpoints(storage);
@@ -1180,7 +1182,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
           // 전경에서 본 위치는 전경 이탈 즉시 보낸다(대기분 손실 방지, BRIEF ★1).
           else flushReads();
         };
-        const onOnline = () => void resume();
+        const onOnline = () => {
+          void resume();
+          // 오프라인으로 못 보낸 메시지는 복귀 때 같은 ID로 한 번 다시 보낸다(2026-11-17 결정, UI_STATES §2-5).
+          if (!ended) void sendController.resendOffline();
+        };
         const onOffline = () => setConnection('offline');
         life.doc.addEventListener('visibilitychange', onVisible);
         life.win.addEventListener('online', onOnline);
