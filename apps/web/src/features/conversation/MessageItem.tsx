@@ -149,7 +149,8 @@ function MessageItemView(props: MessageItemProps) {
   }, [confirming]);
   const actionable = canModify(message, selfId);
   const isEditing = editing && actionable && onEdit !== undefined;
-  const showReply = onReply !== undefined && message.deleted !== true;
+  // 저장 전(pending) 메시지는 서버 id가 없어 스레드 루트가 될 수 없다 — 임시 id가 thread_root_id로 나가 400이 된다.
+  const showReply = onReply !== undefined && message.deleted !== true && pending === undefined;
   const mentioned = props.mentionsSelf === true && message.deleted !== true;
   const sheetMode = (props.actionMode ?? (placement === 'below' ? 'sheet' : 'toolbar')) === 'sheet';
   const canEdit = actionable && !isEditing && onEdit !== undefined;
