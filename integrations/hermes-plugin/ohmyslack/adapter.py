@@ -659,6 +659,18 @@ class OhmySlackAdapter(BasePlatformAdapter):
         return SendResult(success=False, error="ohmyslack: unknown conversation",
                           retryable=False, error_kind="forbidden")
 
+    def _chunk_root(self, chat_id: str, root: Optional[str], first_id: str) -> Optional[str]:
+        """루트 없이 채널에 보내는 분할 조각의 스레드 루트: 2번째 조각부터 첫 조각 id(스레드 답글).
+
+        DM·스레드 답글은 그대로(`root`). 첫 조각 id를 못 얻으면 기존처럼 최상위로 보내고 경고만 남긴다(본문 미기록).
+        """
+        if root is not None or self._kinds.get(str(chat_id)) != "channel":
+            return root
+        if not first_id:
+            logger.warning("ohmyslack: first chunk id missing; remaining chunks stay top-level")
+            return None
+        return first_id
+
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
                    metadata: Optional[dict[str, Any]] = None) -> SendResult:
         if self._client is None:
@@ -670,8 +682,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         ids: list[str] = []
         chunks = self.truncate_message(content or "", self.MAX_MESSAGE_LENGTH)
         try:
-            for chunk in chunks:
-                res = await self._client.post_message(str(chat_id), chunk, thread_root_id=root)
+            for i, chunk in enumerate(chunks):
+                res = await self._client.post_message(
+                    str(chat_id), chunk, thread_root_id=self._chunk_root(chat_id, root, ids[0]) if i else root)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
@@ -763,8 +776,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         ids: list[str] = []
         try:
             for i, chunk in enumerate(chunks):
-                res = await self._client.post_message(str(chat_id), chunk, thread_root_id=root,
-                                                      attachment_ids=[attachment_id] if i == 0 else None)
+                res = await self._client.post_message(
+                    str(chat_id), chunk, thread_root_id=self._chunk_root(chat_id, root, ids[0]) if i else root,
+                    attachment_ids=[attachment_id] if i == 0 else None)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
@@ -977,9 +991,16 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
                                                                             budget=budget, clock=clock)
             text = message or (names[0] if names else "")
             chunks = BasePlatformAdapter.truncate_message(text, OhmySlackAdapter.MAX_MESSAGE_LENGTH)
+            fold = kind == "channel"  # allowlist 채널 최상위: 2번째 조각부터 첫 조각 스레드 답글(DM은 연속 최상위)
+            chunk_root: Optional[str] = None
             for i, chunk in enumerate(chunks):
+                if i == 1 and fold:
+                    chunk_root = ids[0] or None
+                    if chunk_root is None:
+                        logger.warning("ohmyslack: first chunk id missing; remaining chunks stay top-level")
                 res = await _within(client.post_message(
-                    str(chat_id), chunk, attachment_ids=attachment_ids if i == 0 and attachment_ids else None,
+                    str(chat_id), chunk, thread_root_id=chunk_root,
+                    attachment_ids=attachment_ids if i == 0 and attachment_ids else None,
                     remaining=left), left)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except _DeadlineExceeded:
