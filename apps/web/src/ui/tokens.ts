@@ -258,7 +258,6 @@ export const splitLimits = Object.freeze({
   navMax: 360,
   navCollapseBelow: 160,
   threadMin: 320,
-  threadMax: 560,
   bodyMin: 480,
   /** 분할선 자체 폭(= 패널 사이 여백). */
   gutter: 12,
