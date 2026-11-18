@@ -8,6 +8,8 @@ export interface SplitRoom {
   readonly nav: number;
   /** 스레드 폭 — 닫혀 있으면 null. */
   readonly thread: number | null;
+  /** 뷰포트 폭(--thread-w 기본값의 vw 계산용). 없으면 기본 폭 = threadMin. */
+  readonly vw?: number;
 }
 
 /** 접힘 레일·기본 내비 폭은 레이아웃 토큰(px 문자열)에서 읽는다 — 수치를 복제하지 않는다. */
@@ -22,15 +24,34 @@ export const NAV_DEFAULT = px('--sidebar-w');
  */
 export const BODY_COLUMN_MIN = L.bodyMin - 4 * L.gutter;
 
-/** 내비 상한: min(navMax, 안쪽 − 본문 열 최소 − 분할선 − 스레드). */
+/** 내비 상한: min(navMax, 안쪽 − 본문 열 최소 − 분할선 − 스레드). 소수 안쪽 폭(확대·OS 배율)은 내림해 정수로. */
 export function navMax(room: SplitRoom): number {
   const threadPart = room.thread === null ? 0 : room.thread + L.gutter;
-  return Math.max(L.navMin, Math.min(L.navMax, room.inner - L.gutter - BODY_COLUMN_MIN - threadPart));
+  return Math.max(L.navMin, Math.min(L.navMax, Math.floor(room.inner - L.gutter - BODY_COLUMN_MIN - threadPart)));
 }
 
-/** 스레드 상한: 고정 상한 없이 공간 한계(안쪽 − 본문 열 최소 − 분할선 2개 − 내비)만. 하한은 threadMin. */
+/** 스레드 상한: 고정 상한 없이 공간 한계(안쪽 − 본문 열 최소 − 분할선 2개 − 내비)만. 하한은 threadMin. 정수(내림). */
 export function threadMax(room: SplitRoom): number {
-  return Math.max(L.threadMin, room.inner - 2 * L.gutter - BODY_COLUMN_MIN - room.nav);
+  return Math.max(L.threadMin, Math.floor(room.inner - 2 * L.gutter - BODY_COLUMN_MIN - room.nav));
+}
+
+/** --thread-w 토큰 clamp(Apx, Bvw, Cpx)를 해석한다 — 수치를 복제하지 않고 토큰 문자열에서 읽는다. */
+const THREAD_W = /^clamp\((\d+)px,\s*(\d+)vw,\s*(\d+)px\)$/.exec(layoutVars['--thread-w'] ?? '');
+
+/** 사용자 폭이 없을 때 스레드 기본 폭(px, 내림). 뷰포트 폭을 모르면 threadMin. */
+export function defaultThread(vw: number | undefined): number {
+  if (vw === undefined || THREAD_W === null) return L.threadMin;
+  const [lo, mid, hi] = [Number(THREAD_W[1]), Number(THREAD_W[2]), Number(THREAD_W[3])];
+  return Math.floor(Math.max(lo, Math.min(hi, (mid / 100) * vw)));
+}
+
+/**
+ * 스레드 표시 폭 — CSS 그리드 규칙(minmax(--thread-min, --thread-w) 열이 본문 바닥을 먼저 채운다)과 같은 순수 계산:
+ * max(threadMin, min(의도 ?? 기본, 안쪽 − 내비 − 2·gutter − 본문 열 최소)). 실측하지 않는다 — 측정→클램프 순환 차단(r2 P2-1).
+ */
+export function gridThread(inner: number, nav: number, intent: number | null, vw?: number): number {
+  const room = Math.floor(inner - nav - 2 * L.gutter - BODY_COLUMN_MIN);
+  return Math.max(L.threadMin, Math.min(intent ?? defaultThread(vw), room));
 }
 
 /** 끈 내비 폭 → 결과. navCollapseBelow 아래면 접힘(레일), 아니면 [navMin, navMax]로 자른다. */

@@ -398,7 +398,7 @@ describe('측정→클램프 순환 차단(r2 P2-1·P3-1)', () => {
     }
   });
 
-  it('셸 통합: 스레드 열림 1400 → 1000 한 번에(resize가 media query보다 먼저) → 숨은 navW 보존, 1400 복귀 시 원래 폭', async () => {
+  it('셸 통합: 스레드 열림 1400 → 1100(자동 접힘 구간) 한 번에(resize가 media query보다 먼저) → 숨은 navW 보존, 1400 복귀 시 원래 폭', async () => {
     installViewport(1400);
     const user = userEvent.setup();
     render(<AppShell dataSource={memory()} />);
@@ -412,10 +412,11 @@ describe('측정→클램프 순환 차단(r2 P2-1·P3-1)', () => {
     fireEvent.keyDown(sep, { key: 'End' });
     expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
     act(() => {
-      inner = 1000;
+      // 1000은 medium(분할 없음)이라 wide 안의 자동 접힘 구간 1100(안쪽 1076)으로 줄인다.
+      inner = 1076;
       // 실브라우저 순서: resize 이벤트가 먼저, media query change가 나중.
       window.dispatchEvent(new Event('resize'));
-      resizeTo(1000);
+      resizeTo(1100);
     });
     expect(shell()?.dataset['sidebar']).toBe('collapsed');
     expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
