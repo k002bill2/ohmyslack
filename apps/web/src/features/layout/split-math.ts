@@ -37,10 +37,12 @@ export function threadMax(room: SplitRoom): number {
 
 /** --thread-w 토큰 clamp(Apx, Bvw, Cpx)를 해석한다 — 수치를 복제하지 않고 토큰 문자열에서 읽는다. */
 const THREAD_W = /^clamp\((\d+)px,\s*(\d+)vw,\s*(\d+)px\)$/.exec(layoutVars['--thread-w'] ?? '');
+// 토큰 형식이 바뀌어 해석이 실패하면 조용히 320으로 떨어지지 않고 모듈 로드 시 알린다(r3 P3-3).
+if (THREAD_W === null) throw new Error('--thread-w 토큰을 clamp(Apx, Bvw, Cpx)로 해석할 수 없습니다');
 
 /** 사용자 폭이 없을 때 스레드 기본 폭(px, 내림). 뷰포트 폭을 모르면 threadMin. */
 export function defaultThread(vw: number | undefined): number {
-  if (vw === undefined || THREAD_W === null) return L.threadMin;
+  if (vw === undefined) return L.threadMin;
   const [lo, mid, hi] = [Number(THREAD_W[1]), Number(THREAD_W[2]), Number(THREAD_W[3])];
   return Math.floor(Math.max(lo, Math.min(hi, (mid / 100) * vw)));
 }

@@ -152,27 +152,27 @@ describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(
     expect(next).toBe(base);
   });
 
-  it('셸 통합: 1600에서 1000으로 넓힌 뒤 1200으로 줄였다가 1600으로 되돌리면 다시 1000', async () => {
+  it('셸 통합: 1600에서 880으로 넓힌 뒤 1200으로 줄였다가 1600으로 되돌리면 다시 880', async () => {
     await wide(true);
-    // jsdom엔 레이아웃이 없다 — 셸 안쪽 폭만 심는다(내비·스레드 실측 폭은 0 → 표시 폭은 min(의도, 상한)으로 계산).
+    // jsdom엔 레이아웃이 없다 — 셸 안쪽 폭만 심는다. 내비 폭은 상태 계산값(기본 260), 표시 스레드는 min(의도, 상한).
     let inner = 1600;
     stubInner(() => inner);
     fireEvent(window, new Event('resize'));
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'Home' });
-    // 320에서 ← 한 칸 16px씩 넓혀 1000 근처(320 + 43 × 16 = 1008)까지.
-    for (let i = 0; i < 43; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('1008px');
+    // 320에서 ← 한 칸 16px씩 넓혀 상한(1600 − 456 − 260 = 884) 근처(320 + 35 × 16 = 880)까지.
+    for (let i = 0; i < 35; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('880px');
     inner = 1200;
     fireEvent(window, new Event('resize'));
-    // 의도 폭은 그대로, 표시 폭은 상한 1200 − 24 − 432 − 0 = 744.
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('1008px');
-    expect(sep.getAttribute('aria-valuenow')).toBe('744');
-    expect(sep.getAttribute('aria-valuemax')).toBe('744');
+    // 의도 폭은 그대로, 표시 폭은 상한 1200 − 24 − 432 − 260 = 484.
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('880px');
+    expect(sep.getAttribute('aria-valuenow')).toBe('484');
+    expect(sep.getAttribute('aria-valuemax')).toBe('484');
     inner = 1600;
     fireEvent(window, new Event('resize'));
-    expect(sep.getAttribute('aria-valuenow')).toBe('1008');
+    expect(sep.getAttribute('aria-valuenow')).toBe('880');
   });
 
   it('셸 통합: 의도 폭이 공간보다 클 때 → 는 표시 폭에서 한 칸 줄인다(먹통 아님)', async () => {
@@ -182,12 +182,13 @@ describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'End' });
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('1144px');
-    inner = 1000;
+    // 1600 − 24 − 432 − 260 = 884
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('884px');
+    inner = 1100;
     fireEvent(window, new Event('resize'));
-    // 표시 폭 = 상한 1000 − 24 − 432 = 544. → 한 칸 = 528.
+    // 표시 폭 = 상한 1100 − 24 − 432 − 260 = 384. → 한 칸 = 368.
     fireEvent.keyDown(sep, { key: 'ArrowRight' });
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('528px');
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('368px');
   });
 
   it('셸 통합: 1100(자동 접힘) 구간으로 바로 줄여도 의도 폭은 320으로 떨어지지 않는다(QA N2)', async () => {
@@ -197,12 +198,13 @@ describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'End' });
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('960px');
+    // 1416 − 24 − 432 − 260 = 700
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('700px');
     inner = 1076;
     fireEvent(window, new Event('resize'));
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('960px');
-    // 표시 폭 = min(960, 1076 − 24 − 432 − 0) = 620
-    expect(sep.getAttribute('aria-valuenow')).toBe('620');
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('700px');
+    // 표시 폭 = max(320, min(700, 1076 − 24 − 432 − 260 = 360)) = 360
+    expect(sep.getAttribute('aria-valuenow')).toBe('360');
   });
 });
 
@@ -213,7 +215,7 @@ describe('Home/End 큰 이동(P3-2, APG Window Splitter)', () => {
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     expect(fireEvent.keyDown(sep, { key: 'End' })).toBe(false);
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('960px');
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('700px');
     expect(fireEvent.keyDown(sep, { key: 'Home' })).toBe(false);
     expect(shell()?.style.getPropertyValue('--thread-w')).toBe('320px');
   });
@@ -320,16 +322,16 @@ describe('본문 바닥 통일(교차 검토 P1-1·P2-1)', () => {
     fireEvent(window, new Event('resize'));
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
-    for (let i = 0; i < 30; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
+    for (let i = 0; i < 10; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
     const now = Number(sep.getAttribute('aria-valuenow'));
     const max = Number(sep.getAttribute('aria-valuemax'));
     expect(now).toBeLessThanOrEqual(max);
     expect(now).toBeGreaterThanOrEqual(Number(sep.getAttribute('aria-valuemin')));
-    // 기본 폭 = --thread-w clamp(320px, 32vw, 380px)를 뷰포트 폭으로 계산(내림). 의도 폭 = 기본 + 30 × 16이
-    // 상한 1300 − 456 = 844 안이므로 그대로 보인다.
+    // 기본 폭 = --thread-w clamp(320px, 32vw, 380px)를 뷰포트 폭으로 계산(내림). 의도 폭 = 기본 + 10 × 16이
+    // 상한 1300 − 456 − 260(내비 기본) = 584 안이므로 그대로 보인다.
     const base = Math.floor(Math.min(380, Math.max(320, 0.32 * window.innerWidth)));
-    expect(now).toBe(base + 30 * 16);
-    expect(max).toBe(844);
+    expect(now).toBe(base + 10 * 16);
+    expect(max).toBe(584);
   });
 });
 
