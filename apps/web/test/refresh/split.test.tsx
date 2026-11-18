@@ -5,7 +5,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BODY_COLUMN_MIN, dragNav, dragThread, gridThread as gridThreadOf, navMax, threadMax } from '../../src/features/layout/split-math.js';
+import { BODY_COLUMN_MIN, defaultThread as defaultThreadOf, dragNav, dragThread, gridThread as gridThreadOf, navMax, threadMax } from '../../src/features/layout/split-math.js';
 import { AppShell } from '../../src/features/layout/AppShell.js';
 import { clampToRoom, type SplitState } from '../../src/features/layout/useSplit.js';
 import { layoutVars, splitLimits, tokens } from '../../src/ui/tokens.js';
@@ -440,5 +440,96 @@ describe('측정→클램프 순환 차단(r2 P2-1·P3-1)', () => {
     for (let i = 0; i < 10; i += 1) fireEvent(window, new Event('resize'));
     expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe(before);
     expect(Number(sep.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(Number(sep.getAttribute('aria-valuemax')));
+  });
+});
+
+describe('내비 상한은 스레드 최소 폭 기준(r3 P2-1)·렌더 중 DOM 읽기 없음(P3-1)·토큰 해석(P3-3)', () => {
+  it('defaultThread: --thread-w clamp(320px, 32vw, 380px) 해석 — 1280 → 380, 1024 → 327', () => {
+    expect(defaultThreadOf(1280)).toBe(380);
+    expect(defaultThreadOf(1024)).toBe(327);
+  });
+
+  it('clampToRoom: 내비 상한은 스레드 의도·내비 폭과 무관(스레드 = 320) — 1300/772/220은 자르지 않는다', () => {
+    const prev = { navW: 360, navCollapsed: false, threadW: 772 };
+    // min(360, ⌊1300 − 12 − 432 − 332⌋ = 524) = 360
+    expect(clampToRoom(prev, { inner: 1300, nav: 360, thread: 0 })).toBe(prev);
+    // 1100: 1100 − 12 − 432 − 332 = 324
+    expect(clampToRoom(prev, { inner: 1100, nav: 360, thread: 0 }).navW).toBe(324);
+  });
+
+  async function rail772() {
+    await wide(true);
+    stubInner(() => 1300);
+    fireEvent(window, new Event('resize'));
+    const nav = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    // 레일에서 스레드 End → 의도 772(1300 − 24 − 432 − 72).
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    fireEvent.keyDown(thread, { key: 'End' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+    return { nav, thread };
+  }
+
+  it('셸 통합 r3 재현: 1300·의도 772·내비 200 → → 키 216, End 360, 의도 772 유지', async () => {
+    const { nav } = await rail772();
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    fireEvent.keyDown(nav, { key: 'Home' });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('200px');
+    fireEvent.keyDown(nav, { key: 'ArrowRight' });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('216px');
+    expect(nav.getAttribute('aria-valuemax')).toBe('360');
+    fireEvent.keyDown(nav, { key: 'End' });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+  });
+
+  it('셸 통합 r3 재현: 내비 220(끌기)에서 오른쪽 끌기 → 넓어짐', async () => {
+    const { nav } = await rail772();
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    // 펼침 기본 260에서 왼쪽으로 40 끌어 220.
+    fireEvent.pointerDown(nav, { button: 0, clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(nav, { clientX: 460, pointerId: 1 });
+    fireEvent.pointerUp(nav, { clientX: 460, pointerId: 1 });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('220px');
+    fireEvent.keyDown(nav, { key: 'ArrowRight' });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('236px');
+    fireEvent.pointerDown(nav, { button: 0, clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(nav, { clientX: 580, pointerId: 1 });
+    fireEvent.pointerUp(nav, { clientX: 580, pointerId: 1 });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('316px');
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+  });
+
+  it('셸 통합: 1300·의도 724·내비 296에서 접으면 스레드 aria가 즉시 724/772(낡은 DOM 아님)', async () => {
+    const { nav, thread } = await rail772();
+    for (let i = 0; i < 3; i += 1) fireEvent.keyDown(thread, { key: 'ArrowRight' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('724px');
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    fireEvent.keyDown(nav, { key: 'Home' });
+    for (let i = 0; i < 6; i += 1) fireEvent.keyDown(nav, { key: 'ArrowRight' });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('296px');
+    // 펼침: 표시 스레드 = min(724, 1300 − 296 − 456 = 548)
+    expect(thread.getAttribute('aria-valuenow')).toBe('548');
+    expect(thread.getAttribute('aria-valuemax')).toBe('548');
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    expect(thread.getAttribute('aria-valuenow')).toBe('724');
+    expect(thread.getAttribute('aria-valuemax')).toBe('772');
+  });
+
+  it('렌더 중 사이드바 getBoundingClientRect를 읽지 않는다', async () => {
+    await wide(true);
+    stubInner(() => 1300);
+    const sidebar = document.querySelector<HTMLElement>('.app-shell > .sidebar');
+    if (sidebar === null) throw new Error('사이드바 없음');
+    let reads = 0;
+    sidebar.getBoundingClientRect = () => {
+      reads += 1;
+      return { width: 999, height: 0, x: 0, y: 0, top: 0, left: 0, right: 999, bottom: 0, toJSON: () => ({}) } as DOMRect;
+    };
+    fireEvent(window, new Event('resize'));
+    const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    fireEvent.keyDown(sep, { key: 'ArrowLeft' });
+    fireEvent.keyDown(screen.getByRole('separator', { name: /내비게이션 폭 조절/ }), { key: 'ArrowRight' });
+    expect(reads).toBe(0);
   });
 });
