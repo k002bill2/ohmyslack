@@ -229,7 +229,7 @@
 ### 5-6. 송신 규칙
 - 채널에서는 **스레드 답글로만** 쓴다. `_thread_root`(`integrations/hermes-plugin/ohmyslack/adapter.py:436-442`)가 루트를 못 찾은 채널 송신은 보내지 않고 로그만 남긴다(Jarvis 결정(★)). DM 송신 규칙은 그대로.
 - fail-closed(2026-11-10 보안 리뷰 F-3): `/me`로 종류를 확인한 dm만 루트 없이 보낸다. 맵에 없는 대화(추가 직후 재조회 전·재조회 실패·이미 나감)는 루트가 있어도 송신·첨부를 거부하고 고정 문구 로그만 남긴다. `get_chat_info`는 모르는 대화를 `type: "unknown"`(이름은 chat_id)으로 보고한다(`adapter.py` `_refuse_channel_top_level`·`get_chat_info`).
-- **변경(2026-11-19, 영환님 지시)**: `OHMYSLACK_POST_CHANNELS` allowlist 채널(`/me` kind==channel 확인 필수)은 루트 없이 최상위 송신(첨부 포함)을 허용한다. 그 채널에서 **봇 자신이 쓴 최상위 글**(브리핑) 스레드의 owner 비멘션 답글은 봇 스레드로 보고 같은 세션으로 넘긴다(루트 1회 조회·fail-closed·60초 캐시 규칙은 §5-2 3항과 동일). allowlist 밖 채널의 봇 루트는 기존처럼 거부. 채널 백로그 안내는 계속 DM.
+- **변경(2026-11-19, 영환님 지시)**: `OHMYSLACK_POST_CHANNELS` allowlist 채널(`/me` kind==channel 확인 필수)은 루트 없이 최상위 송신(첨부 포함)을 허용한다. 그 채널에서 **봇 자신이 쓴 최상위 글**(브리핑) 스레드의 owner 비멘션 답글은 봇 스레드로 보고 같은 세션으로 넘긴다(루트 1회 조회·fail-closed·60초 캐시 규칙은 §5-2 3항과 동일). allowlist 밖 채널의 봇 루트는 기존처럼 거부. 채널 백로그 안내는 계속 DM. 분할 규칙: 루트 없이 보내는 긴 메시지(4000자 초과)는 첫 조각만 최상위, 2번째 조각부터 첫 조각 id를 `thread_root_id`로 붙여 그 스레드 답글로 보낸다(live·첨부 캡션·standalone 공통; 첨부는 첫 조각에 결속; 첫 조각 id를 못 얻으면 남은 조각은 최상위로 보내고 경고만 남김; DM·스레드 답글 불변).
 
 ### 5-7. 15분 stale·dedupe 유지 + 게이팅 순서
 - 순서: owner 판정 → 대화 종류·멘션 게이팅 → dedupe → 15분 상한. 게이팅에서 걸린 메시지는 dedupe에 기록만 하고(`_remember`) 백로그 개수에 넣지 않는다.
