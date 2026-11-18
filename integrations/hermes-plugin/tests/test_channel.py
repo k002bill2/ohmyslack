@@ -499,7 +499,8 @@ async def test_post_channels_allowlisted_channel_allows_top_level(server, make_a
     assert _posts_ok(server)[-1]["conversation_id"] == CHANNEL_ID
     assert _posts_ok(server)[-1].get("thread_root_id") is None
     img = tmp_path / "a.png"
-    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 16)
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+                    + b"\x00" * 32)  # test_attachments.py PNG과 같은 바이트(업로드 성공 경로)
     assert (await adapter.send_image_file(CHANNEL_ID, str(img))).success is True
     other = await adapter.send(OTHER_CHANNEL_ID, "allowlist 밖")
     assert other.success is False and other.error_kind == "forbidden"
