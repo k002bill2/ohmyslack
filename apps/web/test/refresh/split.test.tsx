@@ -113,13 +113,13 @@ describe('셸 통합', () => {
   });
 });
 
-describe('공간이 줄면 사용자 폭을 다시 제한(Codex r1 P2)', () => {
+describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(N2·P3-1)', () => {
   const base = { navW: 300, navCollapsed: false, threadW: 560 };
 
-  it('창이 1120 안쪽(1096)으로 줄면 스레드 560 → 상한(1096−24−480−300 = 292 → 하한 320), 내비도 상한으로', () => {
-    const next = clampToRoom(base, { inner: 1096, nav: 300, thread: 560 });
-    expect(next.threadW).toBe(320);
-    // 내비 상한 = min(360, 1096 − 12 − 480 − (320 + 12)) = 272
+  it('창이 1120 안쪽(1096)으로 줄어도 스레드 의도 폭 560은 그대로 — 내비 상한은 실측 스레드 폭으로', () => {
+    // 실측 스레드 = CSS가 줄인 표시 폭 320. 내비 상한 = min(360, 1096 − 12 − 480 − (320 + 12)) = 272
+    const next = clampToRoom(base, { inner: 1096, nav: 300, thread: 320 });
+    expect(next.threadW).toBe(560);
     expect(next.navW).toBe(272);
   });
 
@@ -132,20 +132,107 @@ describe('공간이 줄면 사용자 폭을 다시 제한(Codex r1 P2)', () => {
     expect(next).toBe(base);
   });
 
-  it('셸 통합: 창 resize 때 넓혀 둔 스레드 폭을 새 상한으로 줄인다', async () => {
+  it('셸 통합: 1600에서 1000으로 넓힌 뒤 1200으로 줄였다가 1600으로 되돌리면 다시 1000', async () => {
     await wide(true);
-    // jsdom엔 레이아웃이 없다 — 셸 안쪽 폭만 심는다(내비·스레드 실측 폭은 0).
+    // jsdom엔 레이아웃이 없다 — 셸 안쪽 폭만 심는다(내비·스레드 실측 폭은 0 → 표시 폭은 min(의도, 상한)으로 계산).
+    let inner = 1600;
+    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
+    fireEvent(window, new Event('resize'));
+    const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    sep.focus();
+    fireEvent.keyDown(sep, { key: 'Home' });
+    // 320에서 ← 한 칸 16px씩 넓혀 1000 근처(320 + 43 × 16 = 1008)까지.
+    for (let i = 0; i < 43; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('1008px');
+    inner = 1200;
+    fireEvent(window, new Event('resize'));
+    // 의도 폭은 그대로, 표시 폭은 상한 1200 − 24 − 480 − 0 = 696.
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('1008px');
+    expect(sep.getAttribute('aria-valuenow')).toBe('696');
+    expect(sep.getAttribute('aria-valuemax')).toBe('696');
+    inner = 1600;
+    fireEvent(window, new Event('resize'));
+    expect(sep.getAttribute('aria-valuenow')).toBe('1008');
+  });
+
+  it('셸 통합: 의도 폭이 공간보다 클 때 → 는 표시 폭에서 한 칸 줄인다(먹통 아님)', async () => {
+    await wide(true);
+    let inner = 1600;
+    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
+    const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    sep.focus();
+    fireEvent.keyDown(sep, { key: 'End' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('1096px');
+    inner = 1000;
+    fireEvent(window, new Event('resize'));
+    // 표시 폭 = 상한 1000 − 24 − 480 = 496. → 한 칸 = 480.
+    fireEvent.keyDown(sep, { key: 'ArrowRight' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('480px');
+  });
+
+  it('셸 통합: 1100(자동 접힘) 구간으로 바로 줄여도 의도 폭은 320으로 떨어지지 않는다(QA N2)', async () => {
+    await wide(true);
     let inner = 1416;
     Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
-    // ← 한 칸 16px씩 넓힌다 → 상한 1416 − 24 − 480 − 0 = 912에 닿는다(560 고정 상한 없음).
-    for (let i = 0; i < 60; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
+    fireEvent.keyDown(sep, { key: 'End' });
     expect(shell()?.style.getPropertyValue('--thread-w')).toBe('912px');
-    expect(sep.getAttribute('aria-valuemax')).toBe('912');
-    inner = 1000;
+    inner = 1076;
     fireEvent(window, new Event('resize'));
-    // 새 상한 = 1000 − 24 − 480 − 0 = 496
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('496px');
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('912px');
+    // 표시 폭 = min(912, 1076 − 24 − 480 − 0) = 572
+    expect(sep.getAttribute('aria-valuenow')).toBe('572');
+  });
+});
+
+describe('Home/End 큰 이동(P3-2, APG Window Splitter)', () => {
+  it('스레드: Home = 320, End = 현재 상한', async () => {
+    await wide(true);
+    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => 1416 });
+    const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    sep.focus();
+    expect(fireEvent.keyDown(sep, { key: 'End' })).toBe(false);
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('912px');
+    expect(fireEvent.keyDown(sep, { key: 'Home' })).toBe(false);
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('320px');
+  });
+
+  it('내비: Home = 200(레일로 접지 않음), End = 현재 상한', async () => {
+    await wide(false);
+    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => 1416 });
+    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    sep.focus();
+    expect(fireEvent.keyDown(sep, { key: 'Home' })).toBe(false);
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('200px');
+    expect(shell()?.dataset['sidebar']).toBe('expanded');
+    expect(fireEvent.keyDown(sep, { key: 'End' })).toBe(false);
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
+  });
+
+  it('내비: 레일(사용자 접힘)에서 Home은 navMin으로 펼친다', async () => {
+    await wide(false);
+    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    sep.focus();
+    fireEvent.keyDown(sep, { key: 'Enter' });
+    expect(shell()?.dataset['sidebar']).toBe('collapsed');
+    fireEvent.keyDown(sep, { key: 'Home' });
+    expect(shell()?.dataset['sidebar']).toBe('expanded');
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('200px');
+  });
+
+  it('자동 접힘 중 내비 분할선의 Home/End는 무시한다', async () => {
+    installViewport(1100);
+    const user = userEvent.setup();
+    render(<AppShell dataSource={memory()} />);
+    await user.click(screen.getByRole('button', { name: 'general' }));
+    await user.click(screen.getByRole('button', { name: /답글 1/ }));
+    expect(shell()?.dataset['sidebar']).toBe('collapsed');
+    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    sep.focus();
+    fireEvent.keyDown(sep, { key: 'Home' });
+    fireEvent.keyDown(sep, { key: 'End' });
+    expect(shell()?.dataset['sidebar']).toBe('collapsed');
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('');
   });
 });
