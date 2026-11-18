@@ -9,7 +9,7 @@ export interface SplitRoom {
   /** 스레드 폭 — 닫혀 있으면 null. */
   readonly thread: number | null;
   /** 뷰포트 폭(--thread-w 기본값의 vw 계산용). 없으면 기본 폭 = threadMin. */
-  readonly vw?: number;
+  readonly vw?: number | undefined;
 }
 
 /** 접힘 레일·기본 내비 폭은 레이아웃 토큰(px 문자열)에서 읽는다 — 수치를 복제하지 않는다. */
