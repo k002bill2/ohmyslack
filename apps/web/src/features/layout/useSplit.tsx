@@ -15,12 +15,24 @@ export interface SplitState {
 
 const INITIAL: SplitState = { navW: null, navCollapsed: false, threadW: null };
 
-/** 사용자 폭을 현재 공간의 상한 안으로(스레드 먼저 — 내비 상한은 줄어든 스레드 폭으로 계산). 그대로면 같은 객체. */
+/**
+ * 스레드 표시 폭: 실측(CSS minmax 열이 min(사용자 폭, 남은 공간)으로 정한 값). 실측이 없으면(레이아웃 전·jsdom)
+ * 같은 규칙으로 계산한다 — min(사용자 폭 ?? 최소, 현재 상한).
+ */
+export function shownThread(room: SplitRoom, intent: number | null): number {
+  if (room.thread !== null && room.thread > 0) return room.thread;
+  return Math.min(Math.max(intent ?? L.threadMin, L.threadMin), threadMax(room));
+}
+
+/**
+ * 공간 변화 때 내비 사용자 폭만 상한 안으로 자른다. 스레드 사용자 폭(의도)은 줄이지 않는다 — 표시 폭은 CSS가
+ * min(의도, 남은 공간)으로 정하고, 공간이 돌아오면 의도 폭으로 복원된다(N2·P3-1). 내비 상한은 스레드 표시 폭으로 계산.
+ * 그대로면 같은 객체.
+ */
 export function clampToRoom(prev: SplitState, room: SplitRoom): SplitState {
-  const threadW = prev.threadW === null || room.thread === null ? prev.threadW : Math.min(prev.threadW, threadMax(room));
-  const thread = room.thread === null ? null : (threadW ?? room.thread);
+  const thread = room.thread === null ? null : shownThread(room, prev.threadW);
   const navW = prev.navW === null ? null : Math.min(prev.navW, navMax({ ...room, thread }));
-  return threadW === prev.threadW && navW === prev.navW ? prev : { ...prev, threadW, navW };
+  return navW === prev.navW ? prev : { ...prev, navW };
 }
 
 function width(el: Element | null | undefined): number {
@@ -72,8 +84,8 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   // 렌더마다 레이아웃을 읽지 않도록(메시지 도착마다 셸이 다시 그려진다) 폭이 바뀔 때·창 크기 변경 때만 실측해 둔다.
   // 끌기·키 조작은 그 순간 room()으로 새로 잰다.
   const [measured, setMeasured] = useState<SplitRoom | null>(null);
-  // 실측할 때마다 사용자 폭을 새 상한으로 다시 자른다 — 창을 줄이거나 사이드바를 펼치거나 스레드를 열어
-  // 공간이 줄면 넓혀 둔 폭이 셸을 넘쳐 스레드가 잘리지 않게(Codex r1 P2). 바뀐 게 없으면 같은 상태를 돌려 루프가 없다.
+  // 실측할 때마다 내비 사용자 폭을 새 상한으로 다시 자른다(Codex r1 P2). 스레드는 CSS minmax 열이 표시 폭을 줄이므로
+  // 의도 폭을 그대로 둔다. 바뀐 게 없으면 같은 상태를 돌려 루프가 없다.
   const remeasure = () => {
     const room = measureRoom(shell.current);
     setMeasured(room);
@@ -118,13 +130,19 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
         if (collapsed && d > 0) setNav(L.navMin);
         else if (!collapsed) setNav(navNow + d * L.step);
       }}
+      onEdge={(edge) => {
+        // Home = navMin(레일로 접지 않음 — 접기는 Enter), End = 현재 상한.
+        if (!autoCollapsed) setNav(edge < 0 ? L.navMin : navMax(room()));
+      }}
       onEnter={() => {
         if (!autoCollapsed) toggleNav();
       }}
       onReset={() => setS((prev) => ({ ...prev, navW: null, navCollapsed: false }))}
     />
   );
-  const threadNow = s.threadW ?? known.thread ?? L.threadMin;
+  // aria-valuenow·조작 기준은 실제 표시 폭 — 의도 폭이 공간보다 클 때 키가 먹통이 되지 않게. 결과는 의도 폭으로 저장.
+  const threadNow = shownThread(known, s.threadW);
+  const setThread = (w: number) => setS((prev) => ({ ...prev, threadW: dragThread(w, room()) }));
   const threadSplitter = threadOpen && (
     <Splitter
       label={SHELL_COPY.threadSplit}
@@ -132,10 +150,11 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
       min={L.threadMin}
       max={threadMax(known)}
       dir={-1}
-      measure={() => room().thread ?? threadNow}
-      onResize={(w) => setS((prev) => ({ ...prev, threadW: dragThread(w, room()) }))}
+      measure={() => shownThread(room(), s.threadW)}
+      onResize={setThread}
       // ← 는 스레드를 넓힌다(분할선이 왼쪽으로).
-      onStep={(d) => setS((prev) => ({ ...prev, threadW: dragThread(threadNow - d * L.step, room()) }))}
+      onStep={(d) => setThread(shownThread(room(), s.threadW) - d * L.step)}
+      onEdge={(edge) => setThread(edge < 0 ? L.threadMin : threadMax(room()))}
       onEnter={opts.onCloseThread}
       onReset={() => setS((prev) => ({ ...prev, threadW: null }))}
     />

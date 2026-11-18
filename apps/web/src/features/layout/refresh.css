@@ -392,19 +392,21 @@
 /*
  * R4 분할선(wide): 패널 사이 여백(12px) 자리에 분할선 열을 둔다 — 내비 | 분할선 | 본문 | 분할선 | 스레드.
  * 폭은 셸의 --sidebar-w·--thread-w(useSplit이 CSSOM으로 덮어씀). 본문 최소 폭 계산은 기존 규칙과 같다.
+ * 스레드 열은 minmax(--thread-min, --thread-w): 본문 바닥을 먼저 채우고 남는 공간만큼만 사용자 폭을 쓴다 —
+ * JS 재측정 타이밍과 무관하게 어느 프레임에서도 본문이 바닥 아래로 눌리지 않고, 공간이 돌아오면 사용자 폭으로 복원(N1·N2).
  */
 .app-shell[data-split='on'] {
   grid-template-columns: var(--sidebar-w) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr);
 }
 .app-shell[data-split='on'][data-thread='open'] {
-  grid-template-columns: var(--sidebar-w) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) auto;
+  grid-template-columns: var(--sidebar-w) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) minmax(var(--thread-min), var(--thread-w));
 }
 /* 접힘(레일)은 사용자 폭(인라인 --sidebar-w)보다 우선해야 하므로 변수 재정의가 아니라 템플릿을 따로 둔다. */
 .app-shell[data-split='on'][data-sidebar='collapsed'] {
   grid-template-columns: var(--sidebar-w-collapsed) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr);
 }
 .app-shell[data-split='on'][data-sidebar='collapsed'][data-thread='open'] {
-  grid-template-columns: var(--sidebar-w-collapsed) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) auto;
+  grid-template-columns: var(--sidebar-w-collapsed) var(--space-3) minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) minmax(var(--thread-min), var(--thread-w));
 }
 .app-shell[data-split='on'] > .conversation-pane,
 .app-shell[data-split='on'] > .member-admin-screen,
@@ -499,6 +501,8 @@
 }
 .app-shell[data-split='on'] > .thread-wide {
   box-sizing: border-box;
+  /* 고정 폭(var(--thread-w)) 대신 위 minmax 열을 채운다. */
+  width: auto;
 }
 @media (pointer: fine) and (width > 640px) {
   .thread-panel .thread-close-icon {
