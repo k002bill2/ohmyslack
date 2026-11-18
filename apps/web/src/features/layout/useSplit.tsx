@@ -27,12 +27,18 @@ export function shownThread(room: SplitRoom, intent: number | null): number {
 /**
  * 공간 변화 때 내비 사용자 폭만 상한 안으로 자른다. 스레드 사용자 폭(의도)은 줄이지 않는다 — 표시 폭은 CSS가
  * min(의도, 남은 공간)으로 정하고, 공간이 돌아오면 의도 폭으로 복원된다(N2·P3-1). 내비 상한은 스레드 표시 폭으로 계산.
- * 그대로면 같은 객체.
+ * 내비가 접혀 있으면(자동·사용자) 보이지 않는 사용자 폭은 자르지 않는다(P3-3). 그대로면 같은 객체.
  */
-export function clampToRoom(prev: SplitState, room: SplitRoom): SplitState {
+export function clampToRoom(prev: SplitState, room: SplitRoom, collapsed = false): SplitState {
+  if (collapsed) return prev;
   const thread = room.thread === null ? null : shownThread(room, prev.threadW);
   const navW = prev.navW === null ? null : Math.min(prev.navW, navMax({ ...room, thread }));
   return navW === prev.navW ? prev : { ...prev, navW };
+}
+
+/** aria-valuenow 방어: [min, max] 밖 값을 표시하지 않는다. 바닥이 CSS와 같으면 평소에는 발동하지 않는다. */
+function within(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function width(el: Element | null | undefined): number {
@@ -88,8 +94,10 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   // 의도 폭을 그대로 둔다. 바뀐 게 없으면 같은 상태를 돌려 루프가 없다.
   const remeasure = () => {
     const room = measureRoom(shell.current);
+    // 접힘 여부는 DOM(data-sidebar)에서 읽는다 — resize 리스너의 오래된 클로저에도 현재 값이 보이게.
+    const folded = shell.current?.dataset['sidebar'] === 'collapsed';
     setMeasured(room);
-    setS((prev) => clampToRoom(prev, room));
+    setS((prev) => clampToRoom(prev, room, folded));
   };
   useLayoutEffect(() => {
     if (enabled) remeasure();
@@ -116,7 +124,7 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   const navSplitter = (
     <Splitter
       label={SHELL_COPY.navSplit}
-      now={navNow}
+      now={within(navNow, RAIL_WIDTH, navMax(known))}
       min={RAIL_WIDTH}
       max={navMax(known)}
       dir={1}
@@ -131,8 +139,9 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
         else if (!collapsed) setNav(navNow + d * L.step);
       }}
       onEdge={(edge) => {
-        // Home = navMin(레일로 접지 않음 — 접기는 Enter), End = 현재 상한.
-        if (!autoCollapsed) setNav(edge < 0 ? L.navMin : navMax(room()));
+        // Home = navMin(레일로 접지 않음 — 접기는 Enter), End = 현재 상한. 레일에서 Home은 이미 최소라 무시(P3-1).
+        if (autoCollapsed || (collapsed && edge < 0)) return;
+        setNav(edge < 0 ? L.navMin : navMax(room()));
       }}
       onEnter={() => {
         if (!autoCollapsed) toggleNav();
@@ -146,7 +155,7 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   const threadSplitter = threadOpen && (
     <Splitter
       label={SHELL_COPY.threadSplit}
-      now={threadNow}
+      now={within(threadNow, L.threadMin, threadMax(known))}
       min={L.threadMin}
       max={threadMax(known)}
       dir={-1}
