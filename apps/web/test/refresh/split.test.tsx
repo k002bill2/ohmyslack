@@ -24,8 +24,12 @@ describe('분할 계산', () => {
     expect(navMax({ inner: 900, nav: 260, thread: null })).toBe(360);
   });
 
-  it('스레드 상한 = min(560, 안쪽 − 24 − 480 − 내비)', () => {
-    expect(threadMax(room)).toBe(560);
+  it('스레드 상한 = 안쪽 − 24 − 480 − 내비 (고정 상한 없음)', () => {
+    expect(threadMax(room)).toBe(652);
+    // 넓은 창: 560을 넘어 공간 한계(1600 − 24 − 480 − 260 = 836)까지.
+    expect(threadMax({ inner: 1600, nav: 260, thread: 372 })).toBe(836);
+    // 내비를 레일(72)로 접으면 그만큼 늘어난다.
+    expect(threadMax({ inner: 1600, nav: 72, thread: 372 })).toBe(1024);
     expect(threadMax({ inner: 1200, nav: 260, thread: 372 })).toBe(436);
     expect(threadMax({ inner: 1000, nav: 260, thread: 372 })).toBe(320);
   });
@@ -40,7 +44,8 @@ describe('분할 계산', () => {
   it('스레드는 [320, 상한]으로 자른다', () => {
     expect(dragThread(100, room)).toBe(320);
     expect(dragThread(400, room)).toBe(400);
-    expect(dragThread(900, room)).toBe(560);
+    expect(dragThread(900, room)).toBe(652);
+    expect(dragThread(2000, { inner: 1600, nav: 260, thread: 372 })).toBe(836);
   });
 });
 
@@ -134,12 +139,13 @@ describe('공간이 줄면 사용자 폭을 다시 제한(Codex r1 P2)', () => {
     Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
-    // ← 한 칸 16px씩 넓힌다 → 상한 min(560, 1416 − 24 − 480 − 0) = 560에 닿는다.
-    for (let i = 0; i < 20; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
-    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('560px');
+    // ← 한 칸 16px씩 넓힌다 → 상한 1416 − 24 − 480 − 0 = 912에 닿는다(560 고정 상한 없음).
+    for (let i = 0; i < 60; i += 1) fireEvent.keyDown(sep, { key: 'ArrowLeft' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('912px');
+    expect(sep.getAttribute('aria-valuemax')).toBe('912');
     inner = 1000;
     fireEvent(window, new Event('resize'));
-    // 새 상한 = min(560, 1000 − 24 − 480 − 0) = 496
+    // 새 상한 = 1000 − 24 − 480 − 0 = 496
     expect(shell()?.style.getPropertyValue('--thread-w')).toBe('496px');
   });
 });
