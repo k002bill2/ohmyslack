@@ -21,9 +21,9 @@ export function navMax(room: SplitRoom): number {
   return Math.max(L.navMin, Math.min(L.navMax, room.inner - L.gutter - L.bodyMin - threadPart));
 }
 
-/** 스레드 상한: min(threadMax, 안쪽 − 본문 최소 − 분할선 2개 − 내비). */
+/** 스레드 상한: 고정 상한 없이 공간 한계(안쪽 − 본문 최소 − 분할선 2개 − 내비)만. 하한은 threadMin. */
 export function threadMax(room: SplitRoom): number {
-  return Math.max(L.threadMin, Math.min(L.threadMax, room.inner - 2 * L.gutter - L.bodyMin - room.nav));
+  return Math.max(L.threadMin, room.inner - 2 * L.gutter - L.bodyMin - room.nav);
 }
 
 /** 끈 내비 폭 → 결과. navCollapseBelow 아래면 접힘(레일), 아니면 [navMin, navMax]로 자른다. */
