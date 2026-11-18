@@ -55,6 +55,24 @@ describe('pastedFiles', () => {
     expect(pastedFiles(clip({ files: [file('t.png', 'image/png')], text: 'A\tB' }))).toBeNull();
   });
 
+  it('파일 + 파일명과 같은 text/plain(Finder 복사) → 첨부', () => {
+    const a = file('report.pdf', 'application/pdf');
+    expect(pastedFiles(clip({ files: [a], text: 'report.pdf' }))).toEqual([a]);
+    const b = file('a.png', 'image/png');
+    const c = file('b.png', 'image/png');
+    expect(pastedFiles(clip({ files: [b, c], text: 'a.png\r\nb.png\n' }))).toEqual([b, c]);
+  });
+
+  it('파일 + 공백뿐인 text/plain → 첨부', () => {
+    const a = file('t.png', 'image/png');
+    expect(pastedFiles(clip({ files: [a], text: '  \n' }))).toEqual([a]);
+  });
+
+  it('파일 + 파일명과 다른 text/plain → null 유지', () => {
+    expect(pastedFiles(clip({ files: [file('report.pdf', 'application/pdf')], text: 'other.pdf' }))).toBeNull();
+    expect(pastedFiles(clip({ files: [file('a.png', 'image/png')], text: 'a.png\nextra' }))).toBeNull();
+  });
+
   it('파일 + text/html만 → 첨부', () => {
     const a = file('a.png', 'image/png');
     expect(pastedFiles(clip({ files: [a], html: '<b>표</b>' }))).toEqual([a]);
