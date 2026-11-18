@@ -581,3 +581,69 @@ async def test_post_channels_non_owner_reply_to_bot_root_rejected(server, make_a
     await server.push_live(other, CHANNEL_ID)
     await _sentinel(server, adapter)
     assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
+
+
+# ---- allowlist 채널 최상위 긴 메시지 분할: 첫 조각만 최상위, 나머지는 그 스레드 답글(2026-11-19 FIX) ----
+def _long_body(n: int = 9000) -> str:
+    unit = "가나다라마바사아자차카타파하abc123"
+    return (unit * (n // len(unit) + 1))[:n]
+
+
+def _posted_ids(server) -> list[str]:
+    """서버가 만든 봇 메시지 id를 게시 순서대로(게시 로그엔 응답 id가 없어 changes에서 읽는다)."""
+    return [m["id"] for _c, _conv, m in server.changes if m.get("author_id") == BOT_ID]
+
+
+async def test_post_channels_live_long_top_level_splits_into_first_chunk_thread(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    res = await adapter.send(CHANNEL_ID, _long_body())
+    assert res.success is True
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) >= 3 and len(ids) == len(ok)
+    assert ok[0].get("thread_root_id") is None
+    assert all(p["thread_root_id"] == ids[0] for p in ok[1:])
+    assert res.message_id == ids[-1]
+
+
+async def test_post_channels_standalone_long_top_level_splits_into_first_chunk_thread(server, monkeypatch):
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, _long_body())
+    assert out.get("success") is True
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) >= 3 and len(ids) == len(ok)
+    assert ok[0].get("thread_root_id") is None
+    assert all(p["thread_root_id"] == ids[0] for p in ok[1:])
+    assert out["message_id"] == ids[-1]
+
+
+async def test_post_channels_live_attachment_caption_split_binds_to_first_chunk_thread(
+        server, make_adapter, monkeypatch, tmp_path):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    img = tmp_path / "a.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+                    + b"\x00" * 32)
+    assert (await adapter.send_image_file(CHANNEL_ID, str(img), caption=_long_body())).success is True
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) >= 3
+    assert ok[0].get("thread_root_id") is None and ok[0].get("attachment_ids")
+    assert all(p["thread_root_id"] == ids[0] and not p.get("attachment_ids") for p in ok[1:])
+
+
+async def test_dm_long_split_stays_consecutive_top_level(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    assert (await adapter.send(DM_ID, _long_body())).success is True
+    ok = _posts_ok(server)
+    assert len(ok) >= 3 and all(p.get("thread_root_id") is None for p in ok)
