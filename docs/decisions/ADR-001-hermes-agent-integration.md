@@ -76,7 +76,7 @@
 
 - owner가 Jarvis DM에 쓴 **최상위 메시지** → 어댑터가 `thread_id = 그 메시지 id`로 `build_source` → 새 Hermes 세션(Slack 기본 동작과 같은 모델, `slack/adapter.py:2808-2811`; Mattermost `mattermost/adapter.py:580-582`).
 - **스레드 답글** → `thread_id = thread_root_id` → 같은 세션. 봇의 진행·결과는 `thread_root_id`를 붙여 같은 스레드 답글로 게시(1단 스레드 규칙 FR-MSG-06과 일치 — 원문이 답글이면 루트로 보정).
-- **브리핑**: cron `deliver=ohmyslack`(홈 채널 = Jarvis DM id, `OHMYSLACK_HOME_CHANNEL`) → **최상위 메시지**. owner가 그 브리핑 스레드에 답하면 그 스레드가 새 세션이 됩니다(추정 — 브리핑 원 세션과 이어지는지는 Hermes cron 세션 정책에 따름, 확인 필요).
+- **브리핑**: cron `deliver=ohmyslack`(홈 채널 = Jarvis DM id, `OHMYSLACK_HOME_CHANNEL`. 2026-11-19부터 `OHMYSLACK_POST_CHANNELS` allowlist 채널도 대상 가능 — BOT_CHANNEL_SPEC §5-5) → **최상위 메시지**. owner가 그 브리핑 스레드에 답하면 그 스레드가 새 세션이 됩니다(추정 — 브리핑 원 세션과 이어지는지는 Hermes cron 세션 정책에 따름, 확인 필요).
 - **채널 멘션**: H1–H3 범위 밖(★). P1 FR FR-BOT-10: owner가 채널에 봇을 추가하면 서버 `mention_user_ids` 기반 멘션 게이팅(참고 패턴 `plugins/platforms/mattermost/adapter.py:506-526`, 실제 경로 정정).
 
 ### (e) 이벤트 수신 — ★ 기존 WS 프로토콜 재사용, 봇 리스너에서 Bearer handshake

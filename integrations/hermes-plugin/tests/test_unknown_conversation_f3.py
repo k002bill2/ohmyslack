@@ -97,3 +97,18 @@ async def test_FR_BOT_09_F3_body_only_bot_name_spoof_not_executed(server, make_a
     await server.push_live(m, CHANNEL_ID)
     await _sentinel(server, adapter)
     assert all(e.message_id != m["id"] for e in adapter.events)
+
+
+async def test_FR_BOT_10_post_channels_allowlisted_but_unknown_refused(server, make_adapter, monkeypatch):
+    """allowlist에 있어도 `/me`에 없는 대화는 fail-closed(F-3) — live·standalone 모두."""
+    from gateway.config import PlatformConfig
+    from conftest import TOKEN
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv("OHMYSLACK_POST_CHANNELS", f"{UNKNOWN_ID},{CHANNEL_ID}")
+    _with_channel(server)
+    adapter = await _connected(server, make_adapter)
+    _assert_forbidden(await adapter.send(UNKNOWN_ID, "모르는 대화 최상위"))
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, UNKNOWN_ID, "브리핑")
+    assert "error" in out
+    assert server.posts == []

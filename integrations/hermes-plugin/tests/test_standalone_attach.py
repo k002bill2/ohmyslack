@@ -318,3 +318,16 @@ async def test_me_exhausting_deadline_skips_upload_and_post(server, tmp_path, mo
     assert "deadline_exceeded" in out["error"]
     assert "briefing.mp3: budget_exceeded" in out["error"]  # 실패 로그에 첨부 사유도 남는다
     assert server.uploads == [] and server.posts == []
+
+
+async def test_post_channels_allowlisted_channel_standalone_binds_attachment(server, tmp_path, monkeypatch):
+    """브리핑 채널 allowlist(2026-11-19): 채널 최상위 standalone도 첨부를 첫 청크에 결속한다."""
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv("OHMYSLACK_POST_CHANNELS", CHANNEL_ID)
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel"}]
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await standalone_send(_cfg(server), CHANNEL_ID, "아침 브리핑", media_files=[(path, True)])
+    assert out["success"] is True and not out.get("warnings")
+    post = _ok_posts(server)[-1]
+    assert post["conversation_id"] == CHANNEL_ID and post.get("thread_root_id") is None
+    assert len(post.get("attachment_ids") or []) == 1

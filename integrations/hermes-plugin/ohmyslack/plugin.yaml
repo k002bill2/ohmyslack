@@ -26,6 +26,10 @@ optional_env:
     description: "cron deliver=ohmyslack 대상(Jarvis DM conversation id)"
     prompt: "ohmyslack home channel"
     password: false
+  - name: OHMYSLACK_POST_CHANNELS
+    description: "최상위 게시 허용 채널 conversation id(쉼표 구분, /me에서 channel로 확인된 대화만) — 브리핑 채널용"
+    prompt: "ohmyslack post channel ids"
+    password: false
   - name: OHMYSLACK_ALLOWED_USERS
     description: "허용 사용자 id(owner user id, 쉼표 구분)"
     prompt: "ohmyslack allowed user ids"
