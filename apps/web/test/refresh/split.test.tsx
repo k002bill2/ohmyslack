@@ -2,15 +2,15 @@
  * R4 분할선(wide): 폭 계산(순수 함수)과 셸 통합(분할선 노출·Enter 접기/닫기·더블클릭 초기화·접기 버튼).
  * jsdom에는 레이아웃이 없어 폭 수치는 순수 함수로, 통합은 상태 전이로 본다. 기대값은 리터럴.
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BODY_COLUMN_MIN, dragNav, dragThread, navMax, threadMax } from '../../src/features/layout/split-math.js';
+import { BODY_COLUMN_MIN, dragNav, dragThread, gridThread as gridThreadOf, navMax, threadMax } from '../../src/features/layout/split-math.js';
 import { AppShell } from '../../src/features/layout/AppShell.js';
 import { clampToRoom, type SplitState } from '../../src/features/layout/useSplit.js';
 import { layoutVars, splitLimits, tokens } from '../../src/ui/tokens.js';
 import { memory } from '../helpers/fixtures.js';
-import { installViewport } from '../helpers/viewport.js';
+import { installViewport, resizeTo } from '../helpers/viewport.js';
 
 afterEach(cleanup);
 
@@ -67,6 +67,16 @@ async function wide(open: boolean) {
 }
 
 const shell = () => document.querySelector<HTMLElement>('.app-shell');
+
+/**
+ * jsdom엔 레이아웃이 없다 — 셸 안쪽 폭만 심는다. 실제 브라우저처럼 clientWidth는 정수(내림), getBoundingClientRect는 소수.
+ */
+function stubInner(get: () => number): void {
+  const el = shell();
+  if (el === null) throw new Error('셸 없음');
+  Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => Math.floor(get()) });
+  el.getBoundingClientRect = () => ({ width: get(), height: 0, x: 0, y: 0, top: 0, left: 0, right: get(), bottom: 0, toJSON: () => ({}) }) as DOMRect;
+}
 
 describe('셸 통합', () => {
   it('wide: 내비 분할선만, 스레드가 열리면 두 번째 분할선', async () => {
@@ -146,7 +156,7 @@ describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(
     await wide(true);
     // jsdom엔 레이아웃이 없다 — 셸 안쪽 폭만 심는다(내비·스레드 실측 폭은 0 → 표시 폭은 min(의도, 상한)으로 계산).
     let inner = 1600;
-    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
+    stubInner(() => inner);
     fireEvent(window, new Event('resize'));
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
@@ -168,7 +178,7 @@ describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(
   it('셸 통합: 의도 폭이 공간보다 클 때 → 는 표시 폭에서 한 칸 줄인다(먹통 아님)', async () => {
     await wide(true);
     let inner = 1600;
-    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
+    stubInner(() => inner);
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'End' });
@@ -183,7 +193,7 @@ describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(
   it('셸 통합: 1100(자동 접힘) 구간으로 바로 줄여도 의도 폭은 320으로 떨어지지 않는다(QA N2)', async () => {
     await wide(true);
     let inner = 1416;
-    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => inner });
+    stubInner(() => inner);
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'End' });
@@ -199,7 +209,7 @@ describe('공간이 줄면 표시 폭만 줄고 사용자 폭(의도)은 보존(
 describe('Home/End 큰 이동(P3-2, APG Window Splitter)', () => {
   it('스레드: Home = 320, End = 현재 상한', async () => {
     await wide(true);
-    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => 1416 });
+    stubInner(() => 1416);
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     expect(fireEvent.keyDown(sep, { key: 'End' })).toBe(false);
@@ -210,7 +220,7 @@ describe('Home/End 큰 이동(P3-2, APG Window Splitter)', () => {
 
   it('내비: Home = 200(레일로 접지 않음), End = 현재 상한', async () => {
     await wide(false);
-    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => 1416 });
+    stubInner(() => 1416);
     const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
     sep.focus();
     expect(fireEvent.keyDown(sep, { key: 'Home' })).toBe(false);
@@ -306,7 +316,7 @@ describe('본문 바닥 통일(교차 검토 P1-1·P2-1)', () => {
 
   it('셸 통합: aria-valuenow는 [valuemin, valuemax] 안이고 평소엔 clamp가 발동하지 않는다', async () => {
     await wide(true);
-    Object.defineProperty(shell(), 'clientWidth', { configurable: true, get: () => 1300 });
+    stubInner(() => 1300);
     fireEvent(window, new Event('resize'));
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
@@ -315,8 +325,119 @@ describe('본문 바닥 통일(교차 검토 P1-1·P2-1)', () => {
     const max = Number(sep.getAttribute('aria-valuemax'));
     expect(now).toBeLessThanOrEqual(max);
     expect(now).toBeGreaterThanOrEqual(Number(sep.getAttribute('aria-valuemin')));
-    // clamp 전 값(의도 폭 그대로 = 320 + 30 × 16 = 800)이 상한 1300 − 456 = 844 안이므로 그대로 보인다.
-    expect(now).toBe(800);
+    // 기본 폭 = --thread-w clamp(320px, 32vw, 380px)를 뷰포트 폭으로 계산(내림). 의도 폭 = 기본 + 30 × 16이
+    // 상한 1300 − 456 = 844 안이므로 그대로 보인다.
+    const base = Math.floor(Math.min(380, Math.max(320, 0.32 * window.innerWidth)));
+    expect(now).toBe(base + 30 * 16);
     expect(max).toBe(844);
+  });
+});
+
+/**
+ * 측정→클램프 순환 차단(교차 검토 r2 P2-1·P3-1). 실브라우저: 안쪽 폭은 소수(확대·OS 배율), clientWidth는 정수.
+ * CSS 스레드는 소수 그대로(gridThread). 재측정마다 clampToRoom을 돌려도 navW가 변하지 않아야 한다.
+ */
+function settleFrac(start: SplitState, actual: number, rounds: number): SplitState[] {
+  const out: SplitState[] = [];
+  let s = start;
+  for (let i = 0; i < rounds; i += 1) {
+    const nav = s.navW ?? 260;
+    // 셸이 보고하는 값: 안쪽은 정수 clientWidth(옛 측정)·소수 rect 둘 중 무엇이든, 스레드는 CSS 소수 폭.
+    s = clampToRoom(s, { inner: Math.floor(actual), nav, thread: gridThread(actual, nav, s.threadW ?? 320) });
+    out.push(s);
+  }
+  return out;
+}
+
+describe('측정→클램프 순환 차단(r2 P2-1·P3-1)', () => {
+  it('소수 셸 폭 1276.4(clientWidth 1276), navW 360, 의도 536 → 재측정 10회에도 navW 360', () => {
+    const start = { navW: 360, navCollapsed: false, threadW: 536 };
+    for (const s of settleFrac(start, 1276.4, 10)) expect(s.navW).toBe(360);
+  });
+
+  it('소수 셸 폭 1300.6·확대 110%(1280/1.1 ≈ 1163.64) → 재측정 10회 동안 navW는 최대 1회만 바뀌고 고정', () => {
+    for (const [actual, start] of [
+      [1300.6, { navW: 360, navCollapsed: false, threadW: 500 }],
+      [1280 / 1.1, { navW: 360, navCollapsed: false, threadW: 400 }],
+    ] as const) {
+      const seq = settleFrac(start, actual, 10);
+      const distinct = new Set(seq.map((s) => s.navW));
+      expect(distinct.size).toBeLessThanOrEqual(1);
+      const last = seq[seq.length - 1]!;
+      expect(Number.isInteger(last.navW)).toBe(true);
+    }
+  });
+
+  it('고정점: clampToRoom(clampToRoom(x)) 는 같은 객체(정수·소수 입력 모두) → setState 연쇄 없음', () => {
+    for (const inner of [1000.4, 1096, 1163.64, 1276.4, 1300.6, 1416, 1600.25]) {
+      for (const navW of [200, 260, 300, 360]) {
+        for (const threadW of [null, 320, 536, 900]) {
+          for (const thread of [null, 0, 333.3, 460.4]) {
+            const room = { inner, nav: navW, thread };
+            const once = clampToRoom({ navW, navCollapsed: false, threadW }, room);
+            expect(clampToRoom(once, room)).toBe(once);
+            if (once.navW !== null) expect(Number.isInteger(once.navW)).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it('소수 공간에서도 표시 스레드 ≤ 상한, ←/End가 좁히지 않는다', () => {
+    for (const inner of [1163.64, 1276.4, 1300.6, 1416.5]) {
+      for (const nav of [72, 200, 260.4, 360]) {
+        for (const intent of [null, 320, 536, 2000]) {
+          const room = { inner, nav, thread: 0 };
+          const shown = gridThreadOf(inner, nav, intent, 1440);
+          const max = threadMax(room);
+          expect(shown).toBeLessThanOrEqual(max);
+          expect(dragThread(shown + splitLimits.step, room)).toBeGreaterThanOrEqual(shown);
+          expect(dragThread(max, room)).toBeGreaterThanOrEqual(shown);
+        }
+      }
+    }
+  });
+
+  it('셸 통합: 스레드 열림 1400 → 1000 한 번에(resize가 media query보다 먼저) → 숨은 navW 보존, 1400 복귀 시 원래 폭', async () => {
+    installViewport(1400);
+    const user = userEvent.setup();
+    render(<AppShell dataSource={memory()} />);
+    await user.click(screen.getByRole('button', { name: 'general' }));
+    await user.click(screen.getByRole('button', { name: /답글 1/ }));
+    let inner = 1400;
+    stubInner(() => inner);
+    fireEvent(window, new Event('resize'));
+    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    sep.focus();
+    fireEvent.keyDown(sep, { key: 'End' });
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
+    act(() => {
+      inner = 1000;
+      // 실브라우저 순서: resize 이벤트가 먼저, media query change가 나중.
+      window.dispatchEvent(new Event('resize'));
+      resizeTo(1000);
+    });
+    expect(shell()?.dataset['sidebar']).toBe('collapsed');
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
+    act(() => {
+      inner = 1400;
+      window.dispatchEvent(new Event('resize'));
+      resizeTo(1400);
+    });
+    expect(shell()?.dataset['sidebar']).toBe('expanded');
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
+  });
+
+  it('셸 통합: 소수 셸 폭에서 resize 10회 반복해도 내비 폭 불변', async () => {
+    await wide(true);
+    stubInner(() => 1276.4);
+    fireEvent(window, new Event('resize'));
+    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    sep.focus();
+    fireEvent.keyDown(sep, { key: 'End' });
+    const before = shell()?.style.getPropertyValue('--sidebar-w');
+    for (let i = 0; i < 10; i += 1) fireEvent(window, new Event('resize'));
+    expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe(before);
+    expect(Number(sep.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(Number(sep.getAttribute('aria-valuemax')));
   });
 });
