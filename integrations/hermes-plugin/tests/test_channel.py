@@ -470,3 +470,113 @@ async def test_left_channel_forgets_name(server, make_adapter):
     await _sentinel(server, adapter)
     assert CHANNEL_ID not in adapter._conversation_ids
     assert (await adapter.get_chat_info(CHANNEL_ID))["name"] == CHANNEL_ID
+
+
+# ---- 브리핑 채널 allowlist(OHMYSLACK_POST_CHANNELS, 2026-11-19 영환님 지시 — BOT_CHANNEL_SPEC §5-5·§5-6 예외) ----
+POST_CHANNELS_ENV = "OHMYSLACK_POST_CHANNELS"
+OTHER_CHANNEL_ID = "00000000-0000-0000-0000-0000000000c9"
+
+
+def _with_two_channels(server) -> None:
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel"},
+                            {"id": OTHER_CHANNEL_ID, "kind": "channel"}]
+
+
+async def test_post_channels_unset_still_refuses_channel_top_level(server, make_adapter):
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    res = await adapter.send(CHANNEL_ID, "브리핑")
+    assert res.success is False and res.error_kind == "forbidden"
+    assert server.posts == []
+
+
+async def test_post_channels_allowlisted_channel_allows_top_level(server, make_adapter, monkeypatch, tmp_path):
+    monkeypatch.setenv(POST_CHANNELS_ENV, f" {CHANNEL_ID} ,, not-a-uuid ")
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    res = await adapter.send(CHANNEL_ID, "아침 브리핑")
+    assert res.success is True
+    assert _posts_ok(server)[-1]["conversation_id"] == CHANNEL_ID
+    assert _posts_ok(server)[-1].get("thread_root_id") is None
+    img = tmp_path / "a.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 16)
+    assert (await adapter.send_image_file(CHANNEL_ID, str(img))).success is True
+    other = await adapter.send(OTHER_CHANNEL_ID, "allowlist 밖")
+    assert other.success is False and other.error_kind == "forbidden"
+    assert all(p.get("conversation_id") != OTHER_CHANNEL_ID for p in server.posts)
+
+
+async def test_post_channels_standalone_allows_allowlisted_channel_only(server, monkeypatch):
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, "브리핑")
+    assert out.get("success") is True
+    assert _posts_ok(server)[-1]["conversation_id"] == CHANNEL_ID
+    refused = await standalone_send(cfg, OTHER_CHANNEL_ID, "브리핑")
+    assert "error" in refused
+    assert all(p.get("conversation_id") != OTHER_CHANNEL_ID for p in server.posts)
+
+
+async def test_post_channels_unset_standalone_refuses_channel(server):
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    _with_two_channels(server)
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, "브리핑")
+    assert "error" in out and server.posts == []
+
+
+def _bot_root(conv: str) -> dict:
+    return make_message(author=BOT_ID, conv=conv, body="오늘의 브리핑")
+
+
+async def test_post_channels_owner_reply_to_bot_root_follows_thread(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    root = _bot_root(CHANNEL_ID)
+    server.add(root, CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    reply = _ch("이거 더 알려줘", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert adapter.events[0].message_id == reply["id"]
+    assert adapter.events[0].source.thread_id == root["id"]
+    assert server.replies_calls == [root["id"]]
+
+
+async def test_post_channels_bot_root_outside_allowlist_rejected(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    root = _bot_root(OTHER_CHANNEL_ID)
+    server.add(root, OTHER_CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    reply = make_message(conv=OTHER_CHANNEL_ID, body="답글", thread_root_id=root["id"])
+    await server.push_live(reply, OTHER_CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == OTHER_CHANNEL_ID] == []
+
+
+async def test_post_channels_bot_root_without_allowlist_rejected(server, make_adapter):
+    _with_two_channels(server)
+    root = _bot_root(CHANNEL_ID)
+    server.add(root, CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    reply = _ch("답글", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
+
+
+async def test_post_channels_non_owner_reply_to_bot_root_rejected(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    root = _bot_root(CHANNEL_ID)
+    server.add(root, CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    other = make_message(author=OTHER_ID, conv=CHANNEL_ID, body="끼어들기", thread_root_id=root["id"])
+    await server.push_live(other, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
