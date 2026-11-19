@@ -68,4 +68,15 @@ export function dragThread(width: number, room: SplitRoom): number {
   return Math.round(Math.max(L.threadMin, Math.min(threadMax(room), width)));
 }
 
+/**
+ * 스레드 조작 결과(next)를 의도 폭으로 저장할지 정한다(r4 P3-1). 표시 폭(shown) 이상이면 넓히는 조작 —
+ * 공간에 막혀 결과가 의도보다 작아도 의도를 줄이지 않는다(의도 null이면 실제로 넓어졌을 때만 저장).
+ * 표시 폭보다 작으면 사용자가 명시적으로 좁힌 것이라 그대로 저장한다.
+ */
+export function nextThreadIntent(prev: number | null, next: number, shown: number): number | null {
+  if (next < shown) return next;
+  if (prev === null) return next > shown ? next : null;
+  return Math.max(prev, next);
+}
+
 export { rail as RAIL_WIDTH };

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
 import { splitLimits as L } from '../../ui/tokens.js';
 import { SHELL_COPY } from './copy.js';
-import { NAV_DEFAULT, RAIL_WIDTH, dragNav, dragThread, gridThread, navMax, threadMax, type SplitRoom } from './split-math.js';
+import { NAV_DEFAULT, RAIL_WIDTH, dragNav, dragThread, gridThread, navMax, nextThreadIntent, threadMax, type SplitRoom } from './split-math.js';
 import { Splitter } from './Splitter.js';
 
 export interface SplitState {
@@ -153,7 +153,16 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   // aria-valuenow·조작 기준은 실제 표시 폭 — 의도 폭이 공간보다 클 때 키가 먹통이 되지 않게. 결과는 의도 폭으로 저장.
   const shown = (r: SplitRoom): number => gridThread(r.inner, r.nav, s.threadW, vw);
   const threadNow = shown(known);
-  const setThread = (w: number) => setS((prev) => ({ ...prev, threadW: dragThread(w, room()) }));
+  // 넓히는 조작(결과 ≥ 조작 순간 표시 폭)은 공간에 막혀도 의도 폭을 줄이지 않는다(r4 P3-1). 끌기는 이동마다 다시 판정.
+  const setThread = (w: number) => {
+    const r = room();
+    const next = dragThread(w, r);
+    const now = shown(r);
+    setS((prev) => {
+      const threadW = nextThreadIntent(prev.threadW, next, now);
+      return threadW === prev.threadW ? prev : { ...prev, threadW };
+    });
+  };
   const threadSplitter = threadOpen && (
     <Splitter
       label={SHELL_COPY.threadSplit}

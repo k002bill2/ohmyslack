@@ -5,7 +5,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BODY_COLUMN_MIN, defaultThread as defaultThreadOf, dragNav, dragThread, gridThread as gridThreadOf, navMax, threadMax } from '../../src/features/layout/split-math.js';
+import { BODY_COLUMN_MIN, defaultThread as defaultThreadOf, dragNav, dragThread, gridThread as gridThreadOf, navMax, nextThreadIntent, threadMax } from '../../src/features/layout/split-math.js';
 import { AppShell } from '../../src/features/layout/AppShell.js';
 import { clampToRoom, type SplitState } from '../../src/features/layout/useSplit.js';
 import { layoutVars, splitLimits, tokens } from '../../src/ui/tokens.js';
@@ -580,6 +580,26 @@ describe('넓히는 조작이 공간에 막혀도 사용자 폭(의도)은 줄�
     expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
     fireEvent.keyDown(nav, { key: 'Enter' });
     expect(thread.getAttribute('aria-valuenow')).toBe('772');
+  });
+
+  it('1300/772/260: 한 제스처에서 왼쪽 끝까지 넓혔다가 오른쪽으로 좁히면 좁힌 폭(484)이 저장된다', async () => {
+    const { thread } = await blocked772();
+    fireEvent.pointerDown(thread, { button: 0, clientX: 900, pointerId: 1 });
+    fireEvent.pointerMove(thread, { clientX: 100, pointerId: 1 });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+    // 시작 표시 폭 584에서 오른쪽 100 → 484(표시 폭보다 좁음 = 명시적 좁히기)
+    fireEvent.pointerMove(thread, { clientX: 1000, pointerId: 1 });
+    fireEvent.pointerUp(thread, { clientX: 1000, pointerId: 1 });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('484px');
+  });
+
+  it('nextThreadIntent: 넓힘(결과 ≥ 표시)은 의도를 줄이지 않고, 좁힘은 그대로 저장', () => {
+    expect(nextThreadIntent(772, 584, 584)).toBe(772);
+    expect(nextThreadIntent(772, 568, 584)).toBe(568);
+    expect(nextThreadIntent(400, 600, 400)).toBe(600);
+    expect(nextThreadIntent(null, 324, 324)).toBeNull();
+    expect(nextThreadIntent(null, 343, 327)).toBe(343);
+    expect(nextThreadIntent(null, 320, 327)).toBe(320);
   });
 
   it('1300/772/260: → (좁히기) → 표시 폭 − 16 = 568이 의도로 저장되어 접어도 568', async () => {
