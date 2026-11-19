@@ -594,12 +594,14 @@ describe('넓히는 조작이 공간에 막혀도 사용자 폭(의도)은 줄�
   });
 
   it('nextThreadIntent: 넓힘(결과 ≥ 표시)은 의도를 줄이지 않고, 좁힘은 그대로 저장', () => {
-    expect(nextThreadIntent(772, 584, 584)).toBe(772);
-    expect(nextThreadIntent(772, 568, 584)).toBe(568);
-    expect(nextThreadIntent(400, 600, 400)).toBe(600);
-    expect(nextThreadIntent(null, 324, 324)).toBeNull();
-    expect(nextThreadIntent(null, 343, 327)).toBe(343);
-    expect(nextThreadIntent(null, 320, 327)).toBe(320);
+    expect(nextThreadIntent(772, 584, 584, 600)).toBe(772);
+    expect(nextThreadIntent(772, 568, 584, 568)).toBe(568);
+    expect(nextThreadIntent(400, 600, 400, 600)).toBe(600);
+    expect(nextThreadIntent(null, 324, 324, 340)).toBeNull();
+    expect(nextThreadIntent(null, 343, 327, 343)).toBe(343);
+    expect(nextThreadIntent(null, 320, 327, 320)).toBe(320);
+    // 방향은 자르기 전 요청값으로: 하한 320에 막힌 표시에서 → (요청 304)는 좁힘 → 320 저장(교차 검토 P3-B)
+    expect(nextThreadIntent(772, 320, 320, 304)).toBe(320);
   });
 
   it('1300/772/260: → (좁히기) → 표시 폭 − 16 = 568이 의도로 저장되어 접어도 568', async () => {
@@ -630,5 +632,60 @@ describe('넓히는 조작이 공간에 막혀도 사용자 폭(의도)은 줄�
     expect(shell()?.style.getPropertyValue('--thread-w')).toBe('');
     fireEvent.keyDown(thread, { key: 'End' });
     expect(shell()?.style.getPropertyValue('--thread-w')).toBe('');
+  });
+});
+
+describe('방향 판정 보정(교차 검토 P3-A·P3-B)', () => {
+  it('P3-A: 렌더 없이 연속 두 번 끌기(500 → 400, 의도 null·표시 327·공간 여유) → 의도 400', async () => {
+    await wide(true);
+    stubInner(() => 1416);
+    fireEvent(window, new Event('resize'));
+    const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    expect(thread.getAttribute('aria-valuenow')).toBe('327');
+    fireEvent.pointerDown(thread, { button: 0, clientX: 900, pointerId: 1 });
+    // 한 act 안에서 두 번 이동 — 두 번째 핸들러는 첫 이동 전 렌더의 클로저(의도 null)를 본다.
+    act(() => {
+      fireEvent.pointerMove(thread, { clientX: 900 - 173, pointerId: 1 }); // 327 + 173 = 500
+      fireEvent.pointerMove(thread, { clientX: 900 - 73, pointerId: 1 }); // 327 + 73 = 400
+    });
+    fireEvent.pointerUp(thread, { clientX: 827, pointerId: 1 });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('400px');
+  });
+
+  /** 1300·의도 772 → 안쪽 1000으로 줄임 → 공간 1000 − 260 − 456 = 284 < 320 → 표시는 하한 320에 막힌다. */
+  async function pinnedAtMin() {
+    await wide(true);
+    stubInner(() => 1300);
+    fireEvent(window, new Event('resize'));
+    const nav = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    fireEvent.keyDown(thread, { key: 'End' });
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+    stubInner(() => 1000);
+    fireEvent(window, new Event('resize'));
+    expect(thread.getAttribute('aria-valuenow')).toBe('320');
+    return thread;
+  }
+
+  function restoreRoom(thread: HTMLElement) {
+    stubInner(() => 1300);
+    fireEvent(window, new Event('resize'));
+    expect(thread.getAttribute('aria-valuenow')).toBe('320');
+  }
+
+  it('P3-B: 표시가 320에 막힌 상태(의도 772)에서 → → 의도 320, 공간이 돌아와도 320', async () => {
+    const thread = await pinnedAtMin();
+    fireEvent.keyDown(thread, { key: 'ArrowRight' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('320px');
+    restoreRoom(thread);
+  });
+
+  it('P3-B: 표시가 320에 막힌 상태(의도 772)에서 Home → 의도 320, 공간이 돌아와도 320', async () => {
+    const thread = await pinnedAtMin();
+    fireEvent.keyDown(thread, { key: 'Home' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('320px');
+    restoreRoom(thread);
   });
 });
