@@ -65,3 +65,24 @@ describe('넓은 화면 폭(B1, 2026-11-16)·분할 손잡이 대비(A1)', () =>
     expect(rule).toContain('background: var(--border);');
   });
 });
+
+describe('분할 그리드 스레드 열 바닥 보장(N1·P3-3)', () => {
+  const refresh = readFileSync(fileURLToPath(new URL('../../src/features/layout/refresh.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (selector: string) =>
+    [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => (m[1] ?? '').trim() === selector).at(-1)?.[2] ?? '';
+  it('스레드 열 = minmax(--thread-min, --thread-w) — 본문 바닥을 먼저 지키고 남는 공간만큼만 사용자 폭', () => {
+    for (const sel of [
+      ".app-shell[data-split='on'][data-thread='open']",
+      ".app-shell[data-split='on'][data-sidebar='collapsed'][data-thread='open']",
+    ]) {
+      expect(rule(sel)).toContain('minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) minmax(var(--thread-min), var(--thread-w))');
+    }
+  });
+  it('분할 중 스레드 패널은 고정 폭 대신 열을 채운다', () => {
+    expect(rule(".app-shell[data-split='on'] > .thread-wide")).toContain('width: auto');
+  });
+  it('--thread-min 토큰은 splitLimits.threadMin(320)과 같다', async () => {
+    const { layoutVars, splitLimits } = await import('../../src/ui/tokens.js');
+    expect(layoutVars['--thread-min']).toBe(`${splitLimits.threadMin}px`);
+  });
+});

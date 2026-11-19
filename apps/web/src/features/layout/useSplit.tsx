@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
 import { splitLimits as L } from '../../ui/tokens.js';
 import { SHELL_COPY } from './copy.js';
-import { NAV_DEFAULT, RAIL_WIDTH, dragNav, dragThread, navMax, threadMax, type SplitRoom } from './split-math.js';
+import { NAV_DEFAULT, RAIL_WIDTH, dragNav, dragThread, gridThread, navMax, threadMax, type SplitRoom } from './split-math.js';
 import { Splitter } from './Splitter.js';
 
 export interface SplitState {
@@ -15,26 +15,41 @@ export interface SplitState {
 
 const INITIAL: SplitState = { navW: null, navCollapsed: false, threadW: null };
 
-/** 사용자 폭을 현재 공간의 상한 안으로(스레드 먼저 — 내비 상한은 줄어든 스레드 폭으로 계산). 그대로면 같은 객체. */
-export function clampToRoom(prev: SplitState, room: SplitRoom): SplitState {
-  const threadW = prev.threadW === null || room.thread === null ? prev.threadW : Math.min(prev.threadW, threadMax(room));
-  const thread = room.thread === null ? null : (threadW ?? room.thread);
-  const navW = prev.navW === null ? null : Math.min(prev.navW, navMax({ ...room, thread }));
-  return threadW === prev.threadW && navW === prev.navW ? prev : { ...prev, threadW, navW };
+/**
+ * 공간 변화 때 내비 사용자 폭만 상한 안으로 자른다. 스레드 사용자 폭(의도)은 줄이지 않는다 — 표시 폭은 CSS가
+ * min(의도, 남은 공간)으로 정하고, 공간이 돌아오면 의도 폭으로 복원된다(N2·P3-1).
+ * 내비 상한의 스레드 폭은 최소 폭(threadMin) — 내비는 스레드를 최소로 줄여도 본문 열 바닥을 못 지킬 때만 제한되고,
+ * 내비가 넓어지면 스레드는 CSS minmax로 표시 폭만 양보한다(r3 P2-1). 상한이 navW·threadW와 무관하므로
+ * 측정→클램프 순환이 없다. room.thread는 열림 여부(null)만 본다.
+ * 결과 navW는 정수(navMax 내림)라 같은 입력이면 두 번째 호출은 같은 객체를 돌려준다(고정점).
+ * 내비가 접혀 있으면(자동·사용자) 보이지 않는 사용자 폭은 자르지 않는다(P3-3).
+ */
+export function clampToRoom(prev: SplitState, room: SplitRoom, collapsed = false): SplitState {
+  if (collapsed || prev.navW === null) return prev;
+  const navW = Math.min(prev.navW, navMax(navLimitRoom(room)));
+  return navW === prev.navW ? prev : { ...prev, navW };
 }
 
-function width(el: Element | null | undefined): number {
-  return el?.getBoundingClientRect().width ?? 0;
+/** 내비 상한 계산용 공간: 스레드가 열려 있으면 최소 폭으로 본다(r3 P2-1). */
+function navLimitRoom(room: SplitRoom): SplitRoom {
+  return { ...room, thread: room.thread === null ? null : L.threadMin };
 }
 
-/** 셸 실측: 안쪽 폭(패딩 제외)·현재 내비·스레드 폭. */
-function measureRoom(shell: HTMLElement | null): SplitRoom {
-  if (shell === null) return { inner: 0, nav: NAV_DEFAULT, thread: null };
+/** aria-valuenow 방어: [min, max] 밖 값을 표시하지 않는다. 바닥이 CSS와 같으면 평소에는 발동하지 않는다. */
+function within(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+const px = (value: string): number => Number.parseFloat(value) || 0;
+
+/** 셸 안쪽 폭(패딩 제외). clientWidth(정수 반올림) 대신 getBoundingClientRect(소수)로 — 확대·OS 배율에서 단위를 맞춘다. */
+function measureInner(shell: HTMLElement | null): number | null {
+  if (shell === null) return null;
   const style = getComputedStyle(shell);
-  const inner = shell.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
-  const thread = shell.querySelector('.thread-wide');
-  return { inner, nav: width(shell.querySelector(':scope > .sidebar')), thread: thread === null ? null : width(thread) };
+  return shell.getBoundingClientRect().width - px(style.paddingLeft) - px(style.paddingRight);
 }
+
+const viewportWidth = (): number | undefined => (typeof window === 'undefined' ? undefined : window.innerWidth);
 
 /**
  * R4 분할선(wide 전용): 내비 | 본문 | 스레드 사이 두 분할선과 사용자 폭 상태.
@@ -69,34 +84,40 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   }, [shell, enabled, s.navW, s.threadW]);
 
   const collapsed = autoCollapsed || s.navCollapsed;
-  // 렌더마다 레이아웃을 읽지 않도록(메시지 도착마다 셸이 다시 그려진다) 폭이 바뀔 때·창 크기 변경 때만 실측해 둔다.
-  // 끌기·키 조작은 그 순간 room()으로 새로 잰다.
-  const [measured, setMeasured] = useState<SplitRoom | null>(null);
-  // 실측할 때마다 사용자 폭을 새 상한으로 다시 자른다 — 창을 줄이거나 사이드바를 펼치거나 스레드를 열어
-  // 공간이 줄면 넓혀 둔 폭이 셸을 넘쳐 스레드가 잘리지 않게(Codex r1 P2). 바뀐 게 없으면 같은 상태를 돌려 루프가 없다.
-  const remeasure = () => {
-    const room = measureRoom(shell.current);
-    setMeasured(room);
-    setS((prev) => clampToRoom(prev, room));
-  };
-  useLayoutEffect(() => {
-    if (enabled) remeasure();
-    // remeasure는 shell·setState만 쓴다 — 의존은 공간을 바꾸는 값들.
-  }, [shell, enabled, threadOpen, collapsed, s.navW, s.threadW]);
+  // 실측은 셸 안쪽 폭 하나뿐 — navW·threadW와 무관하므로 측정→클램프 순환이 없다. resize는 측정만 하고(P3-1),
+  // 자르기는 아래 layout effect가 렌더 시점의 접힘(뷰포트 matchMedia를 그 렌더에서 읽은 값)으로 한다.
+  const [inner, setInner] = useState<number | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    const onResize = remeasure;
+    const onResize = () => setInner(measureInner(shell.current));
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [shell, enabled]);
+  // 공간·폭이 바뀔 때마다 안쪽 폭을 새로 재고 내비 사용자 폭을 새 상한으로 다시 자른다(Codex r1 P2).
+  // clampToRoom은 고정점이라 같은 입력이면 같은 객체 — 많아야 1회 갱신 후 멈춘다.
+  useLayoutEffect(() => {
+    if (!enabled) return;
+    const w = measureInner(shell.current);
+    setInner(w);
+    if (w === null) return;
+    setS((prev) => clampToRoom(prev, { inner: w, nav: 0, thread: threadOpen ? 0 : null, vw: viewportWidth() }, collapsed));
+  }, [shell, enabled, inner, threadOpen, collapsed, s.navW, s.threadW]);
 
   if (!enabled) return { userCollapsed: false, navSplitter: null, threadSplitter: null };
 
-  const room = () => measureRoom(shell.current);
-  const known = measured ?? { inner: 0, nav: NAV_DEFAULT, thread: null };
+  const vw = viewportWidth();
+  // 내비 폭은 실측하지 않고 상태에서 계산한다(P3-1) — CSS 내비 열 = --sidebar-w(사용자 폭 또는 토큰 기본)·접힘이면 레일 토큰.
+  // 렌더 중 DOM을 읽지 않으므로 접기/펼치기 직후에도 낡은 커밋 값을 보지 않는다.
   const navNow = collapsed ? RAIL_WIDTH : (s.navW ?? NAV_DEFAULT);
+  /** 셸 안쪽 폭만 실측(layout effect의 inner 또는 조작 순간). 스레드 폭은 그리드 규칙 계산. */
+  const roomAt = (innerNow: number | null): SplitRoom => {
+    const w = innerNow ?? 0;
+    return { inner: w, nav: navNow, thread: threadOpen ? gridThread(w, navNow, s.threadW, vw) : null, vw };
+  };
+  const room = () => roomAt(measureInner(shell.current));
+  const known = roomAt(inner);
   const setNav = (w: number) => {
-    const next = dragNav(w, room());
+    const next = dragNav(w, navLimitRoom(room()));
     setS((prev) => (next.collapsed ? { ...prev, navCollapsed: true } : { ...prev, navCollapsed: false, navW: next.width }));
   };
   const toggleNav = () => setS((prev) => ({ ...prev, navCollapsed: !prev.navCollapsed }));
@@ -104,11 +125,11 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   const navSplitter = (
     <Splitter
       label={SHELL_COPY.navSplit}
-      now={navNow}
+      now={within(navNow, RAIL_WIDTH, navMax(navLimitRoom(known)))}
       min={RAIL_WIDTH}
-      max={navMax(known)}
+      max={navMax(navLimitRoom(known))}
       dir={1}
-      measure={() => (collapsed ? RAIL_WIDTH : room().nav)}
+      measure={() => navNow}
       onResize={(w) => {
         if (!autoCollapsed) setNav(w);
       }}
@@ -118,24 +139,33 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
         if (collapsed && d > 0) setNav(L.navMin);
         else if (!collapsed) setNav(navNow + d * L.step);
       }}
+      onEdge={(edge) => {
+        // Home = navMin(레일로 접지 않음 — 접기는 Enter), End = 현재 상한. 레일에서 Home은 이미 최소라 무시(P3-1).
+        if (autoCollapsed || (collapsed && edge < 0)) return;
+        setNav(edge < 0 ? L.navMin : navMax(navLimitRoom(room())));
+      }}
       onEnter={() => {
         if (!autoCollapsed) toggleNav();
       }}
       onReset={() => setS((prev) => ({ ...prev, navW: null, navCollapsed: false }))}
     />
   );
-  const threadNow = s.threadW ?? known.thread ?? L.threadMin;
+  // aria-valuenow·조작 기준은 실제 표시 폭 — 의도 폭이 공간보다 클 때 키가 먹통이 되지 않게. 결과는 의도 폭으로 저장.
+  const shown = (r: SplitRoom): number => gridThread(r.inner, r.nav, s.threadW, vw);
+  const threadNow = shown(known);
+  const setThread = (w: number) => setS((prev) => ({ ...prev, threadW: dragThread(w, room()) }));
   const threadSplitter = threadOpen && (
     <Splitter
       label={SHELL_COPY.threadSplit}
-      now={threadNow}
+      now={within(threadNow, L.threadMin, threadMax(known))}
       min={L.threadMin}
       max={threadMax(known)}
       dir={-1}
-      measure={() => room().thread ?? threadNow}
-      onResize={(w) => setS((prev) => ({ ...prev, threadW: dragThread(w, room()) }))}
+      measure={() => shown(room())}
+      onResize={setThread}
       // ← 는 스레드를 넓힌다(분할선이 왼쪽으로).
-      onStep={(d) => setS((prev) => ({ ...prev, threadW: dragThread(threadNow - d * L.step, room()) }))}
+      onStep={(d) => setThread(shown(room()) - d * L.step)}
+      onEdge={(edge) => setThread(edge < 0 ? L.threadMin : threadMax(room()))}
       onEnter={opts.onCloseThread}
       onReset={() => setS((prev) => ({ ...prev, threadW: null }))}
     />
