@@ -122,6 +122,8 @@ describe('셸 통합', () => {
 
   it('더블클릭 → 사용자 폭을 지워 토큰 기본 폭으로', async () => {
     await wide(true);
+    // ← 가 실제로 넓힐 공간(1416 − 456 − 260 = 700 > 기본 327)이 있어야 의도 폭이 생긴다(r4 P3-1).
+    stubInner(() => 1416);
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'ArrowLeft' });
@@ -533,5 +535,80 @@ describe('내비 상한은 스레드 최소 폭 기준(r3 P2-1)·렌더 중 DOM 
     fireEvent.keyDown(sep, { key: 'ArrowLeft' });
     fireEvent.keyDown(screen.getByRole('separator', { name: /내비게이션 폭 조절/ }), { key: 'ArrowRight' });
     expect(reads).toBe(0);
+  });
+});
+
+describe('넓히는 조작이 공간에 막혀도 사용자 폭(의도)은 줄지 않는다(r4 P3-1)', () => {
+  /** 1300·의도 772(레일에서 End) → 내비 펼침(기본 260) → 표시 스레드 = min(772, 1300 − 260 − 456 = 584). */
+  async function blocked772() {
+    await wide(true);
+    stubInner(() => 1300);
+    fireEvent(window, new Event('resize'));
+    const nav = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    fireEvent.keyDown(thread, { key: 'End' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    expect(thread.getAttribute('aria-valuenow')).toBe('584');
+    return { nav, thread };
+  }
+
+  it('1300/772/260: ← → 의도 772 유지 → 내비 접기 → 스레드 aria 772', async () => {
+    const { nav, thread } = await blocked772();
+    fireEvent.keyDown(thread, { key: 'ArrowLeft' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+    expect(thread.getAttribute('aria-valuenow')).toBe('584');
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    expect(thread.getAttribute('aria-valuenow')).toBe('772');
+  });
+
+  it('1300/772/260: End → 의도 772 유지 → 내비 접기 → 스레드 aria 772', async () => {
+    const { nav, thread } = await blocked772();
+    fireEvent.keyDown(thread, { key: 'End' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    expect(thread.getAttribute('aria-valuenow')).toBe('772');
+  });
+
+  it('1300/772/260: 분할선을 왼쪽으로 공간 끝까지 끌어도 의도 772 유지', async () => {
+    const { nav, thread } = await blocked772();
+    fireEvent.pointerDown(thread, { button: 0, clientX: 900, pointerId: 1 });
+    fireEvent.pointerMove(thread, { clientX: 600, pointerId: 1 });
+    fireEvent.pointerMove(thread, { clientX: 100, pointerId: 1 });
+    fireEvent.pointerUp(thread, { clientX: 100, pointerId: 1 });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('772px');
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    expect(thread.getAttribute('aria-valuenow')).toBe('772');
+  });
+
+  it('1300/772/260: → (좁히기) → 표시 폭 − 16 = 568이 의도로 저장되어 접어도 568', async () => {
+    const { nav, thread } = await blocked772();
+    fireEvent.keyDown(thread, { key: 'ArrowRight' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('568px');
+    fireEvent.keyDown(nav, { key: 'Enter' });
+    expect(thread.getAttribute('aria-valuenow')).toBe('568');
+  });
+
+  it('의도 null(기본 327 = ⌊32vw · jsdom innerWidth 1024⌋)에서 공간이 충분하면 ← 1회 → 의도 343', async () => {
+    await wide(true);
+    stubInner(() => 1416);
+    fireEvent(window, new Event('resize'));
+    const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    fireEvent.keyDown(thread, { key: 'ArrowLeft' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('343px');
+  });
+
+  it('공간에 막힌 기본 상태(1040 → 표시 324)에서 ← → 의도 null 유지(기본 폭 그대로)', async () => {
+    await wide(true);
+    stubInner(() => 1040);
+    fireEvent(window, new Event('resize'));
+    const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
+    // 1040 − 260 − 456 = 324 < 기본 327
+    expect(thread.getAttribute('aria-valuenow')).toBe('324');
+    fireEvent.keyDown(thread, { key: 'ArrowLeft' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('');
+    fireEvent.keyDown(thread, { key: 'End' });
+    expect(shell()?.style.getPropertyValue('--thread-w')).toBe('');
   });
 });
