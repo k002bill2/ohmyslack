@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
 import { splitLimits as L } from '../../ui/tokens.js';
 import { SHELL_COPY } from './copy.js';
-import { NAV_DEFAULT, RAIL_WIDTH, dragNav, dragThread, gridThread, navMax, threadMax, type SplitRoom } from './split-math.js';
+import { NAV_DEFAULT, RAIL_WIDTH, dragNav, dragThread, gridThread, navMax, nextThreadIntent, threadMax, type SplitRoom } from './split-math.js';
 import { Splitter } from './Splitter.js';
 
 export interface SplitState {
@@ -153,7 +153,21 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
   // aria-valuenow·조작 기준은 실제 표시 폭 — 의도 폭이 공간보다 클 때 키가 먹통이 되지 않게. 결과는 의도 폭으로 저장.
   const shown = (r: SplitRoom): number => gridThread(r.inner, r.nav, s.threadW, vw);
   const threadNow = shown(known);
-  const setThread = (w: number) => setS((prev) => ({ ...prev, threadW: dragThread(w, room()) }));
+  // 넓히는 조작(요청 ≥ 조작 순간 표시 폭)은 공간에 막혀도 의도 폭을 줄이지 않는다(r4 P3-1). 끌기는 이동마다 다시 판정.
+  // 표시 폭은 updater의 최신 의도(prev.threadW)로 계산 — 렌더 사이 연속 이동이 낡은 클로저 값을 보지 않게(P3-A).
+  // 방향은 자르기 전 요청값(정수 — 서브픽셀 흔들림 무시)으로 판정(P3-B).
+  const setThread = (w: number) => {
+    const r = room();
+    const next = dragThread(w, r);
+    const requested = Math.round(w);
+    setS((prev) => {
+      const now = gridThread(r.inner, r.nav, prev.threadW, vw);
+      const threadW = nextThreadIntent(prev.threadW, next, now, requested);
+      return threadW === prev.threadW ? prev : { ...prev, threadW };
+    });
+  };
+  // Home은 항상 좁힘 — 표시가 이미 하한에 막혀 있어도 의도를 최소 폭으로 저장한다(P3-B).
+  const threadHome = () => setS((prev) => (prev.threadW === L.threadMin ? prev : { ...prev, threadW: L.threadMin }));
   const threadSplitter = threadOpen && (
     <Splitter
       label={SHELL_COPY.threadSplit}
@@ -165,7 +179,7 @@ export function useSplit(shell: RefObject<HTMLElement | null>, opts: {
       onResize={setThread}
       // ← 는 스레드를 넓힌다(분할선이 왼쪽으로).
       onStep={(d) => setThread(shown(room()) - d * L.step)}
-      onEdge={(edge) => setThread(edge < 0 ? L.threadMin : threadMax(room()))}
+      onEdge={(edge) => (edge < 0 ? threadHome() : setThread(threadMax(room())))}
       onEnter={opts.onCloseThread}
       onReset={() => setS((prev) => ({ ...prev, threadW: null }))}
     />
