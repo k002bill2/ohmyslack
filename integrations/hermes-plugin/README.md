@@ -111,7 +111,7 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 - Hermes 본체는 `PYTHONPATH`로 읽기만 하며, 설치하거나 복사하지 않습니다.
 - 실서버 live 테스트(`-m live`, 기본 실행에서 제외)는 `scripts/live-e2e.sh`가 준비한 테스트 스키마·임의 포트 서버만 상대합니다(운영 8787/8788 금지). `tests/test_live_e2e.py`는 owner 메시지 왕복, `tests/test_live_standalone.py`(Issue #47)는 standalone 긴 텍스트 + mp3 실발송(청크 수·순서·첫 청크 첨부 결속·`media_delivered`)과 가짜 서버 400/404 규칙의 실서버 대조(상태·오류 코드)입니다.
 - `scripts/live-e2e.sh` 마지막 단계는 pytest 를 직접 부르지 않고 격리 래퍼 `scripts/isolated-pytest.sh --run-live` 를 한 번 부릅니다(가드가 래퍼 밖 실행을 EXIT 3 으로 끊으므로). 래퍼가 G3 해시 게이트(`--run-attested` 와 같음, 불일치 EXIT 5)와 live env 검증(`OHMYSLACK_LIVE_E2E=1`, URL 3개는 정확히 `http://127.0.0.1:<1024-65535>`·운영 포트 아님, 토큰·쿠키·CSRF 는 비어 있지 않은 한 줄 — 위반 EXIT 64, 값 비공개)을 거친 뒤 sandbox 안에서 `-q -m live tests/test_live_e2e.py tests/test_live_standalone.py` 만 돌립니다.
-- 비밀(토큰·쿠키·CSRF)은 argv 에 싣지 않습니다: 래퍼가 `.isolation/` 아래 0600 새 파일로 옮기고 sandbox env 에는 `*_FILE` 경로만 넘기며, 종료 때 지웁니다. owner 메시지 게시는 테스트 프로세스 안 aiohttp 요청입니다(sandbox 가 subprocess 를 막음, `scripts/live_owner_send.py` 는 미사용).
+- 비밀(토큰·쿠키·CSRF)은 argv 에 싣지 않습니다: 래퍼가 `.isolation/` 아래 0600 새 파일로 옮기고 sandbox env 에는 `*_FILE` 경로만 넘기며, 종료 때 지웁니다(SIGKILL·전원 차단이면 다음 래퍼 실행의 `.isolation/` 재생성 때까지 0700 디렉터리에 남음). 테스트가 실패하면 pytest 출력은 `.isolation/tmp/run-live.out`에도 남습니다. owner 메시지 게시는 테스트 프로세스 안 aiohttp 요청입니다(sandbox 가 subprocess 를 막음, `scripts/live_owner_send.py` 는 미사용).
 
 ## 격리 테스트 실행 (설계 r4 §Q5 · 단계 1)
 

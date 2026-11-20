@@ -287,7 +287,9 @@ class FakeBotServer:
                                      headers=headers)
         cid = request.match_info["cid"]
         body = payload.get("body")
-        body_ok = isinstance(body, str) and bool(body.strip())  # shared/messages.ts:15-18 bodySchema
+        # shared/messages.ts:15-18 bodySchema 중 body 필드만 근사 — 실서버는 스키마 전체(client_message_id UUID·strict 등)가
+        # 깨져도 루트 판정을 생략한다. 플러그인은 항상 유효한 키·필드만 보내므로 body 근사로 충분하다.
+        body_ok = isinstance(body, str) and bool(body.strip())
         # 루트 가시성(S/bots/routes.ts:190-208 threadRootGuard, :314) — rateGuard·replay 판정보다 먼저 404.
         # 실서버는 본문 스키마가 통과할 때만 루트를 본다(:191-193) — 형식 오류 본문은 아래 400(#47 실서버 대조).
         root = payload.get("thread_root_id")

@@ -202,7 +202,7 @@ async def test_live_standalone_long_text_with_mp3_binds_attachment_to_first_chun
 # ---------------------------------------------------------------- B. 가짜 400/404 규칙 실서버 대조
 
 async def test_parity_missing_root_reply_is_404_before_replay(pair):
-    """가짜 conftest.py:289-293(루트 가시성 404가 rateGuard·replay보다 먼저) ↔ 실서버 bots/routes.ts:206-209·314
+    """가짜 conftest.py post 루트 판정(루트 가시성 404가 rateGuard·replay보다 먼저) ↔ 실서버 bots/routes.ts:206-209·314
     threadRootGuard(sendAs의 replay 판정 전). 같은 키로 이미 저장된 최상위 메시지가 있어도 없는 루트면 404."""
     async def make(side: Side):
         key = str(uuid.uuid4())
@@ -222,7 +222,7 @@ async def test_parity_missing_root_fresh_key_is_404(pair):
 
 @pytest.mark.parametrize("body", ["", "   \n\t"], ids=["empty", "whitespace"])
 async def test_parity_blank_body_is_400_invalid_request(pair, body):
-    """가짜 conftest.py:299-302 ↔ 실서버 shared/messages.ts:16-19 bodySchema(trim 비면 거부) → messages/routes.ts:33-36·110."""
+    """가짜 conftest.py post 본문 판정 ↔ 실서버 shared/messages.ts:16-19 bodySchema(trim 비면 거부) → messages/routes.ts:33-36·110."""
     async def make(side: Side):
         return await _post(pair, side, {"client_message_id": str(uuid.uuid4()), "body": body})
     await _expect_same(pair, (400, "invalid_request"), make)
