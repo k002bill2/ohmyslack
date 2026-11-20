@@ -100,7 +100,8 @@
 .msg-item > .msg-deleted,
 .msg-item > .msg-editor,
 .msg-item > .msg-status {
-  flex: 1 0 100%;  min-width: 0;
+  flex: 1 0 100%;
+  min-width: 0;
 }
 .msg-body {
   display: flex;
