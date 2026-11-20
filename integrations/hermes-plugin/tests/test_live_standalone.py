@@ -5,7 +5,8 @@
 운영 포트면 실패시킨다. 토큰 값은 출력하지 않는다.
 
 - `OHMYSLACK_BOT_URL`: 봇 리스너 origin(루프백, `validate_bot_url` 통과)
-- `OHMYSLACK_BOT_TOKEN`: 봇 Bearer 토큰
+- `OHMYSLACK_BOT_TOKEN_FILE`(또는 `OHMYSLACK_BOT_TOKEN`): 봇 Bearer 토큰. 격리 래퍼 `--run-live`는 값을 env에 싣지 않고 0600 파일
+  경로만 넘긴다(test_live_e2e.py `_secret`과 같은 규칙).
 
 B 대조 방식: 같은 요청을 (1) conftest 가짜 서버(`server` fixture)와 (2) 실서버 봇 API에 보내 상태 코드·오류 코드가 같은지 본다.
 오류 본문 모양은 서로 다르다(가짜 `{"error": "<code>"}`, 실서버 `{"error": {"code", "request_id"}}` — S/http/errors.ts:15-17) —
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -25,15 +26,29 @@ import pytest
 
 from conftest import BOT_ID, DM_ID, FIXTURE_BEARER
 
+
+def _secret(name: str) -> str:
+    """`<name>` env 값, 없으면 `<name>_FILE` 이 가리키는 파일 내용(끝 줄바꿈 제거). 둘 다 없으면 ""(test_live_e2e.py와 같음)."""
+    value = os.environ.get(name, "")
+    path = os.environ.get(f"{name}_FILE", "")
+    if value or not path:
+        return value
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().rstrip("\r\n")
+    except OSError:
+        return ""
+
+
 # conftest의 autouse `_isolated_env`가 테스트 본문 전에 봇 env를 지우므로 import 시점에 읽는다(test_live_e2e.py와 같은 패턴).
 LIVE = os.environ.get("OHMYSLACK_LIVE_E2E") == "1"
 BOT_URL = os.environ.get("OHMYSLACK_BOT_URL", "")
-BOT_TOKEN = os.environ.get("OHMYSLACK_BOT_TOKEN", "")
+BOT_TOKEN = _secret("OHMYSLACK_BOT_TOKEN")
 
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(not (LIVE and BOT_URL and BOT_TOKEN),
-                       reason="live standalone: OHMYSLACK_LIVE_E2E=1·OHMYSLACK_BOT_URL·OHMYSLACK_BOT_TOKEN 필요"),
+                       reason="live standalone: OHMYSLACK_LIVE_E2E=1·OHMYSLACK_BOT_URL·OHMYSLACK_BOT_TOKEN(_FILE) 필요"),
 ]
 
 API = "/api/bot/v1"
@@ -49,7 +64,7 @@ class Side:
 
     name: str
     base: str
-    token: str
+    token: str = field(repr=False)  # 단언 실패 출력(pytest 재작성의 중간값 repr)에 토큰이 실리지 않게
     dm: str
     bot_id: str
 
