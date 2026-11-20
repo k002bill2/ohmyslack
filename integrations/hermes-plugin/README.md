@@ -109,6 +109,8 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 
 - 테스트는 가짜 aiohttp 봇 서버를 상대로 돌고, `HERMES_HOME`을 tmp로 격리합니다. 실제 서버나 게이트웨이에는 연결하지 않습니다.
 - Hermes 본체는 `PYTHONPATH`로 읽기만 하며, 설치하거나 복사하지 않습니다.
+- 실서버 live 테스트(`-m live`, 기본 실행에서 제외)는 `scripts/live-e2e.sh`가 준비한 테스트 스키마·임의 포트 서버만 상대합니다(운영 8787/8788 금지). `tests/test_live_e2e.py`는 owner 메시지 왕복, `tests/test_live_standalone.py`(Issue #47)는 standalone 긴 텍스트 + mp3 실발송(청크 수·순서·첫 청크 첨부 결속·`media_delivered`)과 가짜 서버 400/404 규칙의 실서버 대조(상태·오류 코드)입니다.
+- 스크립트 마지막 단계는 `tests/test_live_e2e.py`만 지정하므로, 새 파일은 같은 env로 따로 지정해 돌려야 합니다(스크립트 변경은 별도 작업).
 
 ## 격리 테스트 실행 (설계 r4 §Q5 · 단계 1)
 

@@ -102,7 +102,7 @@ export OHMYSLACK_LIVE_MAIN_URL="$MAIN_URL" OHMYSLACK_LIVE_ORIGIN="$MAIN_URL"
 export OHMYSLACK_LIVE_OWNER_SEND="\"$PYTHON\" \"$PLUGIN/scripts/live_owner_send.py\""
 export OHMYSLACK_LIVE_E2E=1 OHMYSLACK_BOT_URL="http://127.0.0.1:$BOT_PORT" OHMYSLACK_BOT_TOKEN="$BOT_TOKEN"
 set +e
-(cd "$PLUGIN" && PYTHONPATH="$HERMES_AGENT_DIR" "$PYTHON" -m pytest -m live -q -p no:cacheprovider tests/test_live_e2e.py)
+(cd "$PLUGIN" && PYTHONPATH="$HERMES_AGENT_DIR" "$PYTHON" -m pytest -m live -q -p no:cacheprovider tests/test_live_e2e.py tests/test_live_standalone.py)
 RESULT=$?
 set -e
 [ "$RESULT" = 0 ] || tail -n 20 "$WORK/server.log" >&2
