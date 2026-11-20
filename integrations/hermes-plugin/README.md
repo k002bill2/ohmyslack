@@ -109,6 +109,9 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 
 - 테스트는 가짜 aiohttp 봇 서버를 상대로 돌고, `HERMES_HOME`을 tmp로 격리합니다. 실제 서버나 게이트웨이에는 연결하지 않습니다.
 - Hermes 본체는 `PYTHONPATH`로 읽기만 하며, 설치하거나 복사하지 않습니다.
+- 실서버 live 테스트(`-m live`, 기본 실행에서 제외)는 `scripts/live-e2e.sh`가 준비한 테스트 스키마·임의 포트 서버만 상대합니다(운영 8787/8788 금지). `tests/test_live_e2e.py`는 owner 메시지 왕복, `tests/test_live_standalone.py`(Issue #47)는 standalone 긴 텍스트 + mp3 실발송(청크 수·순서·첫 청크 첨부 결속·`media_delivered`)과 가짜 서버 400/404 규칙의 실서버 대조(상태·오류 코드)입니다.
+- `scripts/live-e2e.sh` 마지막 단계는 pytest 를 직접 부르지 않고 격리 래퍼 `scripts/isolated-pytest.sh --run-live` 를 한 번 부릅니다(가드가 래퍼 밖 실행을 EXIT 3 으로 끊으므로). 래퍼가 G3 해시 게이트(`--run-attested` 와 같음, 불일치 EXIT 5)와 live env 검증(`OHMYSLACK_LIVE_E2E=1`, URL 3개는 정확히 `http://127.0.0.1:<1024-65535>`·운영 포트 아님, 토큰·쿠키·CSRF 는 비어 있지 않은 한 줄 — 위반 EXIT 64, 값 비공개)을 거친 뒤 sandbox 안에서 `-q -m live tests/test_live_e2e.py tests/test_live_standalone.py` 만 돌립니다.
+- 비밀(토큰·쿠키·CSRF)은 argv 에 싣지 않습니다: 래퍼가 `.isolation/` 아래 0600 새 파일로 옮기고 sandbox env 에는 `*_FILE` 경로만 넘기며, 종료 때 지웁니다(SIGKILL·전원 차단이면 다음 래퍼 실행의 `.isolation/` 재생성 때까지 0700 디렉터리에 남음). 테스트가 실패하면 pytest 출력은 `.isolation/tmp/run-live.out`에도 남습니다. owner 메시지 게시는 테스트 프로세스 안 aiohttp 요청입니다(sandbox 가 subprocess 를 막음, `scripts/live_owner_send.py` 는 미사용).
 
 ## 격리 테스트 실행 (설계 r4 §Q5 · 단계 1)
 
@@ -129,6 +132,7 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 | 가드 거부 점검 | `bash scripts/isolated-pytest.sh --probe-guard; echo EXIT=$?` | `OHMYSLACK-ISOLATION-GUARD-REFUSED: …`, `PROBE-GUARD PASS`, `EXIT=3` |
 | 전체 실행(G3 뒤, 사람) | `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` | TTY·난수 입력 뒤 `tests` 실행 |
 | 전체 실행(레인·에이전트, 해시 대조) | `bash scripts/isolated-pytest.sh --run-attested [-q] [-x] [-k <식>]; echo EXIT=$?` | `scripts/pytest.sb`·`scripts/_iso_fs.sh` sha256 이 `scripts/G3-ATTESTATION` 과 같으면 `--run` 과 같은 경로(env·sandbox·가드)로 `tests` 실행. 없음·형식 오류·불일치면 아무것도 하지 않고 `re-attestation by human required`, `EXIT=5`. 그 밖 인자는 `EXIT=64` |
+| 실서버 live(레인·`scripts/live-e2e.sh`, 해시 대조) | `scripts/live-e2e.sh` 가 live env 를 그 한 호출에만 붙여 `bash scripts/isolated-pytest.sh --run-live` 실행 | `--run-attested` 와 같은 해시 게이트(EXIT 5) → 인자 0개(`--confirm` 포함 무엇이든 `EXIT=64`) → live env 검증(위반 `EXIT=64`, 사유만) → 비밀은 `.isolation/` 0600 파일, sandbox 안 고정 인자 `-q -m live tests/test_live_e2e.py tests/test_live_standalone.py`. 거부 경로는 `--preflight` 자기시험(`tests_isolation/test_run_live.py`) |
 
 ### `--run-attested` 와 G3-ATTESTATION — 한계
 
@@ -136,6 +140,7 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 - 해시 대조는 **우발 실행·무심사 프로필 변경 방지**입니다. 저장소 쓰기 권한이 있는 행위자의 의도적 우회(래퍼·이 파일 자체 수정)는 막지 못합니다.
 - 해시는 두 파일만 덮습니다. 래퍼(`isolated-pytest.sh`)·가드(`tests/_isolation_guard.py`)·`tests/conftest.py` 변경은 감지하지 않습니다.
 - 그래서 실효 프로필을 만드는 해시 밖 래퍼 부분 — 프로필 렌더 치환(`@HERMES_SRC@`·`@HERMES_SRC_RE@`·`@ISO@`·`@P@`·`;;@DENY_PORT_RULES@`), `base_env` 의 env 허용목록·`PYTHONPATH`, `DENY_PORTS`, `PY_HOME`·`PY_EXE`·`HERMES_SRC`(읽기·exec 경로), 실행 인자(`PYTEST_ARGS`·`--run-attested` 허용 인자) — 가 바뀌면 `profile_sha256`·`iso_fs_sha256` 이 그대로여도 사람 G3 재확인((나)-0·(나)-2)이 필요합니다. 두 해시만으로는 그 변경을 검출하지 못합니다. 이 규칙은 문서 약속이며 자동 검사는 없습니다.
+- Issue #47 레인 B 의 `--run-live` 추가(새 모드·해시 게이트 적용 범위·live 전용 env 7개와 `*_FILE` 경로·고정 pytest 인자·`--preflight` 의 `run_live_selftest` 단계)는 이 규칙의 대상인 해시 밖 래퍼 변경입니다 — 사람 재확인 전에는 쓰지 않습니다.
 - 대조는 `_iso_fs.sh` 를 source 하기 전, `.isolation/` 을 건드리기 전에 합니다. EXIT 5 경로는 `--preflight` 가 `.isolation/tmp` 안 복사본을 바꿔 자기시험하고 `tests_isolation/test_attestation.py` 가 결과를 단언합니다(작업 트리 파일은 바꾸지 않음).
 
 ### 사람 실행 (나) 0–5 — 에이전트는 실행하지 않습니다

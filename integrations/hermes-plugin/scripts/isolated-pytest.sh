@@ -18,13 +18,22 @@
 #                    env·sandbox·가드는 --run 과 같은 run_tests 경로. 한계: 우발 실행·무심사 프로필 변경 방지일 뿐,
 #                    저장소 쓰기 권한이 있는 행위자의 의도적 우회(래퍼·가드·이 파일 자체 수정)는 막지 못한다 —
 #                    해시는 두 파일만 덮는다.
+#   --run-live       실서버 live 테스트(scripts/live-e2e.sh 가 부른다, Issue #47). 시작 게이트는 --run-attested 와 같은
+#                    G3 해시 대조(불일치 EXIT 5). 인자 0개(--confirm 포함 무엇이든 오면 EXIT 64). 래퍼 자기 env 에서
+#                    OHMYSLACK_LIVE_E2E=1, OHMYSLACK_BOT_URL·OHMYSLACK_LIVE_MAIN_URL·OHMYSLACK_LIVE_ORIGIN
+#                    (각각 정확히 http://127.0.0.1:<1024-65535>, DENY_PORTS 아님), OHMYSLACK_BOT_TOKEN·OHMYSLACK_LIVE_COOKIE·
+#                    OHMYSLACK_LIVE_CSRF(비어 있지 않은 한 줄)를 검증하고 위반이면 EXIT 64(사유만, 값은 출력하지 않음).
+#                    비밀 3개는 argv 에 싣지 않고 $ISO 아래 0600 새 파일(write_new, noclobber·symlink 거부)에 쓰고 sandbox env
+#                    에는 *_FILE 경로만 넘긴다. pytest 인자는 고정 `-q -m live tests/test_live_e2e.py tests/test_live_standalone.py`.
+#                    env·sandbox·가드는 run_tests 와 같다(허용목록 + PYTHONPATH + live 값 7개는 이 모드에서만).
 #   --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN
 #                    probe_outside 실행(사람 전용). TTY·확인 인자·/dev/tty 난수 왕복 입력 3중 장치.
 #                    이 장치의 효과는 「우발 실행 방지」뿐이다(I-2) — 의도적 우회(pty 래핑 등)는 막지 못하며,
 #                    그 경우는 BRIEF 금지와 에이전트 권한 deny 에 의존한다.
 #
 # 종료 코드: 0 PASS / 1 검사 실패 / 2 경로 검증 실패(I-1, 아무것도 지우지 않음) / 3 probe-guard PASS /
-#           5 사람 전용 모드 거부·G3 해시 대조 실패(--run-attested) / 6 sandbox-exec 없음·사용 불가 / 64 사용법 오류
+#           5 사람 전용 모드 거부·G3 해시 대조 실패(--run-attested·--run-live) / 6 sandbox-exec 없음·사용 불가 /
+#           64 사용법 오류(--run-live 의 인자·env 검증 실패 포함)
 set -euo pipefail
 
 SANDBOX_EXEC=/usr/bin/sandbox-exec
@@ -36,7 +45,9 @@ PY_HOME=/Users/younghwankang/.hermes/hermes-agent/.hermes-runtime/python/generat
 PY_EXE="$PY_HOME/bin/python3.11"
 HERMES_SRC="${PY_HOME%%/.hermes-runtime/*}"
 ISO_SUBDIRS=(home hermes-home tmp pycache canary-deny)
-ISO_FILES=(run-token outside-token profile.sb snapshot-pytest.sb snapshot-_iso_fs.sh)
+ISO_FILES=(run-token outside-token profile.sb snapshot-pytest.sb snapshot-_iso_fs.sh live-bot-token live-cookie live-csrf)
+# --run-live 비밀 파일(0600). 종료 때 cleanup 이 run-token 과 함께 지운다.
+LIVE_SECRET_FILES=(live-bot-token live-cookie live-csrf)
 
 die() { local code=$1; shift; printf 'isolated-pytest: %s\n' "$*" >&2; exit "$code"; }
 
@@ -104,7 +115,7 @@ attest_gate() {
 }
 # --run-attested: layout 검사·_iso_fs.sh 적재·.isolation 접근보다 먼저 대조한다(Codex 1차 P2-2: 프로필·helper
 # 누락도 EXIT 5). 그 밖 모드: 같은 스냅숏을 뜨되 대조 없이, 누락이면 layout 실패(EXIT 2).
-if [ "${1:-}" = --run-attested ]; then
+if [ "${1:-}" = --run-attested ] || [ "${1:-}" = --run-live ]; then
   attest_gate "$P/scripts"
 else
   take_snapshot "$P/scripts"
@@ -150,7 +161,7 @@ recreate_iso() {
 write_new() { local path=$1 content=$2; check_node "$path" 0; ( set -C; printf '%s\n' "$content" > "$path" ); check_node "$path" 1; }
 new_token() { od -An -tx1 -N16 /dev/urandom | tr -d ' \n'; }
 # 종료 때 토큰 파일만 지운다 — $ISO 가 그새 symlink 가 됐으면 아무것도 지우지 않는다(iso_rm_files).
-cleanup() { iso_rm_files "$ISO" run-token outside-token || printf 'isolated-pytest: cleanup skipped (ISO is not a plain directory): %s\n' "$ISO" >&2; }
+cleanup() { iso_rm_files "$ISO" run-token outside-token "${LIVE_SECRET_FILES[@]}" || printf 'isolated-pytest: cleanup skipped (ISO is not a plain directory): %s\n' "$ISO" >&2; }
 
 require_sandbox() {
   [ -x "$SANDBOX_EXEC" ] || die 6 "sandbox-exec not found at $SANDBOX_EXEC — refusing to run without sandbox"
@@ -295,11 +306,70 @@ attest_selftest() {
   done
 }
 
+# --run-live 거부 경로 자기시험(sandbox 밖 — sandbox 안에서는 bash 를 exec 할 수 없음, attest_selftest 와 같은 방식).
+# 래퍼 복사본을 $ISO/tmp 아래 가짜 P 에 두고(스냅숏 바이트 그대로 → 해시 게이트 통과) 사례마다 env -i 로 부른다.
+# 가짜 P 에는 .venv 가 없어 검증을 통과해도 require_sandbox 에서 EXIT 6 으로 멈춘다(실서버·sandbox·실제 .isolation 에
+# 닿지 않음). 비밀 자리에는 가짜 표지 값(OMS-SELFTEST-SECRET…)만 쓴다. 결과는 tests_isolation/test_run_live.py 가 단언.
+RUN_LIVE_CASES=(extra_arg confirm_arg empty_confirm url_malformed url_prod_8787 url_prod_8788 url_localhost url_any_host
+                url_https url_low_port url_port_over token_missing token_empty token_newline live_flag_missing
+                live_flag_not_1 main_url_prod origin_bad cookie_missing csrf_missing valid_env)
+run_live_selftest() {
+  local d="$ISO/tmp/run-live-selftest" dir c rc u=__UNSET__ s=OMS-SELFTEST-SECRET
+  local e2e url main origin token cookie csrf
+  local -a args envs
+  mkdir -- "$d" || die 1 "run-live selftest: mkdir failed: $d"
+  dir="$d/fake/integrations/hermes-plugin"; mkdir -p -- "$dir/scripts"
+  : > "$dir/pytest.ini"
+  printf '%s' "$PROFILE_SNAP" > "$dir/scripts/pytest.sb"; printf '%s' "$ISOFS_SNAP" > "$dir/scripts/_iso_fs.sh"
+  printf '%s' "$ATT_SNAP" > "$dir/scripts/G3-ATTESTATION"; cp -- "${BASH_SOURCE[0]}" "$dir/scripts/isolated-pytest.sh"
+  : > "$d/result"
+  for c in "${RUN_LIVE_CASES[@]}"; do
+    e2e=1 url=http://127.0.0.1:45678 main=http://127.0.0.1:45679 origin=http://127.0.0.1:45679
+    token="omsb_$s-token" cookie="__Host-oms_session=$s-cookie" csrf="$s-csrf"
+    args=()
+    case "$c" in
+      extra_arg) args=(-q) ;;
+      confirm_arg) args=(--confirm=G3-CLEARED-BY-HUMAN) ;;
+      empty_confirm) args=(--confirm=) ;;
+      url_malformed) url=http://127.0.0.1:45678/x ;;
+      url_prod_8787) url=http://127.0.0.1:8787 ;;
+      url_prod_8788) url=http://127.0.0.1:8788 ;;
+      url_localhost) url=http://localhost:45678 ;;
+      url_any_host) url=http://0.0.0.0:45678 ;;
+      url_https) url=https://127.0.0.1:45678 ;;
+      url_low_port) url=http://127.0.0.1:80 ;;
+      url_port_over) url=http://127.0.0.1:65536 ;;
+      token_missing) token=$u ;;
+      token_empty) token="" ;;
+      token_newline) token="omsb_$s-a"$'\n'"b" ;;
+      live_flag_missing) e2e=$u ;;
+      live_flag_not_1) e2e=true ;;
+      main_url_prod) main=http://127.0.0.1:8787 ;;
+      origin_bad) origin=http://localhost:45679 ;;
+      cookie_missing) cookie=$u ;;
+      csrf_missing) csrf=$u ;;
+      valid_env) ;;
+    esac
+    envs=(PATH=/usr/bin:/bin)
+    [ "$e2e" = "$u" ] || envs+=(OHMYSLACK_LIVE_E2E="$e2e")
+    [ "$url" = "$u" ] || envs+=(OHMYSLACK_BOT_URL="$url")
+    [ "$main" = "$u" ] || envs+=(OHMYSLACK_LIVE_MAIN_URL="$main")
+    [ "$origin" = "$u" ] || envs+=(OHMYSLACK_LIVE_ORIGIN="$origin")
+    [ "$token" = "$u" ] || envs+=(OHMYSLACK_BOT_TOKEN="$token")
+    [ "$cookie" = "$u" ] || envs+=(OHMYSLACK_LIVE_COOKIE="$cookie")
+    [ "$csrf" = "$u" ] || envs+=(OHMYSLACK_LIVE_CSRF="$csrf")
+    rc=0; /usr/bin/env -i "${envs[@]}" /bin/bash "$dir/scripts/isolated-pytest.sh" --run-live ${args[@]+"${args[@]}"} \
+      > "$d/$c.out" 2> "$d/$c.err" < /dev/null || rc=$?
+    printf '%s=%s\n' "$c" "$rc" >> "$d/result"
+  done
+}
+
 mode_preflight() {
   local label
   base_env
   SB_FATAL=0
   attest_selftest
+  run_live_selftest
   sandboxed preflight-tests_isolation "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" tests_isolation -q
   preflight_stop_if_fatal preflight-tests_isolation
   [ "$SB_RC" = 0 ] || preflight_fail "tests_isolation rc=$SB_RC"
@@ -389,6 +459,65 @@ check_attested_args() {
   done
 }
 
+# ---- --run-live (Issue #47 레인 B). 해시 대조는 스크립트 앞부분(attest_gate)에서 이미 끝났다.
+# 인자 0개 — CONFIRM·EXTRA_ARGS 가 아니라 원래 인자 수(NARGS)로 본다(`--confirm=` 빈 값도 거부).
+check_live_args() { [ "$NARGS" = 0 ] || die 64 "--run-live takes no arguments (no --confirm, no pytest args)"; }
+LIVE_URL_RE='^http://127\.0\.0\.1:([1-9][0-9]{3,4})$'
+live_url_ok() {              # $1 = 값. 정확히 http://127.0.0.1:<1024-65535>, DENY_PORTS 아님
+  local port
+  [[ "$1" =~ $LIVE_URL_RE ]] || return 1
+  port=${BASH_REMATCH[1]}
+  [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || return 1
+  case " ${DENY_PORTS[*]} " in *" $port "*) return 1 ;; esac
+  return 0
+}
+live_secret_ok() {           # $1 = 값. 비어 있지 않은 한 줄(CR·LF 없음 — 헤더 주입·파일 줄 경계 방지)
+  [ -n "$1" ] || return 1
+  case "$1" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  return 0
+}
+# 래퍼 자기 env 검증. 위반이면 EXIT 64 + 사유(변수 이름)만 — 값은 어디에도 출력하지 않는다.
+# 통과하면 값을 export 안 된 셸 변수로 옮기고 비밀 env 는 unset(래퍼가 부르는 od·find 등 자식에 상속 안 됨).
+check_live_env() {
+  local url_rule="must be exactly http://127.0.0.1:<1024-65535> and not an operating port (${DENY_PORTS[*]}) — value not shown"
+  local secret_rule="must be a non-empty single line — value not shown"
+  [ "${OHMYSLACK_LIVE_E2E-}" = 1 ] || die 64 "--run-live: OHMYSLACK_LIVE_E2E must be 1"
+  live_url_ok "${OHMYSLACK_BOT_URL-}" || die 64 "--run-live: OHMYSLACK_BOT_URL $url_rule"
+  live_url_ok "${OHMYSLACK_LIVE_MAIN_URL-}" || die 64 "--run-live: OHMYSLACK_LIVE_MAIN_URL $url_rule"
+  live_url_ok "${OHMYSLACK_LIVE_ORIGIN-}" || die 64 "--run-live: OHMYSLACK_LIVE_ORIGIN $url_rule"
+  live_secret_ok "${OHMYSLACK_BOT_TOKEN-}" || die 64 "--run-live: OHMYSLACK_BOT_TOKEN $secret_rule"
+  live_secret_ok "${OHMYSLACK_LIVE_COOKIE-}" || die 64 "--run-live: OHMYSLACK_LIVE_COOKIE $secret_rule"
+  live_secret_ok "${OHMYSLACK_LIVE_CSRF-}" || die 64 "--run-live: OHMYSLACK_LIVE_CSRF $secret_rule"
+  unset LIVE_BOT_URL LIVE_MAIN_URL LIVE_ORIGIN LIVE_BOT_TOKEN LIVE_COOKIE LIVE_CSRF   # 호출자가 export 해 둔 같은 이름 제거
+  LIVE_BOT_URL=$OHMYSLACK_BOT_URL LIVE_MAIN_URL=$OHMYSLACK_LIVE_MAIN_URL LIVE_ORIGIN=$OHMYSLACK_LIVE_ORIGIN
+  LIVE_BOT_TOKEN=$OHMYSLACK_BOT_TOKEN LIVE_COOKIE=$OHMYSLACK_LIVE_COOKIE LIVE_CSRF=$OHMYSLACK_LIVE_CSRF
+  unset OHMYSLACK_BOT_TOKEN OHMYSLACK_LIVE_COOKIE OHMYSLACK_LIVE_CSRF
+}
+# 0600 새 파일: umask 077 + write_new(check_node symlink 거부·noclobber 새 파일만). 값은 printf 내장으로만 쓴다(argv 아님).
+# 서브셸로 감싸지 않는다 — `( … ) || die` 안에서는 set -e 가 꺼져 noclobber 실패가 묻힐 수 있다.
+write_secret() {
+  local old_umask; old_umask="$(umask)"
+  umask 077
+  write_new "$1" "$2"
+  umask "$old_umask"
+  [ "$(/usr/bin/stat -f %Lp "$1")" = 600 ] || die 2 "secret file is not mode 0600: $1"
+}
+mode_run_live() {
+  write_secret "$ISO/live-bot-token" "$LIVE_BOT_TOKEN"
+  write_secret "$ISO/live-cookie" "$LIVE_COOKIE"
+  write_secret "$ISO/live-csrf" "$LIVE_CSRF"
+  LIVE_BOT_TOKEN="" LIVE_COOKIE="" LIVE_CSRF=""
+  # run_tests 와 같은 env(base_env + PYTHONPATH)에 live 값만 더한다 — 비밀은 *_FILE 경로만(env -i 의 argv 에 값 없음).
+  base_env; ENV_ARGS+=(PYTHONPATH="$HERMES_SRC" OHMYSLACK_LIVE_E2E=1 OHMYSLACK_BOT_URL="$LIVE_BOT_URL"
+                       OHMYSLACK_LIVE_MAIN_URL="$LIVE_MAIN_URL" OHMYSLACK_LIVE_ORIGIN="$LIVE_ORIGIN"
+                       OHMYSLACK_BOT_TOKEN_FILE="$ISO/live-bot-token" OHMYSLACK_LIVE_COOKIE_FILE="$ISO/live-cookie"
+                       OHMYSLACK_LIVE_CSRF_FILE="$ISO/live-csrf")
+  SB_FATAL=0
+  sandboxed run-live "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" -q -m live tests/test_live_e2e.py tests/test_live_standalone.py
+  [ "$SB_FATAL" = 0 ] || die 6 "sandbox-exec failed"
+  exit "$SB_RC"
+}
+
 mode_prove_outside() {
   require_human "OUTSIDE-PROBE-BY-HUMAN"
   local port=$(( (RANDOM % 30000) + 20000 ))
@@ -408,6 +537,7 @@ mode_prove_outside() {
 
 # ---- 인자
 MODE="${1:-}"; [ $# -gt 0 ] && shift
+NARGS=$#                     # 모드 뒤 원래 인자 수(--run-live 인자 0개 검사용)
 CONFIRM=""; EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in --confirm=*) CONFIRM="${1#--confirm=}" ;; *) EXTRA_ARGS+=("$1") ;; esac
@@ -415,10 +545,11 @@ while [ $# -gt 0 ]; do
 done
 REAL_HOME="${HOME:-}"
 case "$MODE" in
-  --preflight|--probe-guard|--run|--run-attested|--prove-outside) ;;
-  *) die 64 "usage: $0 --preflight | --probe-guard | --run --confirm=G3-CLEARED-BY-HUMAN [args] | --run-attested [-q] [-x] [-k <expr>] | --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN" ;;
+  --preflight|--probe-guard|--run|--run-attested|--run-live|--prove-outside) ;;
+  *) die 64 "usage: $0 --preflight | --probe-guard | --run --confirm=G3-CLEARED-BY-HUMAN [args] | --run-attested [-q] [-x] [-k <expr>] | --run-live (no args; live env) | --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN" ;;
 esac
 if [ "$MODE" = --run-attested ]; then check_attested_args
+elif [ "$MODE" = --run-live ]; then check_live_args; check_live_env
 elif [ "$MODE" != --run ] && [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then die 64 "extra arguments are only accepted with --run or --run-attested"; fi
 
 require_sandbox
@@ -434,5 +565,6 @@ case "$MODE" in
   --probe-guard) mode_probe_guard ;;
   --run) mode_run ;;
   --run-attested) mode_run_attested ;;
+  --run-live) mode_run_live ;;
   --prove-outside) mode_prove_outside ;;
 esac

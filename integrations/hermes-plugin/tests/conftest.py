@@ -286,9 +286,14 @@ class FakeBotServer:
             return web.json_response({"error": "forbidden" if status == 403 else "error"}, status=status,
                                      headers=headers)
         cid = request.match_info["cid"]
+        body = payload.get("body")
+        # shared/messages.ts:15-18 bodySchema 중 body 필드만 근사 — 실서버는 스키마 전체(client_message_id UUID·strict 등)가
+        # 깨져도 루트 판정을 생략한다. 플러그인은 항상 유효한 키·필드만 보내므로 body 근사로 충분하다.
+        body_ok = isinstance(body, str) and bool(body.strip())
         # 루트 가시성(S/bots/routes.ts:190-208 threadRootGuard, :314) — rateGuard·replay 판정보다 먼저 404.
+        # 실서버는 본문 스키마가 통과할 때만 루트를 본다(:191-193) — 형식 오류 본문은 아래 400(#47 실서버 대조).
         root = payload.get("thread_root_id")
-        if root is not None and not self._visible_in(cid, root):
+        if root is not None and body_ok and not self._visible_in(cid, root):
             self.posts.append({**payload, "_status": 404, "conversation_id": cid})
             return web.json_response({"error": "not_found"}, status=404)
         ok_so_far = sum(1 for p in self.posts if p["_status"] == 200)
@@ -296,8 +301,7 @@ class FakeBotServer:
             self.post_429 = max(0, self.post_429 - 1)
             self.posts.append({**payload, "_status": 429})
             return web.json_response({"error": "rate_limited"}, status=429, headers={"Retry-After": "1"})
-        body = payload.get("body")
-        if not isinstance(body, str) or not body.strip():  # shared/messages.ts:15-18 bodySchema → S/messages/routes.ts:35
+        if not body_ok:  # S/messages/routes.ts:35
             self.posts.append({**payload, "_status": 400, "conversation_id": cid})
             return web.json_response({"error": "invalid_request"}, status=400)
         resp = self._store_or_replay(cid, payload)

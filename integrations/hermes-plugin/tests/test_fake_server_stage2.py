@@ -90,6 +90,16 @@ async def test_fake_conflict_on_payload_change(server):
     assert len(_stored(server, key)) == 1
 
 
+async def test_fake_blank_body_skips_root_check_and_is_400(server):
+    """실서버(S/bots/routes.ts:190-195)처럼 본문 스키마가 깨지면 루트 가시성을 보지 않고 400 — #47 실서버 대조."""
+    hidden = _seed_root(server)
+    server.hidden_message_ids.add(hidden)
+    for root in (str(uuid.uuid4()), hidden):
+        for blank in ("", "  \n"):
+            st, body = await _post(server, _payload(str(uuid.uuid4()), blank, thread_root_id=root))
+            assert (st, json.loads(body)) == (400, {"error": "invalid_request"}), (root, blank)
+
+
 async def test_fake_missing_or_hidden_root_is_404_before_replay(server):
     key = str(uuid.uuid4())
     assert (await _post(server, _payload(key, "a")))[0] == 201

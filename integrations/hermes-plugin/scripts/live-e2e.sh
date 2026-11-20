@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # 실서버 live E2E(TRD R3.3 §5-2, ADR-001): 실행 스키마 → migrate → owner → 봇·토큰 → 서버(PORT+BOT_PORT) →
-# owner 로그인 → pytest -m live → 서버 종료·스키마 삭제(trap).
+# owner 로그인 → 격리 래퍼 `isolated-pytest.sh --run-live`(sandbox 안 pytest -m live) → 서버 종료·스키마 삭제(trap).
 #
 # 전제: 저장소 루트에서 `pnpm install` 완료, `.env.test`에 TEST_DATABASE_URL(루프백·`_test` DB, 쿼리 없음).
 #       호출자가 `set -a; . ./.env.test; set +a`로 미리 로드해도 되고, 없으면 이 스크립트가 같은 방식으로 로드한다.
+#       `--run-live`는 `--run-attested`와 같은 G3 해시 게이트를 거친다(불일치면 EXIT 5, 아무것도 안 돌림).
 # 비밀(토큰·비밀번호·쿠키·CSRF)은 출력하지 않고 argv에도 싣지 않는다(env·0600 파일만).
-# 선택 env: HERMES_AGENT_DIR(기본 ~/.hermes/hermes-agent — import 전용), PYTHON(기본 플러그인 .venv/bin/python).
+# 선택 env: PYTHON(기본 플러그인 .venv/bin/python — 포트·비밀번호 생성 보조용. 테스트 인터프리터·Hermes 경로는 래퍼가 고정).
 set -euo pipefail
 
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,7 +25,6 @@ for v in $(env | sed -n 's/^\(PG[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
 
 TSX="$ROOT/node_modules/.bin/tsx"
 [ -x "$TSX" ] || die "tsx 없음 — 저장소 루트에서 pnpm install"
-HERMES_AGENT_DIR="${HERMES_AGENT_DIR:-$HOME/.hermes/hermes-agent}"
 PYTHON="${PYTHON:-$PLUGIN/.venv/bin/python}"
 [ -x "$PYTHON" ] || die "python 없음: PYTHON 지정 또는 $PLUGIN/.venv 생성"
 command -v curl >/dev/null || die "curl 없음"
@@ -92,17 +92,18 @@ OWNER_EMAIL="$OWNER_EMAIL" OWNER_PW="$OWNER_PW" "$PYTHON" -c \
 curl -s -o "$WORK/login.json" -D "$WORK/login.h" -w '%{http_code}' -H "origin: $MAIN_URL" \
   -H 'content-type: application/json' --data @"$WORK/cred.json" "$MAIN_URL/api/auth/login" >"$WORK/login.status"
 [ "$(cat "$WORK/login.status")" = 200 ] || die "owner 로그인 실패(HTTP $(cat "$WORK/login.status"))"
-OHMYSLACK_LIVE_COOKIE="$(tr -d '\r' <"$WORK/login.h" | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-oms_session=[^;]*\).*/\1/p' | head -n 1)"
-[ -n "$OHMYSLACK_LIVE_COOKIE" ] || die "세션 쿠키 없음"
-OHMYSLACK_LIVE_CSRF="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["csrf_token"])' "$WORK/login.json")"
+LIVE_COOKIE="$(tr -d '\r' <"$WORK/login.h" | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-oms_session=[^;]*\).*/\1/p' | head -n 1)"
+[ -n "$LIVE_COOKIE" ] || die "세션 쿠키 없음"
+LIVE_CSRF="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["csrf_token"])' "$WORK/login.json")"
 
-# 5) pytest -m live — 비밀은 env로만 전달, 송신 명령 문자열에는 비밀이 없다.
-export OHMYSLACK_LIVE_COOKIE OHMYSLACK_LIVE_CSRF
-export OHMYSLACK_LIVE_MAIN_URL="$MAIN_URL" OHMYSLACK_LIVE_ORIGIN="$MAIN_URL"
-export OHMYSLACK_LIVE_OWNER_SEND="\"$PYTHON\" \"$PLUGIN/scripts/live_owner_send.py\""
-export OHMYSLACK_LIVE_E2E=1 OHMYSLACK_BOT_URL="http://127.0.0.1:$BOT_PORT" OHMYSLACK_BOT_TOKEN="$BOT_TOKEN"
+# 5) 격리 래퍼 --run-live(sandbox 안 pytest -m live, 고정 인자). live env는 이 한 호출에만 붙인다(export 없음 —
+#    `이름=값 명령` 은 그 자식 env 일 뿐 argv 가 아니다). 래퍼가 값을 검증(위반 EXIT 64, 값 비공개)하고 비밀 3개를
+#    `.isolation/` 아래 0600 파일로 옮겨 sandbox 에는 경로만 넘긴다. owner 송신은 테스트 프로세스 안 HTTP 요청.
 set +e
-(cd "$PLUGIN" && PYTHONPATH="$HERMES_AGENT_DIR" "$PYTHON" -m pytest -m live -q -p no:cacheprovider tests/test_live_e2e.py)
+OHMYSLACK_LIVE_E2E=1 OHMYSLACK_BOT_URL="http://127.0.0.1:$BOT_PORT" OHMYSLACK_BOT_TOKEN="$BOT_TOKEN" \
+  OHMYSLACK_LIVE_MAIN_URL="$MAIN_URL" OHMYSLACK_LIVE_ORIGIN="$MAIN_URL" \
+  OHMYSLACK_LIVE_COOKIE="$LIVE_COOKIE" OHMYSLACK_LIVE_CSRF="$LIVE_CSRF" \
+  bash "$PLUGIN/scripts/isolated-pytest.sh" --run-live
 RESULT=$?
 set -e
 [ "$RESULT" = 0 ] || tail -n 20 "$WORK/server.log" >&2
