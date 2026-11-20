@@ -647,3 +647,33 @@ async def test_dm_long_split_stays_consecutive_top_level(server, make_adapter, m
     assert (await adapter.send(DM_ID, _long_body())).success is True
     ok = _posts_ok(server)
     assert len(ok) >= 3 and all(p.get("thread_root_id") is None for p in ok)
+
+
+async def test_post_channels_standalone_lost_reply_chunk_ack_reports_delivery_unknown(server, monkeypatch):
+    """PR #37 병합: allowlist 채널 fold 청크 1의 응답 유실(저장 후 본문 잘림) → 확인 GET은 최상위만 보므로 생략,
+    청크 1은 ambiguous로 남아 `success` + `partial_delivery 1/2` + `delivery_unknown chunk 2`(성공으로 숨기지 않음)."""
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    orig = server._store_or_replay
+    calls = {"n": 0}
+
+    def lose_second_ack(cid, payload):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            server.post_body_fault_after_commit = ["short_body"]  # 저장은 되고 응답만 잘림(ClientPayloadError, 재시도 없음)
+        return orig(cid, payload)
+    server._store_or_replay = lose_second_ack
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, "가" * 4500)
+    assert "error" not in out and out.get("success") is True
+    assert "text: partial_delivery 1/2" in out["warnings"]
+    assert "text: delivery_unknown chunk 2" in out["warnings"]
+    assert "media_delivered" not in out
+    assert server.history_calls == 0  # 스레드 답글 청크는 이력 GET으로 확인할 수 없다
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) == 2 and len(ids) == 2  # 서버에는 둘 다 저장됨 — 클라이언트만 청크 1을 모른다
+    assert ok[0].get("thread_root_id") is None and ok[1]["thread_root_id"] == ids[0]
+    assert out["message_id"] == ids[0]

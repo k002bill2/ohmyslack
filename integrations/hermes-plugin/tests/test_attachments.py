@@ -51,6 +51,7 @@ async def test_send_image_png_without_caption_uses_file_name_and_thread(server, 
     adapter = await _connected(make_adapter)
     root = str(uuid.uuid4())
     path = _write(tmp_path, "chart.png", PNG)
+    server.add(make_message(mid=root))  # 봇에게 보이는 루트(P2-3)
     res = await adapter.send_image_file(DM_ID, path, metadata={"thread_id": root})
     assert res.success
     assert [u["content_type"] for u in server.uploads] == ["image/png"]

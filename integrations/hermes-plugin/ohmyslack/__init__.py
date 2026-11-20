@@ -49,7 +49,11 @@ def platform_kwargs() -> Dict[str, Any]:
         required_env=[TOKEN_ENV],
         install_hint="pip install aiohttp",
         standalone_sender_fn=standalone_send,
-        max_message_length=OhmySlackAdapter.MAX_MESSAGE_LENGTH,
+        # 0 = Hermes가 standalone 전송을 쪼개지 않는다(단일 호출 계약): 원문 전체·첨부 전체가 sender 1회 호출에 실리고,
+        # 길이 통제(4000 code point 청크)·첨부 첫 청크 결속은 어댑터 내부 `OhmySlackAdapter.MAX_MESSAGE_LENGTH`가 한다.
+        # Hermes에서 이 등록값을 읽는 곳은 `tools/send_message_tool.py` `_platform_max_length` 하나뿐이다 — 라이브
+        # 어댑터 경로는 어댑터의 MAX_MESSAGE_LENGTH로 직접 나누므로 게시 형태가 같다.
+        max_message_length=0,
         cron_deliver_env_var=HOME_CHANNEL_ENV,
         allowed_users_env=ALLOWED_USERS_ENV,
         env_enablement_fn=_env_enablement,

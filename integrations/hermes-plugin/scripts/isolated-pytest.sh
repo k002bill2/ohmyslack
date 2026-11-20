@@ -10,13 +10,21 @@
 #                    PYTHONPYCACHEPREFIX·PYTHONPATH)만 뺀 `pytest tests --collect-only`. 가드 표지 + rc 3 이면 EXIT 3(PASS).
 #   --run --confirm=G3-CLEARED-BY-HUMAN [pytest 인자]
 #                    P/tests 실행(사람 전용, G3 = (나) 0–5 확인 뒤). TTY 필수.
+#   --run-attested [-q] [-x] [-k <expr>]
+#                    P/tests 실행(레인·에이전트용, TTY·난수 입력 없음). 시작 전에 scripts/pytest.sb·scripts/_iso_fs.sh 의
+#                    sha256 을 scripts/G3-ATTESTATION(사람 G3 확인 기록)과 대조하고, 없음(두 파일 포함)·형식 오류·불일치면
+#                    아무것도 하지 않고(layout 검사·_iso_fs.sh 적재·.isolation 재생성 전) EXIT 5 + `re-attestation by human required`.
+#                    세 파일은 한 번만 읽어 메모리 스냅숏으로 대조·적재·렌더한다(검사한 바이트 = 쓰는 바이트).
+#                    env·sandbox·가드는 --run 과 같은 run_tests 경로. 한계: 우발 실행·무심사 프로필 변경 방지일 뿐,
+#                    저장소 쓰기 권한이 있는 행위자의 의도적 우회(래퍼·가드·이 파일 자체 수정)는 막지 못한다 —
+#                    해시는 두 파일만 덮는다.
 #   --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN
 #                    probe_outside 실행(사람 전용). TTY·확인 인자·/dev/tty 난수 왕복 입력 3중 장치.
 #                    이 장치의 효과는 「우발 실행 방지」뿐이다(I-2) — 의도적 우회(pty 래핑 등)는 막지 못하며,
 #                    그 경우는 BRIEF 금지와 에이전트 권한 deny 에 의존한다.
 #
 # 종료 코드: 0 PASS / 1 검사 실패 / 2 경로 검증 실패(I-1, 아무것도 지우지 않음) / 3 probe-guard PASS /
-#           5 사람 전용 모드 거부 / 6 sandbox-exec 없음·사용 불가 / 64 사용법 오류
+#           5 사람 전용 모드 거부·G3 해시 대조 실패(--run-attested) / 6 sandbox-exec 없음·사용 불가 / 64 사용법 오류
 set -euo pipefail
 
 SANDBOX_EXEC=/usr/bin/sandbox-exec
@@ -28,7 +36,7 @@ PY_HOME=/Users/younghwankang/.hermes/hermes-agent/.hermes-runtime/python/generat
 PY_EXE="$PY_HOME/bin/python3.11"
 HERMES_SRC="${PY_HOME%%/.hermes-runtime/*}"
 ISO_SUBDIRS=(home hermes-home tmp pycache canary-deny)
-ISO_FILES=(run-token outside-token profile.sb)
+ISO_FILES=(run-token outside-token profile.sb snapshot-pytest.sb snapshot-_iso_fs.sh)
 
 die() { local code=$1; shift; printf 'isolated-pytest: %s\n' "$*" >&2; exit "$code"; }
 
@@ -38,11 +46,74 @@ P_LOGICAL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -L)"
 P="$($REALPATH "$P_LOGICAL")"
 [ "$P" = "$P_LOGICAL" ] || die 2 "P path has symlink components: $P_LOGICAL -> $P"
 case "$P" in */integrations/hermes-plugin) ;; *) die 2 "unexpected P: $P" ;; esac
-[ -f "$P/pytest.ini" ] && [ -f "$P/scripts/pytest.sb" ] || die 2 "P layout mismatch: $P"
 ISO="$P/.isolation"
 VENV_PY="$P/.venv/bin/python"
-# shellcheck source=_iso_fs.sh
-. "$P/scripts/_iso_fs.sh"
+
+# ---- 스냅숏(Codex 1차 P2-1): pytest.sb·_iso_fs.sh·G3-ATTESTATION 원본은 여기서 한 번씩만 연다. 이후 해시 대조·
+# _iso_fs.sh 적재(eval)·프로필 렌더는 모두 이 메모리 스냅숏(같은 바이트)을 쓰고, recreate_iso 뒤 $ISO 에 복사본을
+# 남긴다(SNAP_COPIES). $ISO 를 먼저 만들 수 없는 이유: $ISO 재생성(iso_wipe)이 검증 전 _iso_fs.sh 를 필요로 한다.
+# here-string·heredoc 금지(bash 3.2 는 $TMPDIR·/tmp 임시 파일을 쓴다) — 입력은 printf 파이프로만.
+SHASUM=/usr/bin/shasum
+ATTEST_KEYS=(profile_sha256 iso_fs_sha256 attested_at evidence main_commit)
+# $1 = 경로. 정규 파일(symlink 아님)만, 끝 줄바꿈까지 그대로 SNAP 에. 실패면 1(빈 스냅숏을 조용히 쓰지 않음).
+snap_read() {
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  SNAP="$(cat -- "$1" && printf x)" || return 1
+  SNAP="${SNAP%x}"
+}
+# $1 = 세 파일이 있는 디렉터리 → ATT_SNAP·PROFILE_SNAP·ISOFS_SNAP(없으면 *_OK=0).
+take_snapshot() {
+  ATT_OK=1 PROFILE_OK=1 ISOFS_OK=1 ATT_SNAP="" PROFILE_SNAP="" ISOFS_SNAP=""
+  if snap_read "$1/G3-ATTESTATION"; then ATT_SNAP=$SNAP; else ATT_OK=0; fi
+  if snap_read "$1/pytest.sb"; then PROFILE_SNAP=$SNAP; else PROFILE_OK=0; fi
+  if snap_read "$1/_iso_fs.sh"; then ISOFS_SNAP=$SNAP; else ISOFS_OK=0; fi
+}
+sha256_text() { printf '%s' "$1" | "$SHASUM" -a 256 | cut -d' ' -f1; }
+att_lines() { printf '%s\n' "$ATT_SNAP"; }
+attest_value() { att_lines | sed -n "s/^$1=//p"; }
+# 스냅숏 대조. 0 = 일치, 5 = 없음·형식 오류·불일치(사유 stderr). ATTESTATION 은 source 하지 않고 키별로 grep 한다.
+attest_verify_snapshot() {
+  local key n v
+  [ "$ATT_OK" = 1 ] || { echo "attestation: G3-ATTESTATION missing or not a regular file" >&2; return 5; }
+  [ "$PROFILE_OK" = 1 ] || { echo "attestation: scripts/pytest.sb missing or not a regular file" >&2; return 5; }
+  [ "$ISOFS_OK" = 1 ] || { echo "attestation: scripts/_iso_fs.sh missing or not a regular file" >&2; return 5; }
+  # -q 를 쓰지 않는다(조기 종료 SIGPIPE 가 pipefail 로 「문제 없음」처럼 보이는 것 방지).
+  v="$(att_lines | grep -v -E '^(#.*)?$' | grep -v -E '^(profile_sha256|iso_fs_sha256|attested_at|evidence|main_commit)=' || true)"
+  [ -z "$v" ] || { echo "attestation: unknown or malformed line" >&2; return 5; }
+  for key in "${ATTEST_KEYS[@]}"; do
+    n="$(att_lines | grep -c -E "^$key=" || true)"
+    [ "$n" = 1 ] || { echo "attestation: $key must appear exactly once (found $n)" >&2; return 5; }
+  done
+  for key in profile_sha256 iso_fs_sha256; do
+    v="$(attest_value "$key")"
+    [[ "$v" =~ ^[0-9a-f]{64}$ ]] || { echo "attestation: $key is not 64 lowercase hex" >&2; return 5; }
+  done
+  [[ "$(attest_value attested_at)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "attestation: attested_at is not YYYY-MM-DD" >&2; return 5; }
+  [[ "$(attest_value main_commit)" =~ ^[0-9a-f]{7,40}$ ]] || { echo "attestation: main_commit is not a commit id" >&2; return 5; }
+  [ -n "$(attest_value evidence)" ] || { echo "attestation: evidence is empty" >&2; return 5; }
+  [ "$(sha256_text "$PROFILE_SNAP")" = "$(attest_value profile_sha256)" ] \
+    || { echo "attestation: scripts/pytest.sb sha256 differs from G3-ATTESTATION" >&2; return 5; }
+  [ "$(sha256_text "$ISOFS_SNAP")" = "$(attest_value iso_fs_sha256)" ] \
+    || { echo "attestation: scripts/_iso_fs.sh sha256 differs from G3-ATTESTATION" >&2; return 5; }
+  return 0
+}
+# $1 = 디렉터리. 스냅숏을 뜨고(전역 *_SNAP 갱신) 대조한다. 실패면 EXIT 5.
+attest_gate() {
+  take_snapshot "$1"
+  attest_verify_snapshot || die 5 "G3 attestation check failed — re-attestation by human required (nothing was run)"
+}
+# --run-attested: layout 검사·_iso_fs.sh 적재·.isolation 접근보다 먼저 대조한다(Codex 1차 P2-2: 프로필·helper
+# 누락도 EXIT 5). 그 밖 모드: 같은 스냅숏을 뜨되 대조 없이, 누락이면 layout 실패(EXIT 2).
+if [ "${1:-}" = --run-attested ]; then
+  attest_gate "$P/scripts"
+else
+  take_snapshot "$P/scripts"
+  [ "$PROFILE_OK" = 1 ] && [ "$ISOFS_OK" = 1 ] || die 2 "P layout mismatch: $P"
+fi
+[ -f "$P/pytest.ini" ] || die 2 "P layout mismatch: $P"
+
+# 검증한(또는 --run-attested 아닌 모드에서 떠 둔) 스냅숏 바이트를 그대로 적재 — 원본 _iso_fs.sh 를 다시 열지 않는다.
+eval "$ISOFS_SNAP"
 case "$PY_HOME$HERMES_SRC$P" in *'"'*|*'|'*|*$'\n'*) die 2 "path contains a forbidden character" ;; esac
 
 # ---- I-1: $ISO 와 각 하위가 symlink 가 아니고 realpath 가 기대값인지 (require=1 이면 존재도 요구)
@@ -93,12 +164,20 @@ require_sandbox() {
   case "$PY_HOME_REAL" in "${PY_HOME%/*}"/*) ;; *) die 6 "interpreter real path left the generation dir: $PY_EXE_REAL" ;; esac
 }
 
-render_profile() {           # $1 = 추가 거부 포트(선택)
-  local extra=${1:-} ports=("${DENY_PORTS[@]}") line port out src_re
+# 스냅숏 복사본을 $ISO 에 남긴다(바이트 그대로, noclobber). 렌더·적재는 메모리 스냅숏을 쓰므로 이 파일은 증거용이다.
+write_snapshot_copies() {
+  local name
+  for name in snapshot-pytest.sb snapshot-_iso_fs.sh; do check_node "$ISO/$name" 0; done
+  ( set -C; printf '%s' "$PROFILE_SNAP" > "$ISO/snapshot-pytest.sb"; printf '%s' "$ISOFS_SNAP" > "$ISO/snapshot-_iso_fs.sh" )
+  for name in snapshot-pytest.sb snapshot-_iso_fs.sh; do check_node "$ISO/$name" 1; done
+}
+
+# $1 = 추가 거부 포트(선택). 입력 = PROFILE_SNAP(원본 pytest.sb 를 다시 열지 않는다, P2-1). 결과는 stdout.
+render_profile_text() {
+  local extra=${1:-} ports=("${DENY_PORTS[@]}") line port src_re
   src_re="$(printf '%s' "$HERMES_SRC" | sed 's/[][\.^$*+?(){}|]/\\&/g')"
   [ -n "$extra" ] && ports+=("$extra")
-  out="$(
-    while IFS= read -r line || [ -n "$line" ]; do
+  printf '%s' "$PROFILE_SNAP" | while IFS= read -r line || [ -n "$line" ]; do
       if [ "$line" = ';;@DENY_PORT_RULES@' ]; then
         for port in "${ports[@]}"; do
           printf '(deny network-outbound (remote ip "localhost:%s"))\n' "$port"
@@ -108,8 +187,12 @@ render_profile() {           # $1 = 추가 거부 포트(선택)
         line=${line//@HERMES_SRC_RE@/$src_re}; line=${line//@HERMES_SRC@/$HERMES_SRC}; line=${line//@ISO@/$ISO}; line=${line//@P@/$P}
         printf '%s\n' "$line"
       fi
-    done < "$P/scripts/pytest.sb"
-  )"
+    done
+}
+
+render_profile() {           # $1 = 추가 거부 포트(선택)
+  local out
+  out="$(render_profile_text "${1:-}")"
   if printf '%s\n' "$out" | grep -q '@[A-Z_]*@'; then die 1 "unrendered placeholder in profile"; fi
   write_new "$ISO/profile.sb" "$out"
 }
@@ -152,10 +235,71 @@ preflight_stop_if_fatal() {
 }
 preflight_fail() { echo "PREFLIGHT FAIL: $*"; echo "PREFLIGHT STOPPED: no further collection after the first failure"; exit 1; }
 
+# --run-attested 해시 대조 자기시험(sandbox 밖, sandbox 안에서는 bash·shasum 을 exec 할 수 없음).
+# $ISO/tmp 안 복사본만 바꾼다(작업 트리 파일 불변). 결과는 tests_isolation/test_attestation.py 가 sandbox 안에서 단언.
+# 사례마다 복사본 디렉터리 하나: 메모리 스냅숏 → 변형 → 실제 attest_gate(서브셸) 종료 코드·stderr 기록(Codex 1차 P3-2).
+ATTEST_CASES=(unmodified eof_with_newline eof_without_newline comment_and_blank profile_modified iso_fs_modified leading_space spaced_equals trailing_space
+              duplicate_key missing_key value_mismatch missing_profile missing_iso_fs missing_attestation)
+attest_case_mutate() {       # $1 = 사례, $2 = 디렉터리(세 파일 복사본). 변형은 printf·grep 리다이렉트만(임시 파일 없음).
+  local c=$1 d=$2 a="$2/G3-ATTESTATION" old
+  old="$(cat -- "$a")"
+  case "$c" in
+    unmodified) ;;
+    eof_with_newline) printf '%s\n' "$old" > "$a" ;;      # 마지막 줄 뒤 개행 있음(실파일과 달리 명시)
+    eof_without_newline) printf '%s' "$old" > "$a" ;;    # 마지막 줄 뒤 개행 없음(실파일 G3-ATTESTATION 형태)
+    comment_and_blank) printf '\n# 사람 메모\n\n' >> "$a" ;;
+    profile_modified) printf ' ' >> "$d/pytest.sb" ;;
+    iso_fs_modified) printf '\n' >> "$d/_iso_fs.sh" ;;
+    leading_space) printf '%s\n' "$old" | sed 's/^main_commit=/ main_commit=/' > "$a" ;;
+    spaced_equals) printf '%s\n' "$old" | sed 's/^evidence=/evidence = /' > "$a" ;;
+    trailing_space) printf '%s\n' "$old" | sed 's/^\(profile_sha256=.*\)$/\1 /' > "$a" ;;
+    duplicate_key) { printf '\n'; printf '%s\n' "$old" | grep '^attested_at='; } >> "$a" ;;
+    missing_key) printf '%s\n' "$old" | grep -v '^main_commit=' > "$a" ;;
+    value_mismatch) printf '%s\n' "$old" | sed 's/^profile_sha256=.*/profile_sha256=0000000000000000000000000000000000000000000000000000000000000000/' > "$a" ;;
+    missing_profile) rm -f -- "$d/pytest.sb" ;;
+    missing_iso_fs) rm -f -- "$d/_iso_fs.sh" ;;
+    missing_attestation) rm -f -- "$a" ;;
+  esac
+}
+attest_selftest() {
+  local d="$ISO/tmp/attest-selftest" c rc dir mark1=';;OHMYSLACK-SELFTEST-SNAPSHOT-MARK' mark2=';;OHMYSLACK-SELFTEST-REREAD-MARK'
+  mkdir -- "$d" || die 1 "attest selftest: mkdir failed: $d"
+  : > "$d/result"
+  for c in "${ATTEST_CASES[@]}"; do
+    dir="$d/$c"; mkdir -- "$dir"
+    printf '%s' "$PROFILE_SNAP" > "$dir/pytest.sb"; printf '%s' "$ISOFS_SNAP" > "$dir/_iso_fs.sh"; printf '%s' "$ATT_SNAP" > "$dir/G3-ATTESTATION"
+    attest_case_mutate "$c" "$dir"
+    rc=0; ( attest_gate "$dir" ) 2> "$d/$c.err" || rc=$?
+    printf '%s=%s\n' "$c" "$rc" >> "$d/result"
+  done
+  # 렌더 입력 = 스냅숏(P2-1): 스냅숏 전에 넣은 표지는 렌더에 있고(원본 $P/scripts/pytest.sb 를 읽으면 없음),
+  # 스냅숏 뒤 파일에 덧붙인 표지는 없어야 한다(파일을 다시 읽으면 있음).
+  dir="$d/render"; mkdir -- "$dir"
+  printf '%s%s\n' "$PROFILE_SNAP" "$mark1" > "$dir/pytest.sb"; printf '%s' "$ISOFS_SNAP" > "$dir/_iso_fs.sh"; printf '%s' "$ATT_SNAP" > "$dir/G3-ATTESTATION"
+  ( take_snapshot "$dir"; printf '%s\n' "$mark2" >> "$dir/pytest.sb"; render_profile_text "" ) > "$d/render.out" 2> "$d/render.err" || true
+  rc=0; grep -q -e "$mark1" "$d/render.out" || rc=1
+  printf 'render_has_snapshot_mark=%s\n' "$rc" >> "$d/result"
+  rc=0; grep -q -e "$mark2" "$d/render.out" && rc=1
+  printf 'render_rereads_file=%s\n' "$rc" >> "$d/result"
+  # 진입 순서(P2-2): 래퍼 복사본을 $ISO/tmp 아래 가짜 P 에 두고 pytest.sb·_iso_fs.sh 를 빼면 --run-attested 는
+  # layout 검사(EXIT 2) 전에 EXIT 5 여야 한다. 대조 실패라 그 복사본은 sandbox·.isolation 에 닿지 않는다.
+  for c in pytest.sb _iso_fs.sh; do
+    dir="$d/entry-$c/integrations/hermes-plugin"; mkdir -p -- "$dir/scripts"
+    : > "$dir/pytest.ini"
+    printf '%s' "$PROFILE_SNAP" > "$dir/scripts/pytest.sb"; printf '%s' "$ISOFS_SNAP" > "$dir/scripts/_iso_fs.sh"
+    printf '%s' "$ATT_SNAP" > "$dir/scripts/G3-ATTESTATION"; cp -- "${BASH_SOURCE[0]}" "$dir/scripts/isolated-pytest.sh"
+    rm -f -- "$dir/scripts/$c"
+    rc=0; /usr/bin/env -i PATH=/usr/bin:/bin /bin/bash "$dir/scripts/isolated-pytest.sh" --run-attested \
+      > "$d/entry-$c.out" 2> "$d/entry-$c.err" < /dev/null || rc=$?
+    printf 'entry_missing_%s=%s\n' "$c" "$rc" >> "$d/result"
+  done
+}
+
 mode_preflight() {
   local label
   base_env
   SB_FATAL=0
+  attest_selftest
   sandboxed preflight-tests_isolation "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" tests_isolation -q
   preflight_stop_if_fatal preflight-tests_isolation
   [ "$SB_RC" = 0 ] || preflight_fail "tests_isolation rc=$SB_RC"
@@ -212,13 +356,37 @@ require_human() {            # $1 = 기대 확인 인자
   [ "$answer" = "$code" ] || die 5 "code mismatch"
 }
 
-mode_run() {
-  require_human "G3-CLEARED-BY-HUMAN"
+# --run·--run-attested 공통 실행 경로(env·sandbox·가드 동일). 두 모드의 차이는 시작 조건뿐이다.
+run_tests() {
   base_env; ENV_ARGS+=(PYTHONPATH="$HERMES_SRC")
   SB_FATAL=0
   sandboxed run "${PYTEST_ARGS[@]}" --basetemp="$ISO/tmp/pytest" tests "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
   [ "$SB_FATAL" = 0 ] || die 6 "sandbox-exec failed"
   exit "$SB_RC"
+}
+
+mode_run() {
+  require_human "G3-CLEARED-BY-HUMAN"
+  run_tests
+}
+
+# 해시 대조는 스크립트 앞부분(attest_gate)에서 이미 끝났다 — 여기 오면 일치한 것.
+mode_run_attested() { run_tests; }
+
+# --run-attested 는 -q·-x·-k <식> 만 받는다(-p·-c·--rootdir 등으로 수집 대상·플러그인을 바꾸지 못하게).
+check_attested_args() {
+  local i=0 n=${#EXTRA_ARGS[@]}
+  [ -z "$CONFIRM" ] || die 64 "--run-attested takes no --confirm"
+  while [ "$i" -lt "$n" ]; do
+    case "${EXTRA_ARGS[$i]}" in
+      -q|-x) ;;
+      -k) i=$((i + 1))
+          [ "$i" -lt "$n" ] || die 64 "-k needs an expression"
+          case "${EXTRA_ARGS[$i]}" in -*) die 64 "-k expression must not start with -" ;; esac ;;
+      *) die 64 "--run-attested accepts only -q, -x, -k <expr> (got: ${EXTRA_ARGS[$i]})" ;;
+    esac
+    i=$((i + 1))
+  done
 }
 
 mode_prove_outside() {
@@ -247,14 +415,16 @@ while [ $# -gt 0 ]; do
 done
 REAL_HOME="${HOME:-}"
 case "$MODE" in
-  --preflight|--probe-guard|--run|--prove-outside) ;;
-  *) die 64 "usage: $0 --preflight | --probe-guard | --run --confirm=G3-CLEARED-BY-HUMAN [args] | --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN" ;;
+  --preflight|--probe-guard|--run|--run-attested|--prove-outside) ;;
+  *) die 64 "usage: $0 --preflight | --probe-guard | --run --confirm=G3-CLEARED-BY-HUMAN [args] | --run-attested [-q] [-x] [-k <expr>] | --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN" ;;
 esac
-if [ "$MODE" != --run ] && [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then die 64 "extra arguments are only accepted with --run"; fi
+if [ "$MODE" = --run-attested ]; then check_attested_args
+elif [ "$MODE" != --run ] && [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then die 64 "extra arguments are only accepted with --run or --run-attested"; fi
 
 require_sandbox
 recreate_iso
 trap cleanup EXIT
+write_snapshot_copies
 RUN_TOKEN="$(new_token)"
 write_new "$ISO/run-token" "$RUN_TOKEN"
 render_profile ""
@@ -263,5 +433,6 @@ case "$MODE" in
   --preflight) mode_preflight ;;
   --probe-guard) mode_probe_guard ;;
   --run) mode_run ;;
+  --run-attested) mode_run_attested ;;
   --prove-outside) mode_prove_outside ;;
 esac

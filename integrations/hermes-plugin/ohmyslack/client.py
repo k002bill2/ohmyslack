@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional, TypeVar
 from urllib.parse import urlsplit
 
@@ -26,6 +27,47 @@ _READ_CHUNK = 64 * 1024
 
 Sleep = Callable[[float], Awaitable[None]]
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """게시 시도 1회의 관찰(설계 r4 §Q1-3). outcome ∈ ack·not_sent·ambiguous·rate_limited·rejected·conflict·auth."""
+
+    index: int
+    outcome: str
+    status: Optional[int]
+    may_have_committed: bool
+
+
+Observe = Callable[[Attempt], None]
+_ACK_STATUSES = frozenset({200, 201})
+
+
+def _is_uuid(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def _ack_message_id(body: Any, *, conversation_id: str, key: str, author_id: str,
+                    thread_root_id: Optional[str] = None) -> Optional[str]:
+    """정상 ACK 구조 검사(설계 §Q1-2의 6개 조건) — 통과하면 메시지 ID, 아니면 None.
+
+    `thread_root_id`: 요청한 루트(allowlist 채널 fold 청크). 없으면 기존대로 최상위만, 있으면 ACK 루트가 그 값(UUID
+    소문자 비교 — 서버는 소문자로 저장)이어야 한다.
+    """
+    msg = body.get("message") if isinstance(body, dict) else None
+    if not isinstance(msg, dict) or not _is_uuid(msg.get("id")):
+        return None
+    if msg.get("conversation_id") != conversation_id or msg.get("client_message_id") != key:
+        return None
+    got_root = msg.get("thread_root_id")
+    want_root = thread_root_id.lower() if thread_root_id else None
+    if msg.get("author_id") != author_id or (str(got_root).lower() if got_root is not None else None) != want_root:
+        return None
+    return str(msg["id"])
 
 
 class BotApiError(Exception):
@@ -168,28 +210,144 @@ class BotClient:
     async def post_message(self, conversation_id: str, body: str, *,
                            thread_root_id: Optional[str] = None,
                            attachment_ids: Optional[list[str]] = None,
-                           remaining: Optional[Callable[[], float]] = None) -> dict:
+                           remaining: Optional[Callable[[], float]] = None,
+                           client_message_id: Optional[str] = None,
+                           observe: Optional[Observe] = None,
+                           author_id: Optional[str] = None) -> Any:
         """멱등 재시도: 같은 `client_message_id`로 429(Retry-After)·5xx·연결 오류만 다시 보낸다.
 
         서버는 같은 키 재전송을 첨부 ID 집합까지 비교해 원래 메시지로 돌려준다(messages/repo.ts replay) → 중복 없음.
         `remaining`은 `_with_retry`와 같다(standalone 전체 deadline용, 기본은 기존 동작).
+        `client_message_id`를 주면 그 키를 쓴다(없으면 호출마다 새 uuid4 — 기존 동작).
+        `observe`를 주면 standalone 관찰 모드(설계 r4 §Q1): 리다이렉트를 따르지 않고, 시도마다 `Attempt`를 콜백에 남기며,
+        예외 대신 정상 ACK의 메시지 ID(구조 검사 통과, `author_id` 필요) 또는 None을 돌려준다.
         """
-        payload: dict[str, Any] = {"client_message_id": str(uuid.uuid4()), "body": body}
+        payload: dict[str, Any] = {"client_message_id": client_message_id or str(uuid.uuid4()), "body": body}
         if thread_root_id:
             payload["thread_root_id"] = thread_root_id
         if attachment_ids:
             payload["attachment_ids"] = list(attachment_ids)
         path = f"/conversations/{conversation_id}/messages"
+        if observe is not None:
+            return await self._post_observed(path, payload, conversation_id=conversation_id,
+                                             author_id=str(author_id or ""), observe=observe, remaining=remaining)
         return await self._with_retry(lambda: self.request("POST", path, json=payload), "send", remaining=remaining)
 
+    async def _post_once(self, index: int, path: str, payload: dict, *, conversation_id: str,
+                         author_id: str) -> tuple[str, Optional[int], bool, Optional[str], float, Optional[str]]:
+        """게시 1회 → (outcome, status, may_have_committed, 재시도 종류, 대기, 메시지 ID). 수신·파싱 예외는 호출자가 분류."""
+        backoff = float(2 ** index)
+        async with self._session.request("POST", f"{self._base}{API_PREFIX}{path}", json=payload,
+                                         headers=self._headers(), allow_redirects=False) as resp:
+            status = resp.status
+            if status == 401:
+                return "auth", status, False, None, 0.0, None
+            if status == 409:
+                return "conflict", status, False, None, 0.0, None
+            if status == 429:
+                retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                return "rate_limited", status, False, "wait", backoff if retry_after is None else retry_after, None
+            if status >= 500:
+                return "ambiguous", status, True, "backoff", backoff, None
+            if status >= 400:
+                return "rejected", status, False, None, 0.0, None
+            if status not in _ACK_STATUSES or resp.url.path != f"{API_PREFIX}{path}":
+                return "ambiguous", status, True, "once", 0.0, None  # 3xx·그 밖 2xx
+            body = await resp.json()
+        mid = _ack_message_id(body, conversation_id=conversation_id, key=payload["client_message_id"],
+                              author_id=author_id, thread_root_id=payload.get("thread_root_id"))
+        if mid is None:
+            return "ambiguous", status, True, "once", 0.0, None  # 구조 위반·ID 없음
+        return "ack", status, False, None, 0.0, mid
+
+    async def _post_observed(self, path: str, payload: dict, *, conversation_id: str, author_id: str,
+                             observe: Observe, remaining: Optional[Callable[[], float]]) -> Optional[str]:
+        """standalone 게시 재시도(설계 r4 §Q1-3 표). 같은 payload(같은 키)만 다시 보내고, 판정은 `observe` 기록으로 한다.
+
+        재시도: not_sent·연결/timeout·5xx는 백오프, 파싱·구조·3xx는 같은 키로 1회 더(대기 없음), ClientPayloadError는 안 함.
+        429는 앞 시도에 모호성이 있으면 기다리지 않고 끝낸다(호출자가 확인 GET — 이력 GET은 rateGuard 없음).
+        """
+        maybe = False
+        once_used = False
+        for index in range(MAX_SEND_ATTEMPTS):
+            try:
+                outcome, status, may, retry, delay, mid = await self._post_once(
+                    index, path, payload, conversation_id=conversation_id, author_id=author_id)
+            except (aiohttp.ClientConnectorError, aiohttp.ConnectionTimeoutError):
+                outcome, status, may, retry, delay, mid = "not_sent", None, False, "backoff", float(2 ** index), None
+            except aiohttp.ClientPayloadError:
+                outcome, status, may, retry, delay, mid = "ambiguous", None, True, None, 0.0, None
+            except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                outcome, status, may, retry, delay, mid = "ambiguous", None, True, "backoff", float(2 ** index), None
+            except (aiohttp.ContentTypeError, ValueError):
+                outcome, status, may, retry, delay, mid = "ambiguous", None, True, "once", 0.0, None
+            except aiohttp.ClientResponseError:
+                # 상태줄·헤더 파싱 실패(aiohttp ClientResponse.start) — 상태 응답 객체를 받기 전이라 서버 거부가 아니다.
+                # 상태 응답(4xx 등)은 `_post_once`가 예외 없이 돌려주므로 여기 오지 않는다. 저장 후 가능 → 모호.
+                outcome, status, may, retry, delay, mid = "ambiguous", None, True, "once", 0.0, None
+            maybe = maybe or may
+            observe(Attempt(index, outcome, status, may))
+            if outcome == "ack":
+                return mid
+            if retry is None or (retry == "wait" and maybe) or (retry == "once" and once_used):
+                return None
+            once_used = once_used or retry == "once"
+            if index + 1 >= MAX_SEND_ATTEMPTS or (remaining is not None and delay >= remaining()):
+                return None
+            if delay > 0:
+                logger.warning("ohmyslack: send retry %d/%d in %.1fs", index + 1, MAX_SEND_ATTEMPTS, delay)
+                await self._sleep(delay)
+        return None
+
+    async def history_contains(self, conversation_id: str, key: str, *, author_id: str,
+                               timeout: float) -> tuple[str, Optional[str]]:
+        """확인 GET 1회(재시도·리다이렉트 없음) → ("found", 메시지 ID) | ("not_found", None) | ("check_failed:<사유>", None).
+
+        일치 = 같은 대화 ∧ 작성자 = 봇(`/me` id) ∧ 같은 키 ∧ 최상위. tombstone도 키를 보존하므로 found.
+        취소(CancelledError) 외에는 절대 raise하지 않는다 — 확인 실패가 앞 청크의 확정 상태를 지우지 않게.
+        """
+        if timeout <= 0:
+            return "check_failed:timeout", None
+        path = f"/conversations/{conversation_id}/messages"
+        try:
+            async with asyncio.timeout(timeout):
+                async with self._session.get(f"{self._base}{API_PREFIX}{path}", params={"limit": "100"},
+                                             headers=self._headers(), allow_redirects=False) as resp:
+                    if resp.status != 200:
+                        reason = {401: "auth", 403: "forbidden"}.get(resp.status, f"http_{resp.status}")
+                        return f"check_failed:{reason}", None
+                    data = await resp.json()
+        except asyncio.TimeoutError:
+            return "check_failed:timeout", None
+        except aiohttp.ClientConnectionError:
+            return "check_failed:connection", None
+        except (aiohttp.ClientError, ValueError):
+            return "check_failed:parse", None
+        messages = data.get("messages") if isinstance(data, dict) else None
+        if not isinstance(messages, list):
+            return "check_failed:parse", None
+        for m in messages:
+            if not isinstance(m, dict) or not _is_uuid(m.get("id")):
+                continue
+            if (m.get("conversation_id") == conversation_id
+                    and m.get("author_id") == author_id
+                    and m.get("client_message_id") == key
+                    and m.get("thread_root_id") is None):
+                return "found", str(m["id"])
+        return "not_found", None
+
     async def upload_attachment(self, conversation_id: str, data: bytes, mime: str, *,
+                                filename: Optional[str] = None,
                                 remaining: Optional[Callable[[], float]] = None) -> dict:
         """원시 바이트 업로드 → 미결속 첨부(`attachment_id`). 재시도는 post_message와 같은 정책.
 
         업로드에는 멱등 키가 없어, 응답 유실 뒤 재시도하면 미결속 첨부가 하나 더 생길 수 있다 — 결속되지 않은 것은
         서버가 1시간 뒤 정리한다(ATTACHMENT_UNBOUND_TTL_MS). 메시지는 하나만 만들어진다.
         `remaining`은 `_with_retry`와 같다(standalone 시간 예산용, 기본은 기존 동작).
+        `filename`은 자리만 둔다(W-27 문서 업로드가 `X-Attachment-Filename`으로 채울 예정, TRD §6-1-1 (5)) — 지금은
+        보내지 않는다(미디어는 헤더가 필요 없다).
         """
+        del filename  # 아직 쓰지 않는다(위 참조)
         return await self._with_retry(
             lambda: self.request("POST", "/attachments", params={"conversation_id": conversation_id},
                                  data=data, content_type=mime), "upload", remaining=remaining)
