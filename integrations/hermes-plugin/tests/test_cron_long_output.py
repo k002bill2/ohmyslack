@@ -13,7 +13,7 @@ import re
 
 import pytest
 
-from conftest import DM_ID
+from conftest import DM_ID, make_message
 
 MARKER = "truncated, full output saved to"
 _INDICATOR = re.compile(r" \((\d+)/(\d+)\)$")
@@ -77,6 +77,7 @@ async def test_cron_long_output_is_split_not_truncated(server, make_adapter):
 
 
 async def test_cron_long_output_in_thread_stays_in_thread(server, make_adapter):
+    server.add(make_message(mid="root-9"))  # 봇에게 보이는 루트(가짜 서버 루트 가시성 404, test_outbound.py:75와 같은 준비)
     adapter = make_adapter()
     assert await adapter.connect()
     original = _body(9000)
