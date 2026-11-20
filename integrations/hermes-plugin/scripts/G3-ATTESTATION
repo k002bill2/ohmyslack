@@ -1,6 +1,6 @@
 # Human G3 revalidation. main_commit records the tested source commit.
-profile_sha256=390036e3fadcbe74bebbfd9be97679a29b9100bed485fff0ad72d8486983fe6d
+profile_sha256=db79d364e7c39ac839eb3751d991a898ce576d646b819baf0cf29183c3c025d6
 iso_fs_sha256=b016c4274effd6b2bc66ae2f6047d5b134c5a9022ab28d92ae3e968f6b5b3c59
-attested_at=2026-11-15
-evidence=dev/active/p2s1-1a-g4-isolation-fix/G3-HUMAN-RECHECK.md
-main_commit=97ac02f9eae0e267256898d80daed720011e9911
+attested_at=2026-11-20
+evidence=dev/handoff/pr37-merge-main-20261120/HUMAN-G3-RUNBOOK-2.md
+main_commit=ee7b5f93d8852ce911a8563115b6fd88e37c14d4
