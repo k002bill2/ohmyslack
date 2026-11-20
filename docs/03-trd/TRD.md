@@ -38,7 +38,7 @@ created: 2026-11-07
 
 스택은 React + TypeScript + Vite, Node.js + Fastify, PostgreSQL, 같은 앱의 PWA입니다. 설치 기록의 Node 26.12.1은 확인된 설치 버전이지 승인된 runtime pin은 아닙니다. 목표 major는 Node 26이며, 착수 때 공식 Node.js release 표에서 26.x가 지원 LTS인지 확인하고 그 LTS 최신 보안 패치의 정확한 버전을 `.nvmrc`, `engines`, CI, lockfile에 함께 고정합니다. 26.x가 아직 지원 LTS가 아니면 당시 지원 중인 LTS major를 사용하고 이 문서를 갱신합니다. PostgreSQL 운영 버전과 연결 경계는 착수 전 확인 항목입니다.
 
-MVP는 본인 다기기 대화 동기화, 합성 계정으로 초대·DM 권한 검증, 채널·1:1 DM·1단 스레드·수정/삭제·멘션·unread·실시간·복구·모바일 PWA입니다. 타인 초대/tailnet 추가는 별도 승인입니다. Redis, Slack API/브리지, 오프라인 발신 큐, 사용자 본문 지속 캐시, 검색, presence, 네이티브 앱, Electron은 MVP 의존성에서 제외합니다. **최소 첨부(§6-1)·Web Push(§6-2)·Hermes 봇(§5-2)은 v1.3에서 MVP에 포함**하며 일반 파일은 제외합니다.
+MVP는 본인 다기기 대화 동기화, 합성 계정으로 초대·DM 권한 검증, 채널·1:1 DM·1단 스레드·수정/삭제·멘션·unread·실시간·복구·모바일 PWA입니다. 타인 초대/tailnet 추가는 별도 승인입니다. Redis, Slack API/브리지, 지속(영구) 오프라인 발신 큐, 사용자 본문 지속 캐시, 검색, presence, 네이티브 앱, Electron은 MVP 의존성에서 제외합니다. **최소 첨부(§6-1)·Web Push(§6-2)·Hermes 봇(§5-2)은 v1.3에서 MVP에 포함**하며 일반 파일은 제외합니다.
 
 ## 2. 데이터 모델
 
@@ -250,7 +250,7 @@ TR-SEC 추가 행(R3.3, ADR-001): **TR-SEC-13** 봇 토큰 경계(§5-2) — 토
 
 Tailscale Serve HTTPS는 tailnet에서 로컬 reverse proxy로 제안합니다. 앱 백엔드 listener는 `127.0.0.1:<port>`만 사용하며, tailnet HTTPS 접점은 Tailscale Serve가 제공합니다. Funnel, router port forwarding, LAN bind, `0.0.0.0` listener는 금지합니다. Serve hostname은 비밀이 아니므로 앱 인증을 유지하고 Mac sleep/offline은 명시적으로 표시합니다. DB port는 Serve하지 않습니다.
 
-PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=standalone`을 사용합니다. 아이콘 세트와 관련 크기·purpose·apple touch icon은 디자인 레퍼런스 §9-2 정본을 따릅니다. service worker는 해시된 app shell 정적 파일만 캐시하고 `/api/**`, 메시지·읽음·인증·초대 응답과 WS를 우회합니다. 첨부(`/api/attachments/**`)도 우회합니다. push 이벤트 핸들러는 알림 표시만 하고 본문을 저장하지 않습니다. 본문은 Cache API·IndexedDB·localStorage에 저장하지 않고 화면 메모리에서만 일시 보유합니다. 오프라인 발신 큐는 없고 server ACK 전 성공 표시도 없습니다. 로그아웃 시 화면 데이터를 비웁니다.
+PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=standalone`을 사용합니다. 아이콘 세트와 관련 크기·purpose·apple touch icon은 디자인 레퍼런스 §9-2 정본을 따릅니다. service worker는 해시된 app shell 정적 파일만 캐시하고 `/api/**`, 메시지·읽음·인증·초대 응답과 WS를 우회합니다. 첨부(`/api/attachments/**`)도 우회합니다. push 이벤트 핸들러는 알림 표시만 하고 본문을 저장하지 않습니다. 본문은 Cache API·IndexedDB·localStorage에 저장하지 않고 화면 메모리에서만 일시 보유합니다. 지속 발신 큐는 없고 server ACK 전 성공 표시도 없습니다. 예외로 오프라인 때문에 보내지 못한 메시지는 같은 화면 세션 안에서 `online` 복귀 때 같은 `client_message_id`로 한 번 자동 재전송합니다(화면 메모리 한정, 2026-11-17 결정, UI_STATES §2-5). 로그아웃 시 화면 데이터를 비웁니다.
 
 반응형 구간·레이아웃 폭·IME·키보드 동작·상태 문구는 디자인 레퍼런스의 브레이크포인트·레이아웃·IME 규칙을 정본으로 따릅니다. offline messaging은 약속하지 않습니다. Web Push는 §6-2 범위로 제공합니다. iOS Safari별 설치·cookie·WS 동작은 QA 확인 대상입니다.
 
@@ -363,7 +363,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 - 범위: 사람 계정의 구독 기기에 ① Jarvis DM의 새 최상위 메시지·자기 스레드 답글 ② 자기 멘션을 보냅니다. 자기 메시지·이미 읽은 대화는 보내지 않습니다. 같은 대화 알림은 60초 안에 1건으로 묶습니다(`Topic` 헤더로 교체).
 - payload: `{v:1, kind:"message", conversation_id, message_id, thread_root_id?, from_bot:boolean}`만 보냅니다(식별자만, 본문 없음). 알림 탭 시 SW는 `message_id`(답글이면 `thread_root_id`의 스레드 안 `message_id`) 위치로 대화를 엽니다 — 알림 뒤 메시지가 더 쌓여도 해당 브리핑을 찾을 수 있게 하기 위함입니다(PRD S8). **본문·대화 이름·작성자 이름 미포함.** 표시 문구는 SW 고정(「새 메시지가 있습니다」, Jarvis DM이면 「Jarvis」)입니다. iOS는 silent push 금지이므로 SW는 `event.waitUntil(showNotification())`를 반드시 호출합니다.
 - VAPID: P-256 키쌍을 로컬 명령 `apps/server/bin/vapid-keygen.ts`로 생성합니다. 개인키는 서버 비밀 파일(600, 저장소 밖)·환경 변수 경로로만 주입하고, 미설정 시 push 기능만 비활성(기동은 계속)하며 `/api/push/vapid-public-key`는 404입니다. `sub`는 `mailto:` 실제 주소(공백·꺾쇠 금지)입니다. 키 회전 = 전 구독 재등록(`vapid_key_id`로 구분).
-- 전송: 서버 → push service outbound HTTPS. `TTL` 헤더 필수(제안 86400). 404·410 응답 시 구독을 삭제합니다. endpoint는 https + 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com`)만 등록합니다.
+- 전송: 서버 → push service outbound HTTPS. `TTL` 헤더 필수(제안 86400). 404·410 응답 시 구독을 삭제합니다. endpoint는 https + 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com`, 그리고 Chromium 계열 FCM 대체 호스트 `jmt<숫자>.google.com` — 경로 `/fcm/send/<token>`일 때만, 2026-11-16 운영 실측)만 등록합니다.
 - 근거 URL: https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/ , https://webkit.org/blog/12945/meet-web-push/ , RFC 8030·8291·8292.
 - **확인 필요:** tailnet 전용 origin(`*.ts.net`)에서의 iOS 홈 화면 PWA 구독·수신은 공식 근거가 없습니다. 개발설계서 W-23(Web Push)의 선행 조건으로 실기 시험(QA-FR-CLIENT-05)을 먼저 수행합니다(ADR-001 D-3).
 

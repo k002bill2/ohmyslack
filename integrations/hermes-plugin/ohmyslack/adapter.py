@@ -44,6 +44,8 @@ PLATFORM_NAME = "ohmyslack"
 TOKEN_ENV = "OHMYSLACK_BOT_TOKEN"
 URL_ENV = "OHMYSLACK_BOT_URL"
 PORT_ENV = "OHMYSLACK_BOT_PORT"
+# 최상위 게시 허용 채널(BOT_CHANNEL_SPEC §5-5·§5-6 예외, 2026-11-19): 쉼표 구분 conversation id. 미설정이면 기존 동작.
+POST_CHANNELS_ENV = "OHMYSLACK_POST_CHANNELS"
 BACKLOG_LIMIT_SECONDS = 15 * 60
 SNAPSHOT_MAX_PAGES = 50
 BACKOFF_START, BACKOFF_CAP = 2.0, 60.0
@@ -218,6 +220,19 @@ def resolve_bot_url(extra: Optional[dict]) -> str:
     return validate_bot_url(url)
 
 
+def post_channels() -> frozenset[str]:
+    """`OHMYSLACK_POST_CHANNELS`를 읽는다. 공백·빈 항목은 무시, UUID 아닌 항목은 버리고 개수만 경고(값 미기록).
+
+    allowlist는 필요조건일 뿐이다 — 실제 허용은 `/me`에서 kind=="channel"로 확인된 대화에 한한다(F-3).
+    """
+    raw = get_scoped_secret(POST_CHANNELS_ENV, "") or ""
+    items = [x.strip() for x in str(raw).split(",") if x.strip()]
+    valid = [str(uuid.UUID(x)) for x in items if _is_uuid(x)]  # 표준형(소문자·하이픈)으로 맞춰 /me id와 비교
+    if len(valid) != len(items):
+        logger.warning("ohmyslack: ignored %d malformed %s entries", len(items) - len(valid), POST_CHANNELS_ENV)
+    return frozenset(valid)
+
+
 class OhmySlackAdapter(BasePlatformAdapter):
     MAX_MESSAGE_LENGTH = 4000
     # `send`가 `truncate_message`로 직접 나눠 게시하므로, cron 라우터(gateway/delivery.py `_cap_oversized_output`)가
@@ -247,6 +262,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._kinds: dict[str, str] = {}  # conversation_id → "dm" | "channel" (/me.conversations)
         self._names: dict[str, str] = {}  # conversation_id → 채널 이름 (/me.conversations[].name, 구 서버면 비어 있음)
         self._display_name = ""
+        self._post_channels = post_channels()  # 최상위 게시·봇 루트 이어받기 허용 채널(§5-6 예외)
         self._watermark = 0
         self._recent: tuple[str, ...] = ()
         self._root_of: dict[str, str] = {}
@@ -541,8 +557,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
             r = data.get("root") if isinstance(data, dict) else None
             ok = (isinstance(r, dict) and str(r.get("id") or "") == root
                   and str(r.get("conversation_id") or conversation_id) == conversation_id
-                  and r.get("thread_root_id") is None and str(r.get("author_id") or "") == self._owner_id
-                  and self._mentions_me(r))
+                  and r.get("thread_root_id") is None
+                  and ((str(r.get("author_id") or "") == self._owner_id and self._mentions_me(r))
+                       or self._is_own_post_root(conversation_id, r)))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — fail-closed
@@ -553,6 +570,14 @@ class OhmySlackAdapter(BasePlatformAdapter):
             self._not_bot_threads = {k: v for k, v in self._not_bot_threads.items() if v > now}
             self._not_bot_threads[root] = now + NOT_BOT_THREAD_TTL_SECONDS
         return ok
+
+    def _is_post_channel(self, conversation_id: str) -> bool:
+        return self._kinds.get(conversation_id) == "channel" and conversation_id.lower() in self._post_channels
+
+    def _is_own_post_root(self, conversation_id: str, r: dict) -> bool:
+        """allowlist 채널에서 봇 자신이 쓴 최상위 글(브리핑) — owner 비멘션 답글을 이어받는다(2026-11-19)."""
+        return bool(self._me_id) and str(r.get("author_id") or "") == self._me_id \
+            and self._is_post_channel(conversation_id)
 
     async def _ingest(self, conversation_id: str, m: dict, *, aux_root: bool = False,
                       op: Optional[str] = None) -> None:
@@ -686,9 +711,10 @@ class OhmySlackAdapter(BasePlatformAdapter):
         """채널에서는 스레드 답글로만 쓴다(§5-6). 루트를 모르면 보내지 않고 로그만(본문 미기록).
 
         fail-closed(F-3): `/me`에서 확인된 dm만 그대로 보낸다. 모르는 대화(맵에 없음·이미 나감)는 루트가 있어도 거부한다.
+        예외(2026-11-19): `/me`에서 channel로 확인되고 `OHMYSLACK_POST_CHANNELS`에 있는 채널은 최상위도 보낸다.
         """
         kind = self._kinds.get(str(chat_id))
-        if kind == "dm" or (kind == "channel" and root is not None):
+        if kind == "dm" or (kind == "channel" and (root is not None or self._is_post_channel(str(chat_id)))):
             return None
         if kind == "channel":
             logger.warning("ohmyslack: refusing top-level post to a channel (no thread root)")
@@ -697,6 +723,18 @@ class OhmySlackAdapter(BasePlatformAdapter):
         logger.warning("ohmyslack: refusing post to an unknown conversation")
         return SendResult(success=False, error="ohmyslack: unknown conversation",
                           retryable=False, error_kind="forbidden")
+
+    def _chunk_root(self, chat_id: str, root: Optional[str], first_id: str) -> Optional[str]:
+        """루트 없이 채널에 보내는 분할 조각의 스레드 루트: 2번째 조각부터 첫 조각 id(스레드 답글).
+
+        DM·스레드 답글은 그대로(`root`). 첫 조각 id를 못 얻으면 기존처럼 최상위로 보내고 경고만 남긴다(본문 미기록).
+        """
+        if root is not None or self._kinds.get(str(chat_id)) != "channel":
+            return root
+        if not first_id:
+            logger.warning("ohmyslack: first chunk id missing; remaining chunks stay top-level")
+            return None
+        return first_id
 
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
                    metadata: Optional[dict[str, Any]] = None) -> SendResult:
@@ -709,8 +747,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         ids: list[str] = []
         chunks = self.truncate_message(content or "", self.MAX_MESSAGE_LENGTH)
         try:
-            for chunk in chunks:
-                res = await self._client.post_message(str(chat_id), chunk, thread_root_id=root)
+            for i, chunk in enumerate(chunks):
+                res = await self._client.post_message(
+                    str(chat_id), chunk, thread_root_id=self._chunk_root(chat_id, root, ids[0]) if i else root)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
@@ -807,8 +846,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         ids: list[str] = []
         try:
             for i, chunk in enumerate(chunks):
-                res = await self._client.post_message(str(chat_id), chunk, thread_root_id=root,
-                                                      attachment_ids=[attachment_id] if i == 0 else None)
+                res = await self._client.post_message(
+                    str(chat_id), chunk, thread_root_id=self._chunk_root(chat_id, root, ids[0]) if i else root,
+                    attachment_ids=[attachment_id] if i == 0 else None)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
@@ -1005,11 +1045,15 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
                           session_factory: Callable[[], aiohttp.ClientSession] = new_session,
                           upload_budget: Optional[float] = None,
                           clock: Optional[Callable[[], float]] = None) -> dict:
-    """게이트웨이 밖 cron 전달: owner DM(홈 채널)에 최상위 메시지. `thread_id`·`force_document`는 쓰지 않는다.
+    """게이트웨이 밖 cron 전달: owner DM(홈 채널) 또는 allowlist 채널에 최상위 메시지. `thread_id`·`force_document`는
+    쓰지 않는다.
 
     단일 호출 계약: `max_message_length=0` 등록으로 Hermes는 원문 전체·첨부 전체를 이 함수 **1회** 호출에 넘긴다 —
     청크 분할(MAX_MESSAGE_LENGTH)·첨부 결속은 여기서만 정한다.
-    홈 채널은 DM 고정(BOT_CHANNEL_SPEC §5-5): `/me`에서 대상이 dm이 아니면(채널·모르는 대화) 업로드도 하지 않는다.
+    대상은 DM 또는 allowlist 채널(BOT_CHANNEL_SPEC §5-5, 2026-11-19 예외): `/me`에서 대상이 dm도 아니고
+    `OHMYSLACK_POST_CHANNELS`에 든 channel도 아니면(다른 채널·모르는 대화) 업로드도 하지 않는다(확정 거부).
+    분할 묶기: allowlist 채널이면 청크 1부터 청크 0의 확인된 메시지 id를 `thread_root_id`로 게시한다(DM은 연속 최상위).
+    확인 GET(`history_contains`)은 최상위만 보므로 스레드 답글 청크가 모호하면 확인하지 않고 ambiguous로 남긴다.
     첨부(ADR-002 1a): 음성·이미지는 업로드해 첫 청크에 결속, 지원 밖·없는 파일·상한 초과·업로드 실패·시간 예산 초과는
     파일마다 `warnings`에 싣고 텍스트는 보낸다.
     전체는 시작 시각부터 STANDALONE_TOTAL_DEADLINE_S초(단조 시계) 안에서만 — Hermes 바깥 상한에 취소되면
@@ -1017,7 +1061,8 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
     `asyncio.timeout(TOTAL)` 백스톱, `session.close()`는 cleanup 몫 안에서만. **협조적 취소 전제**(설계 r4 §Q4-5) —
     취소를 억제하는 정리·루프를 막는 동기 작업·`asyncio.run` 종료 시간은 보장 밖. 외부 취소는 삼키지 않는다.
     결과: 청크를 하나도 못 올렸으면 send_error(모인 첨부 warnings를 메시지에 덧붙인다 — Hermes는 실패 시 `error`만
-    남기고, 아무것도 안 나갔으므로 재전달 큐가 안전하다). 청크 k개(≥1)를 올린 뒤 실패·deadline 초과면 `success` +
+    남긴다. 아무것도 안 나갔으므로 재전달 큐가 안전하다는 것은 청크 0이 확정 거부(rejected)일 때만 성립한다 — 청크 0
+    불명(`delivery_unknown`)·충돌(`idempotency_conflict`)이면 재전달이 중복을 만들 수 있다). 청크 k개(≥1)를 올린 뒤 실패·deadline 초과면 `success` +
     `warnings`의 `text: partial_delivery <k>/<n>` — error로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가
     중복되므로, 중복 대신 보이는 꼬리 유실을 택한다(첫 청크 = 첨부 결속 청크이므로 첨부는 전달됨).
     """
@@ -1065,9 +1110,11 @@ async def _standalone_work(client: BotClient, chat_id: str, message: str, media_
             record.reason = "invalid /me response"
             return
         kinds = {str(c.get("id")): c.get("kind") for c in me.get("conversations") or () if isinstance(c, dict)}
-        if kinds.get(chat_id) != "dm":
-            record.reason = "home channel must be the owner DM"
+        kind = kinds.get(chat_id)
+        if kind != "dm" and not (kind == "channel" and chat_id.lower() in post_channels()):
+            record.reason = "target must be the owner DM or an allowlisted channel"  # 확정 거부 — 업로드·게시 0
             return
+        fold = kind == "channel"  # allowlist 채널 최상위: 청크 1부터 청크 0 스레드 답글(DM은 연속 최상위)
         me_id = str(me.get("id") or "")
         budget = min(upload_budget, d.left("prep")())
         record.attachment_ids, names, record.file_warnings = await _upload_standalone_media(
@@ -1078,6 +1125,11 @@ async def _standalone_work(client: BotClient, chat_id: str, message: str, media_
         for i, (chunk, rec) in enumerate(zip(chunks, record.chunks)):
             # 청크 0을 한 번이라도 시도했으면 재업로드하지 않는다 — 첨부 ID는 루프 전에 한 번 정해진다.
             attach = record.attachment_ids if i == 0 and record.attachment_ids else None
+            if i and fold:
+                # 확인 안 된 청크에서 멈추므로 여기서 청크 0은 confirmed — id가 없을 때만 main처럼 최상위 유지 + 경고.
+                rec.thread_root_id = record.chunks[0].message_id or None
+                if rec.thread_root_id is None and i == 1:
+                    logger.warning("ohmyslack: first chunk id missing; remaining chunks stay top-level")
             if not await _post_chunk(client, chat_id, chunk, rec, attach, me_id, d):
                 break  # 확인 안 된 청크 뒤로는 보내지 않는다(순서 보장 + 중복 범위 축소)
     except _DeadlineExceeded:
@@ -1123,6 +1175,7 @@ class _ChunkRecord:
     attempts: list[Attempt] = field(default_factory=list)
     message_id: Optional[str] = None  # 검증된 UUID(정상 ACK 또는 확인 GET found)에서만
     reason: str = ""  # rejected 사유(`HTTP <n>` 등)
+    thread_root_id: Optional[str] = None  # allowlist 채널 fold 청크(1+)의 루트 = 청크 0 id. 게시 전에 정한다
 
 
 @dataclass
@@ -1161,8 +1214,8 @@ async def _post_chunk(client: BotClient, chat_id: str, body: str, rec: _ChunkRec
         raise _DeadlineExceeded  # 보내지 않은 청크는 pending 그대로(attempted 아님)
     rec.state = "attempted"  # awaited POST 전에 — 끊겨도 기록이 「시도함」을 안다
     message_id = await _within(client.post_message(
-        chat_id, body, attachment_ids=attachment_ids, remaining=left, client_message_id=rec.key,
-        observe=rec.attempts.append, author_id=me_id), left)
+        chat_id, body, thread_root_id=rec.thread_root_id, attachment_ids=attachment_ids, remaining=left,
+        client_message_id=rec.key, observe=rec.attempts.append, author_id=me_id), left)
     _settle(rec, message_id, cut=False)
     if rec.state == "ambiguous":
         await _confirm_chunk(client, chat_id, rec, me_id, d)
@@ -1170,7 +1223,14 @@ async def _post_chunk(client: BotClient, chat_id: str, body: str, rec: _ChunkRec
 
 
 async def _confirm_chunk(client: BotClient, chat_id: str, rec: _ChunkRecord, me_id: str, d: _Deadlines) -> None:
-    """ambiguous 청크 확인 GET 1회 — confirm 몫(post deadline 뒤에도)까지만."""
+    """ambiguous 청크 확인 GET 1회 — confirm 몫(post deadline 뒤에도)까지만.
+
+    `history_contains`는 최상위 메시지만 본다 — 스레드 답글(fold) 청크는 확인할 수 없어 GET 없이 ambiguous로 남긴다
+    (`_standalone_result`가 `partial_delivery`·`delivery_unknown`으로 보고, 성공으로 숨기지 않는다).
+    """
+    if rec.thread_root_id is not None:
+        logger.warning("ohmyslack: standalone confirm skipped (thread reply)")
+        return
     check, found_id = await client.history_contains(chat_id, rec.key, author_id=me_id, timeout=d.left("confirm")())
     if check == "found":
         rec.state, rec.message_id = "confirmed", found_id

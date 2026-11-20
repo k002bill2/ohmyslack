@@ -74,13 +74,11 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
   '--bg-elevated': { scale: 'slate', step: 3, role: 'surface', dark: { step: 1 } },
   '--bg-hover': { scale: 'slate', step: 4, role: 'surface' },
   '--bg-active': { scale: 'slate', step: 5, role: 'surface' },
-  '--border-subtle': {
-    scale: 'slate', step: 6, role: 'nontext', on: BG_APP,
-    override: {
-      light: { step: 9, reason: 'slate6/bg-app 1.37 < 3 (§2-3 4항 보더 3:1)' },
-      dark: { step: 9, reason: 'slate6/bg-app(slate2) 1.5 < 3, slate8 2.81 < 3 (§2-3 4항 보더 3:1)' },
-    },
-  },
+  /**
+   * 장식 구분선·패널 테두리(시안 R5 slate6). 컴포넌트 식별 경계가 아니라 WCAG 1.4.11 대비 대상 밖(§2-3 4항 예외) —
+   * --danger-line과 같이 surface 역할. 조작 대상의 유일한 경계(입력란·분할 손잡이)는 --border를 쓴다.
+   */
+  '--border-subtle': { scale: 'slate', step: 6, role: 'surface' },
   '--border': {
     scale: 'slate', step: 7, role: 'nontext', on: BG_APP,
     override: {
@@ -241,11 +239,15 @@ export const mediaQueries = Object.freeze({
   threadRoomy: `(width >= ${breakpoints.threadRoomyMin}px)`,
 });
 
+/** R4 스레드 최소 폭 — CSS(--thread-min)와 분할 계산(splitLimits.threadMin)이 같은 값을 쓴다. */
+const THREAD_MIN = 320;
+
 /** §5-2·§5-3 레이아웃 폭 토큰 그대로. */
 export const layoutVars: Readonly<Record<string, string>> = Object.freeze({
   '--sidebar-w': '260px',
   '--sidebar-w-collapsed': '72px',
   '--thread-w': 'clamp(320px, 32vw, 380px)',
+  '--thread-min': `${THREAD_MIN}px`,
   '--body-min': '480px',
   '--body-min-medium': '380px',
   '--thread-overlay-w': 'min(420px, 100%)',
@@ -253,14 +255,13 @@ export const layoutVars: Readonly<Record<string, string>> = Object.freeze({
 
 /**
  * R4 분할선(wide 전용, DESIGN_REFERENCE §5-2 R4): 사용자가 끌어 내비·스레드 폭을 바꾼다. 기본 폭은 위 layoutVars 그대로.
- * 내비를 navCollapseBelow 아래로 끌면 72px 레일로 접힌다. 본문은 bodyMin 아래로 줄지 않는다. 키보드 ←→는 step씩.
+ * 내비를 navCollapseBelow 아래로 끌면 72px 레일로 접힌다. 본문은 bodyMin 아래로 줄지 않는다. 키보드 ←→는 step씩, Home/End는 최소/최대.
  */
 export const splitLimits = Object.freeze({
   navMin: 200,
   navMax: 360,
   navCollapseBelow: 160,
-  threadMin: 320,
-  threadMax: 560,
+  threadMin: THREAD_MIN,
   bodyMin: 480,
   /** 분할선 자체 폭(= 패널 사이 여백). */
   gutter: 12,

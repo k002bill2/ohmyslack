@@ -50,7 +50,8 @@ ATTACHMENT_UNBOUND_TTL_S = 60 * 60  # packages/shared/src/attachments.ts:11 ATTA
 def _isolated_env(tmp_path, monkeypatch):
     # Hermes 홈을 tmp로 격리(실제 ~/.hermes 읽기·쓰기 방지), 플러그인 env 비움.
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-home"))
-    for name in ("OHMYSLACK_BOT_TOKEN", "OHMYSLACK_BOT_URL", "OHMYSLACK_BOT_PORT", "OHMYSLACK_HOME_CHANNEL"):
+    for name in ("OHMYSLACK_BOT_TOKEN", "OHMYSLACK_BOT_URL", "OHMYSLACK_BOT_PORT", "OHMYSLACK_HOME_CHANNEL",
+                 "OHMYSLACK_POST_CHANNELS"):
         monkeypatch.delenv(name, raising=False)
 
 

@@ -470,3 +470,210 @@ async def test_left_channel_forgets_name(server, make_adapter):
     await _sentinel(server, adapter)
     assert CHANNEL_ID not in adapter._conversation_ids
     assert (await adapter.get_chat_info(CHANNEL_ID))["name"] == CHANNEL_ID
+
+
+# ---- 브리핑 채널 allowlist(OHMYSLACK_POST_CHANNELS, 2026-11-19 영환님 지시 — BOT_CHANNEL_SPEC §5-5·§5-6 예외) ----
+POST_CHANNELS_ENV = "OHMYSLACK_POST_CHANNELS"
+OTHER_CHANNEL_ID = "00000000-0000-0000-0000-0000000000c9"
+
+
+def _with_two_channels(server) -> None:
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel"},
+                            {"id": OTHER_CHANNEL_ID, "kind": "channel"}]
+
+
+async def test_post_channels_unset_still_refuses_channel_top_level(server, make_adapter):
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    res = await adapter.send(CHANNEL_ID, "브리핑")
+    assert res.success is False and res.error_kind == "forbidden"
+    assert server.posts == []
+
+
+async def test_post_channels_allowlisted_channel_allows_top_level(server, make_adapter, monkeypatch, tmp_path):
+    monkeypatch.setenv(POST_CHANNELS_ENV, f" {CHANNEL_ID} ,, not-a-uuid ")
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    res = await adapter.send(CHANNEL_ID, "아침 브리핑")
+    assert res.success is True
+    assert _posts_ok(server)[-1]["conversation_id"] == CHANNEL_ID
+    assert _posts_ok(server)[-1].get("thread_root_id") is None
+    img = tmp_path / "a.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+                    + b"\x00" * 32)  # test_attachments.py PNG과 같은 바이트(업로드 성공 경로)
+    assert (await adapter.send_image_file(CHANNEL_ID, str(img))).success is True
+    other = await adapter.send(OTHER_CHANNEL_ID, "allowlist 밖")
+    assert other.success is False and other.error_kind == "forbidden"
+    assert all(p.get("conversation_id") != OTHER_CHANNEL_ID for p in server.posts)
+
+
+async def test_post_channels_standalone_allows_allowlisted_channel_only(server, monkeypatch):
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, "브리핑")
+    assert out.get("success") is True
+    assert _posts_ok(server)[-1]["conversation_id"] == CHANNEL_ID
+    refused = await standalone_send(cfg, OTHER_CHANNEL_ID, "브리핑")
+    assert "error" in refused
+    assert all(p.get("conversation_id") != OTHER_CHANNEL_ID for p in server.posts)
+
+
+async def test_post_channels_unset_standalone_refuses_channel(server):
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    _with_two_channels(server)
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, "브리핑")
+    assert "error" in out and server.posts == []
+
+
+def _bot_root(conv: str) -> dict:
+    return make_message(author=BOT_ID, conv=conv, body="오늘의 브리핑")
+
+
+async def test_post_channels_owner_reply_to_bot_root_follows_thread(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    root = _bot_root(CHANNEL_ID)
+    server.add(root, CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    reply = _ch("이거 더 알려줘", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert adapter.events[0].message_id == reply["id"]
+    assert adapter.events[0].source.thread_id == root["id"]
+    assert server.replies_calls == [root["id"]]
+
+
+async def test_post_channels_bot_root_outside_allowlist_rejected(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    root = _bot_root(OTHER_CHANNEL_ID)
+    server.add(root, OTHER_CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    reply = make_message(conv=OTHER_CHANNEL_ID, body="답글", thread_root_id=root["id"])
+    await server.push_live(reply, OTHER_CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == OTHER_CHANNEL_ID] == []
+
+
+async def test_post_channels_bot_root_without_allowlist_rejected(server, make_adapter):
+    _with_two_channels(server)
+    root = _bot_root(CHANNEL_ID)
+    server.add(root, CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    reply = _ch("답글", mention=False, thread_root_id=root["id"])
+    await server.push_live(reply, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
+
+
+async def test_post_channels_non_owner_reply_to_bot_root_rejected(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    root = _bot_root(CHANNEL_ID)
+    server.add(root, CHANNEL_ID)
+    adapter = await _connected(server, make_adapter)
+    other = make_message(author=OTHER_ID, conv=CHANNEL_ID, body="끼어들기", thread_root_id=root["id"])
+    await server.push_live(other, CHANNEL_ID)
+    await _sentinel(server, adapter)
+    assert [e.message_id for e in adapter.events if e.source.chat_id == CHANNEL_ID] == []
+
+
+# ---- allowlist 채널 최상위 긴 메시지 분할: 첫 조각만 최상위, 나머지는 그 스레드 답글(2026-11-19 FIX) ----
+def _long_body(n: int = 9000) -> str:
+    unit = "가나다라마바사아자차카타파하abc123"
+    return (unit * (n // len(unit) + 1))[:n]
+
+
+def _posted_ids(server) -> list[str]:
+    """서버가 만든 봇 메시지 id를 게시 순서대로(게시 로그엔 응답 id가 없어 changes에서 읽는다)."""
+    return [m["id"] for _c, _conv, m in server.changes if m.get("author_id") == BOT_ID]
+
+
+async def test_post_channels_live_long_top_level_splits_into_first_chunk_thread(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    res = await adapter.send(CHANNEL_ID, _long_body())
+    assert res.success is True
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) >= 3 and len(ids) == len(ok)
+    assert ok[0].get("thread_root_id") is None
+    assert all(p["thread_root_id"] == ids[0] for p in ok[1:])
+    assert res.message_id == ids[-1]
+
+
+async def test_post_channels_standalone_long_top_level_splits_into_first_chunk_thread(server, monkeypatch):
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, _long_body())
+    assert out.get("success") is True
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) >= 3 and len(ids) == len(ok)
+    assert ok[0].get("thread_root_id") is None
+    assert all(p["thread_root_id"] == ids[0] for p in ok[1:])
+    assert out["message_id"] == ids[-1]
+
+
+async def test_post_channels_live_attachment_caption_split_binds_to_first_chunk_thread(
+        server, make_adapter, monkeypatch, tmp_path):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    img = tmp_path / "a.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+                    + b"\x00" * 32)
+    assert (await adapter.send_image_file(CHANNEL_ID, str(img), caption=_long_body())).success is True
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) >= 3
+    assert ok[0].get("thread_root_id") is None and ok[0].get("attachment_ids")
+    assert all(p["thread_root_id"] == ids[0] and not p.get("attachment_ids") for p in ok[1:])
+
+
+async def test_dm_long_split_stays_consecutive_top_level(server, make_adapter, monkeypatch):
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    adapter = await _connected(server, make_adapter)
+    assert (await adapter.send(DM_ID, _long_body())).success is True
+    ok = _posts_ok(server)
+    assert len(ok) >= 3 and all(p.get("thread_root_id") is None for p in ok)
+
+
+async def test_post_channels_standalone_lost_reply_chunk_ack_reports_delivery_unknown(server, monkeypatch):
+    """PR #37 병합: allowlist 채널 fold 청크 1의 응답 유실(저장 후 본문 잘림) → 확인 GET은 최상위만 보므로 생략,
+    청크 1은 ambiguous로 남아 `success` + `partial_delivery 1/2` + `delivery_unknown chunk 2`(성공으로 숨기지 않음)."""
+    from gateway.config import PlatformConfig
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv(POST_CHANNELS_ENV, CHANNEL_ID)
+    _with_two_channels(server)
+    orig = server._store_or_replay
+    calls = {"n": 0}
+
+    def lose_second_ack(cid, payload):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            server.post_body_fault_after_commit = ["short_body"]  # 저장은 되고 응답만 잘림(ClientPayloadError, 재시도 없음)
+        return orig(cid, payload)
+    server._store_or_replay = lose_second_ack
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await standalone_send(cfg, CHANNEL_ID, "가" * 4500)
+    assert "error" not in out and out.get("success") is True
+    assert "text: partial_delivery 1/2" in out["warnings"]
+    assert "text: delivery_unknown chunk 2" in out["warnings"]
+    assert "media_delivered" not in out
+    assert server.history_calls == 0  # 스레드 답글 청크는 이력 GET으로 확인할 수 없다
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) == 2 and len(ids) == 2  # 서버에는 둘 다 저장됨 — 클라이언트만 청크 1을 모른다
+    assert ok[0].get("thread_root_id") is None and ok[1]["thread_root_id"] == ids[0]
+    assert out["message_id"] == ids[0]

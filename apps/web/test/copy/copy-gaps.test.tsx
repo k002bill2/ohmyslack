@@ -160,7 +160,9 @@ describe('컴포넌트 미구현 항목의 문구 상수(정본 그대로)', () 
       deactivateMember: '멤버 비활성화',
       deleteMessage: '메시지 삭제',
       shortcuts: '키보드 단축키',
+      notifications: '알림',
     });
+    expect(copy.HEADER_MENU_COPY.notifications).toBe('알림 설정…');
     expect(copy.MEMBER_DEACTIVATE_COPY.rowButton).toBe('비활성화');
     expect(copy.MEMBER_DEACTIVATE_COPY.rowButtonName('홍길동')).toBe('홍길동 비활성화');
     expect(copy.MEMBER_DEACTIVATE_COPY.confirm).toBe('멤버 비활성화');

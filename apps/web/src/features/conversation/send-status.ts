@@ -1,6 +1,7 @@
 /**
  * 메시지 전송 상태 전이(UI_STATES §2-5 전이 1–6, 디자인 §6-3). 순수 리듀서 — 대기 항목은 화면 메모리에만 둔다.
- * 저장 판정은 HTTP 결과로 한다. 연결 단절만으로 미저장을 단정하지 않고, 자동 재전송 큐를 만들지 않는다.
+ * 저장 판정은 HTTP 결과로 한다. 연결 단절만으로 미저장을 단정하지 않는다.
+ * 자동 재전송은 오프라인으로 못 보낸 항목(`offline`)만, 온라인 복귀 때 한 번(2026-11-17 결정, UI_STATES §2-5). 지속 큐는 없다.
  */
 
 export type SendStatus = 'sending' | 'confirmed' | 'unknown' | 'failed';
@@ -21,6 +22,8 @@ export interface PendingMessage {
   /** 「전송 중」에 대응 키가 같은 `message.created`를 받았다는 표식(전이 6). */
   readonly serverEventSeen: boolean;
   readonly messageId?: string;
+  /** 오프라인이라 보내지 못했거나 응답을 못 받음 — `online` 복귀 때 같은 ID로 한 번 자동 재전송 대상(화면 메모리 한정). */
+  readonly offline?: true | undefined;
 }
 
 /** 대응 키(UI_STATES §2-5): (conversation_id, author_id = 나, client_message_id). */
@@ -33,7 +36,8 @@ export interface MatchKey {
 export type SendEvent =
   | { readonly type: 'http-success'; readonly messageId: string }
   | { readonly type: 'http-error'; readonly status: number }
-  | { readonly type: 'network-error' }
+  /** `offline`: 오류 시점에 `navigator.onLine === false`였다(자동 재전송 대상 표식). */
+  | { readonly type: 'network-error'; readonly offline?: boolean }
   | { readonly type: 'message-created'; readonly key: MatchKey; readonly messageId: string }
   | { readonly type: 'retry' }
   /** 다시 시도 시점에 `navigator.onLine === false` → HTTP 미호출, 즉시 실패(디자인 §6-1 오프라인). */
@@ -44,7 +48,7 @@ export function createPending(input: MatchKey & { readonly body: string; readonl
   const { online, ...rest } = input;
   return online
     ? { ...rest, status: 'sending', serverEventSeen: false }
-    : { ...rest, status: 'failed', failure: 'retryable', serverEventSeen: false };
+    : { ...rest, status: 'failed', failure: 'retryable', serverEventSeen: false, offline: true };
 }
 
 export function sameKey(item: PendingMessage, key: MatchKey): boolean {
@@ -80,13 +84,14 @@ export function transition(item: PendingMessage, event: SendEvent): PendingMessa
         : { ...item, status: 'failed', failure: 'retryable' };
     case 'network-error':
       if (item.status !== 'sending') return item;
-      return item.serverEventSeen ? { ...item, status: 'confirmed' } : { ...item, status: 'unknown' };
+      if (item.serverEventSeen) return { ...item, status: 'confirmed' };
+      return event.offline === true ? { ...item, status: 'unknown', offline: true } : { ...item, status: 'unknown' };
     case 'message-created':
       return onMessageCreated(item, event.key, event.messageId);
     case 'retry':
-      return canRetry(item) ? { ...item, status: 'sending', failure: undefined } : item;
+      return canRetry(item) ? { ...item, status: 'sending', failure: undefined, offline: undefined } : item;
     case 'offline-retry':
-      return canRetry(item) ? { ...item, status: 'failed', failure: 'retryable' } : item;
+      return canRetry(item) ? { ...item, status: 'failed', failure: 'retryable', offline: true } : item;
     case 'ws-closed':
       // 전이 1: 연결 단절·WS 종료는 어떤 상태도 바꾸지 않는다.
       return item;

@@ -35,17 +35,9 @@
 .push-settings > p {
   margin: 0;
 }
-.push-bot-hint {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: var(--space-3) var(--space-4) 0;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
+/* Jarvis DM 알림 설정 Dialog(G-74): 안내 한 줄 아래 PushSettings. */
+.push-dialog-hint {
+  margin: 0 0 var(--space-3);
   font-size: var(--text-sm);
-}
-.push-bot-hint > p {
-  margin: 0;
+  color: var(--text-muted);
 }

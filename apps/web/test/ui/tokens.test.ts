@@ -107,6 +107,13 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
     expect(tok('dark', '--bg-elevated').value).toBe('#111113');
   });
 
+  it('keeps decorative borders at the R5 design slate6 and control boundaries at 3:1 (§2-3 4항 예외, A1)', () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      expect(tok(scheme, '--border-subtle')).toMatchObject({ role: 'surface', scale: 'slate', step: 6 });
+      expect(tok(scheme, '--border')).toMatchObject({ role: 'nontext', step: 9 });
+    }
+  });
+
   it('gives solid buttons white text in light (Open Color) and slate1 text in dark', () => {
     expect(tok('light', '--accent-strong').value).toBe('#008573');
     expect(tok('light', '--on-accent-strong')).toMatchObject({ value: '#ffffff', scale: 'open-color' });

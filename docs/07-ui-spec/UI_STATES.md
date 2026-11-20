@@ -169,10 +169,10 @@
 
 | 상태(정본명) | 진입 조건 | 표시(투명도 사용 금지) | 접근성 | 가능한 동작 | 탈출 조건 |
 |---|---|---|---|---|---|
-| **전송 중** | 작성기 전송 → `POST /api/conversations/{id}/messages {client_message_id, body, thread_root_id?}` 발송, 응답 전 | 본문 **정상 대비**. 시간 자리에 `clock` + `--text-muted` 「전송 중」 | `aria-label="전송 중"` | 없음(수정·삭제·답글 비활성). **자동 재전송 큐 없음** | 2xx → 저장 확인 / 4xx·5xx → 실패 / 응답 없이 네트워크 오류·타임아웃 → 저장 여부 확인 중 |
+| **전송 중** | 작성기 전송 → `POST /api/conversations/{id}/messages {client_message_id, body, thread_root_id?}` 발송, 응답 전 | 본문 **정상 대비**. 시간 자리에 `clock` + `--text-muted` 「전송 중」 | `aria-label="전송 중"` | 없음(수정·삭제·답글 비활성). **지속 재전송 큐 없음**. 자동 재전송은 아래 「오프라인 자동 재전송」만 | 2xx → 저장 확인 / 4xx·5xx → 실패 / 응답 없이 네트워크 오류·타임아웃 → 저장 여부 확인 중 |
 | **저장 확인** | ① HTTP 2xx에 `id`·`seq`·`change_id` 도착, 또는 ② 「저장 여부 확인 중」 항목에 대응 키가 같은 `message.created` 수신(자동 해소), 또는 ③ 「다시 시도」 2xx | 일반 렌더. 성공 아이콘 **기본 비표시**(표시할 때만 `check` + `--success-text`) | StatusRegion 안내 없음 | 모두(답글·수정·삭제 — 본인) | **되돌리지 않는다.** 연결 단절·WS 종료·재연결로 다른 상태가 되지 않음(전이 1). 서버 변경만 반영: `edited_at` → 수정됨, `deleted_at` → 삭제 자리표시자 |
 | **저장 여부 확인 중** | 요청을 보냈으나 **응답 없이** 네트워크 오류·타임아웃, 또는 응답 전 페이지 복귀(가시성·bfcache 복귀. 새로고침은 아래 주의) | 시간 자리에 물음표 계열 아이콘(D §3-4 ⚠️ 이름 빌드 시 확정) + muted 「저장 여부 확인 중」 | 「저장 여부 확인 중 · 다시 시도」 버튼, `role="status"`(alert 아님 — 실패 단정 금지) | 「다시 시도」(**같은 `client_message_id`·같은 본문**), 삭제(로컬) | 자동: 대응 키가 같은 `message.created` 수신 → 저장 확인 / 수동: 「다시 시도」 2xx → 저장 확인, 4xx·5xx → 실패, 다시 응답 없음 → 이 상태 유지 / 삭제(로컬) → 목록에서 제거 |
-| **실패** | HTTP 오류 응답 확정(4xx·5xx), 또는 전송 시점 `navigator.onLine === false`(HTTP 미호출) | 왼쪽 2px `danger-solid` 선 + 시간 자리 경고 아이콘(⚠️ 이름 빌드 시 확정) | 「전송 실패 · 다시 시도」 + 「삭제」 버튼, `role="alert"` **1회** | 「다시 시도」(같은 ID) / 「삭제」(로컬). **400(상한·빈 본문)·409** 는 다시 시도 대신 「다시 작성」 안내, 새 `client_message_id` | 「다시 시도」 → 전송 중 / 「삭제」 → 제거 |
+| **실패** | HTTP 오류 응답 확정(4xx·5xx), 또는 전송 시점 `navigator.onLine === false`(HTTP 미호출) | 왼쪽 2px `danger-solid` 선 + 시간 자리 경고 아이콘(⚠️ 이름 빌드 시 확정) | 「전송 실패 · 다시 시도」 + 「삭제」 버튼, `role="alert"` **1회** | 「다시 시도」(같은 ID) / 「삭제」(로컬). **400(상한·빈 본문)·409** 는 다시 시도 대신 「다시 작성」 안내, 새 `client_message_id` | 「다시 시도」 → 전송 중 / 「삭제」 → 제거 / 오프라인 표식 항목은 `online` 이벤트 때 자동으로 전송 중(1회) |
 | **수정됨** | 응답·이벤트(`message.updated`)·이력에 `edited_at` 존재 | 본문 뒤 「(수정됨)」 muted | 시간 툴팁에 수정 시각 | 모두 | `deleted_at` → 삭제 자리표시자 |
 | **삭제 자리표시자** | `deleted_at` 존재(body 없음), `message.deleted` 수신 포함 | 이탤릭 muted 「삭제된 메시지입니다」, **자리 유지** | 답글 수가 있으면 CMP-14 유지 | 스레드 열기만 | 없음(최종 상태) |
 | 자기 멘션 | 응답·이벤트의 `mention_user_ids`에 내 ID(T §4:122) | 배경 `accent-bg` + 왼쪽 선 `accent-solid` + 라벨 「나를 멘션」(§9 결정 3), `@이름`은 `accent-text` | — | 모두 | 수정으로 내 ID 제거 → 해제 |
@@ -192,7 +192,8 @@
 **주의(자동 해소의 한계)**
 
 - T R3.1은 `client_message_id`를 **전송 응답과 `message.created`에만** 명시했다. `GET /api/sync`·이력 응답 projection의 포함 여부는 T에 없다(§8 Q-2). WS가 끊긴 동안 커밋된 메시지는 catch-up으로 들어오므로, 그 항목은 자동 해소되지 않을 수 있다. 이때는 수동 「다시 시도」(멱등)가 fallback이다.
-- 대기 항목은 **화면 메모리에만** 있다(P 원칙 2, T §6 오프라인 발신 큐 없음). 전체 새로고침·앱 종료 시 사라진다. 서버가 이미 저장했다면 새로고침 후 이력에 정상 메시지로 나타난다.
+- 대기 항목은 **화면 메모리에만** 있다(P 원칙 2, T §6 지속 발신 큐 없음). 전체 새로고침·앱 종료 시 사라진다. 서버가 이미 저장했다면 새로고침 후 이력에 정상 메시지로 나타난다.
+- **오프라인 자동 재전송**(2026-11-17 영환님 결정): 전송 시점 `navigator.onLine === false`로 실패한 항목, 오프라인에서 「다시 시도」한 항목, `onLine === false`인 동안 응답 없이 끝난 「저장 여부 확인 중」 항목에 표식을 남긴다. `online` 이벤트 때 표식 항목을 **생성 순서대로 하나씩**, **같은 `client_message_id`·본문·`thread_root_id`** 로 **한 번** 다시 보낸다(서버 멱등이 중복을 막는다). 재전송이 온라인에서 다시 실패하면 표식이 지워져 수동 「다시 시도」로 돌아간다(반복 없음). 온라인 상태의 4xx·5xx·네트워크 오류, 400·409(「다시 작성」), 삭제한 항목, 로그아웃 뒤는 보내지 않는다.
 
 **MessageBody**(D §6-2 CMP-08, T §5): 텍스트 노드로만 렌더, HTML 미실행. 자동 링크는 `https`·`http`만, 그 외 스킴은 일반 텍스트. 링크 `rel="noopener noreferrer"`. 코드 블록은 `--font-mono`, `overflow-x: auto`. 한글 줄바꿈 `word-break: keep-all; overflow-wrap: anywhere;`(D §3-2). 고유 상태 없음.
 
@@ -222,7 +223,7 @@
 | 상한 초과 | code point > 4,000(T §5) | 전송 버튼 비활성 + 「4,000자까지 입력할 수 있습니다」 | 편집 | ≤ 4,000 |
 | 초안 보존 | 대상(대화 또는 스레드 root)을 떠남·오버레이 닫힘·탭 전환 | 다시 열면 같은 초안 복원 | — | 로그아웃·401·페이지 종료 시 폐기(지속 저장 없음, D §7-3 초안 규칙) |
 | 나간 채널 | 본인이 나간 채널 | **작성기 숨김**(CMP-06) | — | join 2xx |
-| 오프라인·재연결 | 연결 상태 무관 | **비활성화하지 않음**. `onLine === false`일 때만 전송 시도가 즉시 「실패」 | 입력·전송 | — |
+| 오프라인·재연결 | 연결 상태 무관 | **비활성화하지 않음**. `onLine === false`일 때만 전송 시도가 즉시 「실패」, `online` 복귀 때 자동 재전송 1회(§2-5) | 입력·전송 | — |
 
 - **작성기 도움말(§9 결정 3, COPY_GAPS G-39):** 「Enter 전송 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter는 무시」. wide·medium에서 표시하고 compact(터치)에서는 숨긴다(Jarvis 결정). 작성기 입력에 `aria-describedby`로 연결한다.
 - **`/` 입력(P FR-BOT-06):** `/`로 시작하는 입력을 명령으로 해석하지 않는다. 작성기는 가로채지 않고 일반 텍스트로 원문 그대로 전송한다. 지정 테스트 `apps/web/test/conversation/slash-text.test.tsx`(DD 6-2 FR-BOT-06).
@@ -555,7 +556,7 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 |---|---|---|---|---|
 | 온라인 | 연결됨 | WS open, 마지막 catch-up 완료 | **숨김** | 정상 |
 | 재연결 중 | 「다시 연결 중…」 | WS close 후 재시도 중(지수 백오프), `navigator.onLine === true` | `--warning-bg`, `refresh-cw` 회전(모션 축소 시 정지) | 입력·전송 정상. HTTP 결과로 판정 |
-| 끊김 | 「연결이 끊겼습니다」 상태 — 배너 전체 문구 「연결이 끊겼습니다. 지금 보내는 메시지는 저장되지 않습니다. 연결되면 다시 시도하세요.」 | `navigator.onLine === false`, 또는 HTTP 요청이 네트워크 오류·게이트웨이 응답(502/503/504)으로 **연속 2회** 실패(제안값. 게이트웨이 응답 포함은 W-16 F-8 결정) | danger, `wifi-off` | 입력 가능. `onLine === false`면 전송 즉시 「실패」(HTTP 미호출). 네트워크 오류 경우는 「저장 여부 확인 중」. 저장 확인된 메시지는 불변 |
+| 끊김 | 「연결이 끊겼습니다」 상태 — 배너 전체 문구 「연결이 끊겼습니다. 인터넷 연결이 없을 때 보낸 메시지는 연결되면 자동으로 다시 보냅니다.」 | `navigator.onLine === false`, 또는 HTTP 요청이 네트워크 오류·게이트웨이 응답(502/503/504)으로 **연속 2회** 실패(제안값. 게이트웨이 응답 포함은 W-16 F-8 결정) | danger, `wifi-off` | 입력 가능. `onLine === false`면 전송 즉시 「실패」(HTTP 미호출). 네트워크 오류 경우는 「저장 여부 확인 중」. 저장 확인된 메시지는 불변 |
 | 따라잡기 중 | 「최신 상태 확인 중…」 | 전경 복귀·재연결 직후 `GET /api/sync` 페이지 catch-up → `GET /api/conversations` 읽음 snapshot → 구독 진행 중. 410이면 snapshot 절차 동안 유지 | neutral, 목록 `aria-busy="true"` | 본문 흐리게 하지 않음. 새 전송은 정상 판정. **unread 배지·구분선·사이드바 굵게 갱신 보류**, 완료 후 한 번에 적용 |
 
 ### 5-2. 전이 표
@@ -637,7 +638,7 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 
 - FR-MSG-10·FR-BOT-04·FR-BOT-06·FR-OPS-05·FR-CLIENT-05 5행은 ADR-001 채택(2026-11-08, P0 42개)으로 추가한 UI 관련 P0이며 DD 6-2 R3.3 행을 그대로 옮겼다. 웹 구현은 W-19(봇 표시·서식)·W-22(웹 첨부)·W-23(Web Push).
 - 같은 W-10 범위의 인접 테스트(참고, 이번 매핑 대상 아님): FR-MSG-08 `apps/web/test/conversation/composer-ime.test.tsx`(§4-3), FR-SYNC-07 보조 `apps/web/test/sync/resume-banner.test.tsx`(§5), FR-SYNC-04 보조 `apps/web/test/sidebar/badge-sync.test.tsx`(§2-3).
-- `send-status.test.tsx`에 넣을 사례 제안(테스트 이름은 바꾸지 않음): ① 2xx 전 저장 확인 미표시 ② 4xx·5xx → 「전송 실패 · 다시 시도」 ③ 응답 없는 네트워크 오류 → 「저장 여부 확인 중 · 다시 시도」(실패 아님) ④ 대응 키가 같은 `message.created` → 저장 확인으로 자동 해소 ⑤ 다른 `author_id`·다른 대화의 같은 `client_message_id`는 해소하지 않음 ⑥ WS close로 저장 확인 항목이 바뀌지 않음 ⑦ 재시도 요청이 같은 `client_message_id`·본문 ⑧ 자동 재전송 0회.
+- `send-status.test.tsx`에 넣을 사례 제안(테스트 이름은 바꾸지 않음): ① 2xx 전 저장 확인 미표시 ② 4xx·5xx → 「전송 실패 · 다시 시도」 ③ 응답 없는 네트워크 오류 → 「저장 여부 확인 중 · 다시 시도」(실패 아님) ④ 대응 키가 같은 `message.created` → 저장 확인으로 자동 해소 ⑤ 다른 `author_id`·다른 대화의 같은 `client_message_id`는 해소하지 않음 ⑥ WS close로 저장 확인 항목이 바뀌지 않음 ⑦ 재시도 요청이 같은 `client_message_id`·본문 ⑧ 온라인 상태의 실패는 자동 재전송 0회 ⑨ 오프라인 표식 항목은 `online` 복귀 때 같은 ID로 순서대로 1회.
 
 ---
 
@@ -678,7 +679,7 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | Q-H1 | 봇 배지 문구·모양(텍스트 "봇" vs "Jarvis" 고정 아이콘 — 후보 표기이며 정본 아님) | CMP-26, CMP-03(Jarvis DM 항목) | Designer → D §6 정본 |
 | Q-H2 | 첨부만 보낼 때 본문으로 채울 자리 문구(후보 예: "[음성]"·"[이미지]"), 작성기 업로드 실패 문구(크기·형식·허용 형식 안내) | CMP-11 | Designer |
 | Q-H3 | 오디오 플레이어 버튼 이름·재생 실패 문구·만료 자리표시자 문구, 이미지 `alt` 기본값 | CMP-27·28·29 | Designer |
-| Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — ★ 설정 화면 + Jarvis DM 첫 진입 시 1회 안내 제안. 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
+| Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — 사이드바 계정 영역 + Jarvis DM 헤더 더보기 「알림 설정…」 Dialog(2026-11-16 영환님 지시, COPY_GAPS G-74 — 본문 위 1회 안내 배너는 폐지). 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
 | Q-H5 | 알림 고정 문구(후보: "Jarvis" / "새 메시지가 있습니다")와 잠금 화면 노출 정책 | CMP-30, 서비스 워커 | 영환님 + TRD 저자(T §6-2) |
 | Q-H6 | 제목(`#`) 서식의 시각 크기 단계와 메시지 목록 밀도 영향 | CMP-08 | Designer |
 

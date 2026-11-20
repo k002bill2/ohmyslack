@@ -51,14 +51,21 @@ def _is_uuid(value: Any) -> bool:
     return True
 
 
-def _ack_message_id(body: Any, *, conversation_id: str, key: str, author_id: str) -> Optional[str]:
-    """정상 ACK 구조 검사(설계 §Q1-2의 6개 조건) — 통과하면 메시지 ID, 아니면 None."""
+def _ack_message_id(body: Any, *, conversation_id: str, key: str, author_id: str,
+                    thread_root_id: Optional[str] = None) -> Optional[str]:
+    """정상 ACK 구조 검사(설계 §Q1-2의 6개 조건) — 통과하면 메시지 ID, 아니면 None.
+
+    `thread_root_id`: 요청한 루트(allowlist 채널 fold 청크). 없으면 기존대로 최상위만, 있으면 ACK 루트가 그 값(UUID
+    소문자 비교 — 서버는 소문자로 저장)이어야 한다.
+    """
     msg = body.get("message") if isinstance(body, dict) else None
     if not isinstance(msg, dict) or not _is_uuid(msg.get("id")):
         return None
     if msg.get("conversation_id") != conversation_id or msg.get("client_message_id") != key:
         return None
-    if msg.get("author_id") != author_id or msg.get("thread_root_id") is not None:
+    got_root = msg.get("thread_root_id")
+    want_root = thread_root_id.lower() if thread_root_id else None
+    if msg.get("author_id") != author_id or (str(got_root).lower() if got_root is not None else None) != want_root:
         return None
     return str(msg["id"])
 
@@ -248,7 +255,7 @@ class BotClient:
                 return "ambiguous", status, True, "once", 0.0, None  # 3xx·그 밖 2xx
             body = await resp.json()
         mid = _ack_message_id(body, conversation_id=conversation_id, key=payload["client_message_id"],
-                              author_id=author_id)
+                              author_id=author_id, thread_root_id=payload.get("thread_root_id"))
         if mid is None:
             return "ambiguous", status, True, "once", 0.0, None  # 구조 위반·ID 없음
         return "ack", status, False, None, 0.0, mid

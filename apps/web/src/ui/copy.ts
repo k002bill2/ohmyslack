@@ -131,6 +131,7 @@ export const DIALOG_TITLES = {
   deactivateMember: '멤버 비활성화',
   deleteMessage: '메시지 삭제',
   shortcuts: '키보드 단축키',
+  notifications: '알림',
 } as const;
 
 export const CANCEL_LABEL = '취소';
@@ -265,6 +266,8 @@ export const HEADER_MENU_COPY = {
   more: '대화 더보기',
   menu: '대화 메뉴',
   shortcuts: '키보드 단축키',
+  /** G-74: Jarvis DM 헤더 더보기 → 알림 설정 Dialog(본문 위 안내 배너 대체). */
+  notifications: '알림 설정…',
   leave: '채널 나가기…',
 } as const;
 
@@ -393,7 +396,7 @@ export const PUSH_NOTIFICATION_COPY = {
 
 /**
  * CMP-30 PushSettings 문구(W-23). 정본 미정(UI_STATES §8 Q-H4) — Jarvis ★ 임시 결정.
- * 위치: 사이드바 계정 영역 + Jarvis DM 첫 진입 시 1회 안내(Q-H4 제안).
+ * 위치: 사이드바 계정 영역 + Jarvis DM 헤더 더보기 「알림 설정…」 Dialog(G-74, 2026-11-16 — 본문 위 배너 폐지).
  */
 export const PUSH_SETTINGS_COPY = {
   title: '알림',
@@ -407,7 +410,6 @@ export const PUSH_SETTINGS_COPY = {
   failed: '알림을 등록하지 못했습니다.',
   retry: RETRY_LABEL,
   botHint: 'Jarvis의 새 메시지를 알림으로 받을 수 있습니다.',
-  dismissHint: '닫기',
 } as const;
 
 /**

@@ -46,4 +46,43 @@ describe('스레드 작성기 하단 고정(R5 실렌더 834 — 시안 「중�
       .at(-1)?.[2] ?? '';
     expect(rule).toMatch(/margin: auto var\(--space-3\) var\(--space-3\)/);
   });
+  it('긴 스레드(패널 스크롤)에서도 sticky 작성기가 바닥 여백 space-3을 지킨다 — bottom 0이면 margin이 무시돼 패널 끝에 붙는다(운영 실렌더 834, 1px)', () => {
+    const rule = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => (m[1] ?? '').trim() === ".app-shell:not([data-layout='compact']) .thread-panel > .composer")
+      .at(-1)?.[2] ?? '';
+    expect(rule).toMatch(/bottom: var\(--space-3\)/);
+  });
+});
+
+describe('넓은 화면 폭(B1, 2026-11-16)·분할 손잡이 대비(A1)', () => {
+  const refresh = readFileSync(fileURLToPath(new URL('../../src/features/layout/refresh.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  it('타임라인·작성기에 시안 읽기 폭 상한(800/830px)을 두지 않는다', () => {
+    expect(refresh).not.toMatch(/100% - 800px/);
+    expect(refresh).not.toMatch(/max-width: 830px/);
+  });
+  it('분할 손잡이는 조작 대상이라 장식 토큰이 아닌 --border(3:1)를 쓴다', () => {
+    const rule = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => (m[1] ?? '').trim() === '.splitter-handle').at(-1)?.[2] ?? '';
+    expect(rule).toContain('background: var(--border);');
+  });
+});
+
+describe('분할 그리드 스레드 열 바닥 보장(N1·P3-3)', () => {
+  const refresh = readFileSync(fileURLToPath(new URL('../../src/features/layout/refresh.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (selector: string) =>
+    [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => (m[1] ?? '').trim() === selector).at(-1)?.[2] ?? '';
+  it('스레드 열 = minmax(--thread-min, --thread-w) — 본문 바닥을 먼저 지키고 남는 공간만큼만 사용자 폭', () => {
+    for (const sel of [
+      ".app-shell[data-split='on'][data-thread='open']",
+      ".app-shell[data-split='on'][data-sidebar='collapsed'][data-thread='open']",
+    ]) {
+      expect(rule(sel)).toContain('minmax(calc(var(--body-min) - 4 * var(--space-3)), 1fr) var(--space-3) minmax(var(--thread-min), var(--thread-w))');
+    }
+  });
+  it('분할 중 스레드 패널은 고정 폭 대신 열을 채운다', () => {
+    expect(rule(".app-shell[data-split='on'] > .thread-wide")).toContain('width: auto');
+  });
+  it('--thread-min 토큰은 splitLimits.threadMin(320)과 같다', async () => {
+    const { layoutVars, splitLimits } = await import('../../src/ui/tokens.js');
+    expect(layoutVars['--thread-min']).toBe(`${splitLimits.threadMin}px`);
+  });
 });

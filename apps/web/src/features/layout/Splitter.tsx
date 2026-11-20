@@ -13,15 +13,17 @@ export interface SplitterProps {
   readonly onResize: (width: number) => void;
   /** ←→ 한 칸(부호는 화면 방향: ← = -1). */
   readonly onStep: (screenDirection: -1 | 1) => void;
+  /** Home = 최소(-1), End = 최대(1) — APG Window Splitter. */
+  readonly onEdge: (edge: -1 | 1) => void;
   readonly onEnter: () => void;
   readonly onReset: () => void;
 }
 
 /**
  * R4 분할선(시안 Main): `role="separator"` + 포커스 가능(APG Window Splitter). 포인터 캡처로 끌고,
- * ←→로 한 칸, Enter로 접기/닫기, 더블클릭으로 기본 폭. 손잡이는 hover·포커스·끌기 중에 길어지고 accent가 된다(CSS).
+ * ←→로 한 칸, Home/End로 최소/최대, Enter로 접기/닫기, 더블클릭으로 기본 폭. 손잡이는 hover·포커스·끌기 중에 길어지고 accent가 된다(CSS).
  */
-export function Splitter({ label, now, min, max, dir, measure, onResize, onStep, onEnter, onReset }: SplitterProps) {
+export function Splitter({ label, now, min, max, dir, measure, onResize, onStep, onEdge, onEnter, onReset }: SplitterProps) {
   const drag = useRef<{ readonly x: number; readonly base: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
@@ -47,6 +49,9 @@ export function Splitter({ label, now, min, max, dir, measure, onResize, onStep,
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
       onStep(e.key === 'ArrowLeft' ? -1 : 1);
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      onEdge(e.key === 'Home' ? -1 : 1);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       onEnter();

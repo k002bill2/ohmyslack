@@ -22,7 +22,8 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
 | `OHMYSLACK_BOT_TOKEN` | 예 | 봇 토큰. Hermes 비밀 저장 규칙(`get_scoped_secret`)으로만 읽고, 로그에는 남기지 않습니다 |
 | `OHMYSLACK_BOT_URL` | 둘 중 하나 | 예: `http://127.0.0.1:<BOT_PORT>`. **루프백(`127.0.0.1`·`localhost`) + http + 포트**만 허용하며, 그 외 값이면 연결을 거부합니다(fatal `config_invalid`) |
 | `OHMYSLACK_BOT_PORT` | 둘 중 하나 | URL이 없을 때 `http://127.0.0.1:<port>`로 씁니다 |
-| `OHMYSLACK_HOME_CHANNEL` | 권장 | cron `deliver=ohmyslack`의 대상인 Jarvis DM conversation id입니다. **DM만** 됩니다 — 채널 id면 standalone 전송을 거부합니다 |
+| `OHMYSLACK_HOME_CHANNEL` | 권장 | cron `deliver=ohmyslack`의 대상인 Jarvis DM conversation id입니다. DM 또는 `OHMYSLACK_POST_CHANNELS`에 든 채널만 됩니다 — 그 밖의 채널 id면 standalone 전송을 거부합니다 |
+| `OHMYSLACK_POST_CHANNELS` | 아니오 | 최상위 게시를 허용할 채널 conversation id 목록(쉼표 구분, 공백·빈 항목 무시, UUID 아닌 항목은 무시하고 개수만 경고). `/me`에서 channel로 확인된 대화에만 적용됩니다. 미설정이면 채널 최상위 송신 0(기존 동작). 2026-11-19 브리핑 채널용(BOT_CHANNEL_SPEC §5-5·§5-6) live 어댑터는 시작 때 1회 읽으므로 값을 바꾸면 게이트웨이를 재시작해야 합니다(cron standalone은 호출마다 읽음). |
 | `OHMYSLACK_ALLOWED_USERS` | 권장 | owner user id입니다. Hermes 인가 계층에도 같은 owner를 넣습니다. 어댑터의 author_id 필터와 함께 이중 방어가 됩니다 |
 
 커서 파일은 `~/.hermes/ohmyslack/cursor.json`(Hermes 홈 하위)에 저장합니다. 담는 값은 숫자 `change_id`, 저장 시각, 최근 처리한 message id뿐이고 본문과 토큰은 넣지 않습니다.
@@ -49,7 +50,8 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
   - 채널에서는 **답글을 포함한 모든 메시지**가 서버 `mention_user_ids`에 봇을 담고 있어야 실행합니다. 본문 `@이름` 문자열은 판정에 쓰지 않습니다. 멘션 없는 owner 글은 실행·백로그 집계 없이 중복 방지 기록만 합니다. 수정된 글(`edited_at`)은 실행하지 않습니다
   - Hermes에 넘기기 전 본문 **맨 앞** `@<봇 표시 이름>` 토큰 1개만 지우고 공백을 다듬습니다(`@Jarvis /approve` → `/approve`)
   - 세션: 채널 최상위 = 새 세션(`…:channel:<대화>:<message.id>`), 답글 = 루트 세션
-  - 송신은 **스레드 답글로만** 합니다. 루트를 모르는 채널 송신(첨부 포함)은 보내지 않고 로그만 남깁니다
+  - 송신은 **스레드 답글로만** 합니다. 루트를 모르는 채널 송신(첨부 포함)은 보내지 않고 로그만 남깁니다. 예외: `OHMYSLACK_POST_CHANNELS` 채널은 최상위(live·standalone, 첨부 포함)도 보냅니다 4000자를 넘는 최상위 게시는 첫 조각만 최상위로 올리고 나머지 조각은 첫 조각의 스레드 답글로 묶입니다(첫 조각 id를 못 얻으면 남은 조각은 최상위로 보내고 경고만 남김. DM 분할은 그대로 연속 최상위).
+  - `OHMYSLACK_POST_CHANNELS` 채널에서 봇이 쓴 최상위 글(브리핑) 스레드에 owner가 멘션 없이 답하면 그 스레드 세션으로 넘깁니다. 다른 채널의 봇 글 스레드·비owner 답글은 무시합니다
   - 15분을 넘긴 채널 지시의 안내는 채널이 아니라 홈 DM에 「오프라인 동안 받은 N건은 처리하지 않았습니다 (<대화 id>)」로 1회 보냅니다
   - 멤버십: WS `membership.changed joined` → `/me` 재조회 후 그 대화만 현재 watermark로 구독(재연결 없음). `left`·`error not_found` → 대화 맵·구독 목록에서 제거, 이후 그 대화 프레임은 무시합니다. `sync.required`는 `/me`를 다시 읽은 뒤 재구독합니다. catch-up에 `/me`에 없는 대화가 보이면(참여 직후 경쟁) 처리 전에 `/me`를 다시 읽습니다
 - **아웃바운드**
@@ -65,7 +67,8 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
   - 파일 검사·읽기는 daemon 스레드 1개에서 한 번만 합니다(`O_NOFOLLOW` open → `fstat`으로 사유 판정, 이벤트 루프 스레드의 파일 시스템 호출 없음). 멈춘 파일 시스템 읽기가 있어도 Hermes `asyncio.run` 종료가 그 스레드를 기다리지 않습니다
   - 지원 밖 형식(문서·영상 등)·없는 파일·상한 초과·업로드 실패·4개 초과(지원 형식 앞 4개만 시도)·시간 예산 초과는 업로드하지 않고 파일마다 `warnings`에 `"<파일명>: <사유>"` 한 줄(`unsupported_type`·`not_found`·`too_large`·`rejected`·`upload_failed`·`too_many`·`budget_exceeded`·`read_unavailable`)을 싣습니다. 텍스트는 그대로 보냅니다
   - 시간: 전송 전체(`/me`·파일 읽기·업로드·청크 게시와 재시도)는 시작부터 **25초**(`STANDALONE_TOTAL_DEADLINE_S`) 안에서만 합니다. 예약은 시작 시각 기준 절대 deadline(`_BUDGET_SPLIT`, TOTAL 하나에서 파생): `/me` 3초 · `/me`+읽기+업로드 15초 · 게시·재시도 20초 · 확인 GET 23초(게시가 끊겨도 확인 가능) · `session.close()` 25초. 바깥은 `asyncio.timeout(25)` 백스톱이고 정리 실패·포기는 확인된 전송 결과를 바꾸지 않습니다. **25초는 협조적 취소 전제**입니다 — 취소를 억제하는 정리, 루프를 막는 동기 작업, `asyncio.run` 종료 시간은 보장 밖입니다. `localhost` 주소는 standalone에서 `127.0.0.1`로 바꿔 resolver 스레드를 피합니다. 남은 시간보다 긴 재시도 대기(429 `Retry-After` 등)는 기다리지 않습니다. 25초는 Hermes 폴백 분기(실행 중인 루프 안에서 불릴 때 30초)보다 짧게 잡은 값이지만, 그 30초 안 종료를 증명하지 않으므로 폴백 이중 게시(R3-a)를 막는다고 단정하지 않습니다 — 열린 위험입니다. **Hermes `cron.standalone_send_timeout_seconds`가 기본 60초라고 가정합니다** — 25초 밑으로 낮추면 Hermes 취소가 먼저 와서 아래 보고가 사라집니다
-  - 결과 규칙: 청크를 하나도 못 올리면 `send_error`(모인 첨부 사유 포함, `deadline_exceeded`·`HTTP <status>` 등)입니다. 아무것도 나가지 않았으므로 Hermes 재전달 큐가 안전합니다. 청크 k개(≥ 1)를 올린 뒤 실패하거나 deadline이 지나면 `success: True` + `warnings`의 `text: partial_delivery <k>/<n>`입니다. 오류로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가 중복되므로, **중복 대신 보이는 꼬리 유실**을 택합니다(첫 청크에 첨부가 결속되므로 첨부는 전달됨). Hermes cron은 `warnings`를 전달 오류(`delivery warning: …`)로 올립니다. 첫 게시가 확정 거부(4xx)로 끝나면 아무것도 저장되지 않아 Hermes 재전달이 안전합니다. 응답이 끊겨 저장 여부를 모르면 플러그인은 같은 키로 다시 보내고, 그래도 모르면 봇 이력에서 키를 찾아 확인합니다. **확인까지 실패하면 `delivery_unknown` 오류를 돌려주며, 이때 Hermes 재전달로 같은 메시지가 한 번 더 올라갈 수 있습니다. 이 위험은 해결되지 않았고 수용된 것입니다(2026-11-14).** `media_delivered: True`는 첨부가 모두 업로드되고(파일 경고 0) 첫 청크가 확인됐을 때만 붙고, 뒤 청크의 텍스트 경고와는 무관합니다
+  - 결과 규칙: 청크를 하나도 못 올리면 `send_error`(모인 첨부 사유 포함, `deadline_exceeded`·`HTTP <status>` 등)입니다. 첫 청크가 확정 거부(rejected)로 끝난 경우에만 아무것도 나가지 않았으므로 Hermes 재전달 큐가 안전합니다(첫 청크 `delivery_unknown`·`idempotency_conflict`는 아래처럼 중복 위험이 남습니다). 청크 k개(≥ 1)를 올린 뒤 실패하거나 deadline이 지나면 `success: True` + `warnings`의 `text: partial_delivery <k>/<n>`입니다. 오류로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가 중복되므로, **중복 대신 보이는 꼬리 유실**을 택합니다(첫 청크에 첨부가 결속되므로 첨부는 전달됨). Hermes cron은 `warnings`를 전달 오류(`delivery warning: …`)로 올립니다. 첫 게시가 확정 거부(4xx)로 끝나면 아무것도 저장되지 않아 Hermes 재전달이 안전합니다. 응답이 끊겨 저장 여부를 모르면 플러그인은 같은 키로 다시 보내고, 그래도 모르면 봇 이력에서 키를 찾아 확인합니다. **확인까지 실패하면 `delivery_unknown` 오류를 돌려주며, 이때 Hermes 재전달로 같은 메시지가 한 번 더 올라갈 수 있습니다. 이 위험은 해결되지 않았고 수용된 것입니다(2026-11-14).** `media_delivered: True`는 첨부가 모두 업로드되고(파일 경고 0) 첫 청크가 확인됐을 때만 붙고, 뒤 청크의 텍스트 경고와는 무관합니다
+  - 확인 한계: 봇 이력 확인 GET은 최상위 메시지만 보므로, `OHMYSLACK_POST_CHANNELS` 채널에서 스레드 답글로 묶인 두 번째 이후 조각의 응답이 끊기면 확인하지 않고 `partial_delivery` + `delivery_unknown chunk <i>` 경고로 보고합니다(성공으로 숨기지 않음)
   - 남은 위험(플러그인만으로는 못 막음, Hermes 본체 변경 제안은 별건):
     - A-1: Hermes 바깥 상한을 25초 밑으로 설정하면 어댑터 deadline보다 먼저 취소됩니다. 이때 warnings·부분 보고가 사라지고, 부분 게시 상태면 재전달 큐 중복이 생길 수 있습니다
     - A-2: 재전달 큐는 부분 게시를 모릅니다. 정상 반환은 위 규칙으로 피하지만, 취소 경로(바깥 타임아웃·프로세스 종료)에서는 보고할 기회가 없습니다

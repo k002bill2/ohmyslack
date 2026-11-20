@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import CHANNEL_ID, DM_ID, TOKEN, FakeClock
+from conftest import BOT_ID, CHANNEL_ID, DM_ID, TOKEN, FakeClock
 
 MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" * 64
 PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
@@ -302,4 +302,49 @@ async def test_me_exhausting_deadline_skips_upload_and_post(server, tmp_path, mo
     assert "error" in out and "success" not in out
     assert "deadline_exceeded" in out["error"]
     assert "briefing.mp3: budget_exceeded" in out["error"]  # 실패 로그에 첨부 사유도 남는다
+    assert server.uploads == [] and server.posts == []
+
+
+async def test_post_channels_allowlisted_channel_standalone_binds_attachment(server, tmp_path, monkeypatch):
+    """브리핑 채널 allowlist(2026-11-19): 채널 최상위 standalone도 첨부를 첫 청크에 결속한다."""
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv("OHMYSLACK_POST_CHANNELS", CHANNEL_ID)
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel"}]
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await standalone_send(_cfg(server), CHANNEL_ID, "아침 브리핑", media_files=[(path, True)])
+    assert out["success"] is True and not out.get("warnings")
+    post = _ok_posts(server)[-1]
+    assert post["conversation_id"] == CHANNEL_ID and post.get("thread_root_id") is None
+    assert len(post.get("attachment_ids") or []) == 1
+
+
+async def test_post_channels_standalone_long_body_attachment_folds_into_chunk0_thread(server, tmp_path, monkeypatch):
+    """PR #37 병합: allowlist 채널 + 긴 본문 + 첨부 1개 → 첨부는 청크 0에만, 청크 1+는 청크 0 id 스레드 답글,
+    feature 구조(멱등 키·정상 ACK 검사)에서도 모든 청크 confirmed → `media_delivered`."""
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv("OHMYSLACK_POST_CHANNELS", CHANNEL_ID)
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel"}]
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await standalone_send(_cfg(server), CHANNEL_ID, "가" * 9000, media_files=[(path, True)])
+    assert out.get("success") is True and not out.get("warnings")
+    assert out.get("media_delivered") is True
+    ok = _ok_posts(server)
+    assert len(ok) >= 3 and all(p["conversation_id"] == CHANNEL_ID for p in ok)
+    first_id = server.idem[(CHANNEL_ID, BOT_ID, ok[0]["client_message_id"])]["id"]
+    assert ok[0].get("thread_root_id") is None and len(ok[0].get("attachment_ids") or []) == 1
+    assert all(p.get("thread_root_id") == first_id and not p.get("attachment_ids") for p in ok[1:])
+    assert out["message_id"] == server.idem[(CHANNEL_ID, BOT_ID, ok[-1]["client_message_id"])]["id"]
+    assert server.history_calls == 0
+
+
+async def test_post_channels_standalone_non_allowlisted_channel_uploads_and_posts_nothing(
+        server, tmp_path, monkeypatch):
+    """PR #37 병합: `/me`에서 channel이어도 allowlist 밖이면 확정 거부 — 업로드 0·게시 0."""
+    from ohmyslack.adapter import standalone_send
+    monkeypatch.setenv("OHMYSLACK_POST_CHANNELS", "00000000-0000-0000-0000-0000000000c9")  # 다른 채널만 허용
+    server.conversations = [{"id": DM_ID, "kind": "dm"}, {"id": CHANNEL_ID, "kind": "channel"}]
+    path = _write(tmp_path, "briefing.mp3", MP3)
+    out = await standalone_send(_cfg(server), CHANNEL_ID, "아침 브리핑", media_files=[(path, True)])
+    assert "success" not in out
+    assert "target must be the owner DM or an allowlisted channel" in out["error"]
     assert server.uploads == [] and server.posts == []
