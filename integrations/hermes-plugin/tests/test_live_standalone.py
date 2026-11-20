@@ -273,11 +273,12 @@ async def test_parity_download_unknown_attachment_is_404(pair):
     await _expect_same(pair, (404, "not_found"), make)
 
 
-# ---------------------------------------------------------------- B'. 불일치 — 실서버 동작이 기대값(가짜는 고치지 않음)
+# ---------------------------------------------------------------- B'. 형식 오류 본문 + 없는 루트 — 루트 판정 생략(400)
 
-async def test_real_blank_body_with_missing_root_is_400_not_404(pair):
+async def test_parity_blank_body_with_missing_root_is_400_not_404(pair):
     """실서버 threadRootGuard는 본문 전체가 스키마를 통과할 때만 루트를 본다(bots/routes.ts:190-195 — 형식 오류는 sendAs의 400).
-    가짜는 본문 검사(conftest.py:299) 전에 루트 404(:289-293)를 내 404를 준다 — REPORT 「불일치」. 여기서는 실서버만 단언한다."""
-    status, body = await _post(pair, pair.real, {"client_message_id": str(uuid.uuid4()), "body": "",
-                                                 "thread_root_id": str(uuid.uuid4())})
-    assert (status, _code(pair.real, body)) == (400, "invalid_request")
+    가짜도 같은 순서로 맞췄다(conftest.py post: body_ok일 때만 루트 404)."""
+    async def make(side: Side):
+        return await _post(pair, side, {"client_message_id": str(uuid.uuid4()), "body": "",
+                                        "thread_root_id": str(uuid.uuid4())})
+    await _expect_same(pair, (400, "invalid_request"), make)
