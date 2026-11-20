@@ -1,13 +1,16 @@
 """ADR-002 1a 재작업: standalone 전송을 Hermes **실제 진입점**으로 검증한다(DESIGN p2s1-1a-redesign §5 #1–#10).
 
-`standalone_send`를 직접 부르지 않는다. Hermes `tools.send_message_tool._platform_max_length`·`_send_to_platform`,
-`cron.scheduler_delivery._standalone_send`·`_deliver_standalone`을 거친다(PYTHONPATH = Hermes 체크아웃, 읽기 전용).
+`standalone_send`를 직접 부르지 않는다. Hermes `gateway.outbound.send._platform_max_length`·`_send_to_platform`·
+`_handle_send`, `cron.scheduler_delivery_standalone._standalone_send`·`cron.scheduler_delivery._deliver_standalone`을
+거친다(PYTHONPATH = Hermes 체크아웃, 읽기 전용). Hermes `f8acc268`(11-16)에서 `tools/send_message_tool.py`가
+`gateway/outbound/{send,senders,targets}.py`로 옮겨졌다.
 Hermes는 sender에 `clock=` 등을 넘길 수 없으므로 시계·deadline은 어댑터 모듈 속성으로 주입한다.
 """
 
 from __future__ import annotations
 
 import functools
+import json
 import os
 import threading
 import time
@@ -32,9 +35,20 @@ def _standalone_lane(monkeypatch):
     """
     import functools as _ft
 
-    import tools.send_message_tool as smt
-    monkeypatch.setattr(smt, "_live_adapter", lambda platform, **_kw: (None, None))
-    monkeypatch.setattr(smt, "_plugin_standalone_sender", _ft.partial(smt._plugin_standalone_sender, discover=False))
+    import gateway.outbound.senders as senders
+    no_discover = _ft.partial(senders._plugin_standalone_sender, discover=False)
+    _patch_outbound(monkeypatch, "_live_adapter", lambda platform, *_a, **_kw: (None, None))
+    _patch_outbound(monkeypatch, "_plugin_standalone_sender", no_discover)
+
+
+def _patch_outbound(monkeypatch, name: str, value) -> None:
+    """`send`는 `senders`의 함수를 같은 객체로 import하고, `send._send_via_adapter`·`_send_to_platform`·
+    `_send_plugin_standalone`은 send 전역에서, `senders._registry_standalone_send`는 senders 전역에서 이름을 찾는다
+    → 두 모듈에 같은 대체물을 건다."""
+    import gateway.outbound.send as smt
+    import gateway.outbound.senders as senders
+    for mod in (smt, senders):
+        monkeypatch.setattr(mod, name, value)
 
 
 def _platform():
@@ -63,7 +77,7 @@ def _write(tmp_path: Path, name: str, data: bytes) -> str:
 
 async def _send(server, text, media_files=None):
     """Hermes `send_message`·cron 공통 진입점. 게이트웨이가 없으므로 `_live_adapter`는 (None, None) → standalone sender."""
-    from tools.send_message_tool import _send_to_platform
+    from gateway.outbound.send import _send_to_platform
     return await _send_to_platform(_platform(), _cfg(server.base), DM_ID, text, media_files=media_files)
 
 
@@ -102,7 +116,7 @@ def _target(base: str, *, live_error=None):
 
 # #1 ----------------------------------------------------------------------------------------------
 def test_registry_disables_hermes_chunking():
-    from tools.send_message_tool import _platform_max_length
+    from gateway.outbound.send import _platform_max_length
     assert _platform_max_length(_platform()) is None  # Hermes가 원문을 쪼개지 않고 sender를 1회 부른다
 
 
@@ -148,7 +162,7 @@ async def test_single_deadline_spans_all_chunks(server, tmp_path, monkeypatch):
 def test_cron_standalone_send_returns_within_bound_when_read_hangs(thread_server, tmp_path, monkeypatch):
     """루프 없는 sync 테스트: cron 정상 분기(`asyncio.run` + 60초)를 그대로 탄다(async 안에서는 30초 폴백 분기)."""
     import ohmyslack.adapter as adapter_mod
-    from cron.scheduler_delivery import _standalone_send
+    from cron.scheduler_delivery_standalone import _standalone_send  # probe module_files.sds
     deadline = 0.5
     monkeypatch.setattr(adapter_mod, "STANDALONE_TOTAL_DEADLINE_S", deadline)
     monkeypatch.setattr(adapter_mod, "STANDALONE_TEXT_RESERVE_S", 0.1)
@@ -251,11 +265,11 @@ async def test_first_chunk_failure_still_send_error(server, tmp_path, monkeypatc
 
 # #9 ----------------------------------------------------------------------------------------------
 async def test_live_send_message_full_text_chunked_by_adapter(server, make_adapter, monkeypatch):
-    import tools.send_message_tool as smt
+    import gateway.outbound.send as smt
     from gateway.platforms.base import BasePlatformAdapter
     adapter = make_adapter()
     assert await adapter.connect()
-    monkeypatch.setattr(smt, "_live_adapter", lambda platform, **_kw: (None, adapter))
+    _patch_outbound(monkeypatch, "_live_adapter", lambda platform, *_a, **_kw: (None, adapter))
     out = await smt._send_to_platform(_platform(), _cfg(server.base), DM_ID, LONG_TEXT)
     assert out.get("success") is True
     bodies = [p["body"] for p in _ok_posts(server)]
@@ -276,3 +290,41 @@ async def test_send_message_tool_media_tags_reach_sender_once(server, tmp_path, 
     assert out.get("success") is True
     posts = _ok_posts(server)
     assert len(posts) == 2 and len(posts[0]["attachment_ids"]) == 2 and "attachment_ids" not in posts[1]
+
+
+# #11 ---------------------------------------------------------------------------------------------
+def test_handle_send_home_channel_long_text_with_mp3(thread_server, tmp_path, monkeypatch):
+    """Hermes `send_message` 도구 진입점 `gateway.outbound.send._handle_send`(동기, JSON 문자열 반환)를 그대로 부른다.
+
+    `_resolve_platform_config`는 patch하지 않는다 — `_handle_send`가 지연 import하는 `gateway.config.load_gateway_config`만
+    바꿔, 가짜 서버를 가리키는 ohmyslack `PlatformConfig`를 가진 `GatewayConfig`를 돌려준다. 실제
+    `_resolve_platform_config`·`_home_chat_id`·`_resolve_tool_target`·`_send_to_platform`이 돈다.
+    홈 채널은 README의 `OHMYSLACK_HOME_CHANNEL`(cron_deliver_env_var). 동기 진입점(`_run_async`)이 루프를 돌리므로
+    sync 테스트 + 별도 스레드 가짜 서버(#4와 같은 이유).
+    """
+    import gateway.config as gw_config
+    import gateway.outbound.send as smt
+    from gateway.config import GatewayConfig, HomeChannel
+    calls = _spy_sender(monkeypatch)
+    # 홈 채널: 실제 Hermes는 load_gateway_config가 OHMYSLACK_HOME_CHANNEL을 PlatformConfig.home_channel로 싣는다.
+    # 그 로더를 대체하므로 같은 결과(HomeChannel)를 직접 싣는다(관측: GatewayConfig.get_home_channel → platforms[p].home_channel).
+    pconfig = _cfg(thread_server.base)
+    pconfig.home_channel = HomeChannel(platform=_platform(), chat_id=DM_ID, name="home")
+    config = GatewayConfig(platforms={_platform(): pconfig})
+    monkeypatch.setattr(gw_config, "load_gateway_config", lambda *_a, **_kw: config)
+    # relay 송신 허가(`_authorize_relay_target` → `gateway.relay.egress`)는 Hermes 위성·relay 정책이라 플러그인 계약 밖이다.
+    # 격리 HERMES_HOME에는 relay 라우팅 정보가 없어 거부되므로 「허가(None)」로만 바꾼다(관측: 반환 str|None, 문자열=거부 사유).
+    monkeypatch.setattr(smt, "_authorize_relay_target", lambda *_a, **_kw: None)
+    mp3 = _write(tmp_path, "briefing.mp3", MP3)
+    raw = smt._handle_send({"action": "send", "target": "ohmyslack", "message": f"{LONG_TEXT}\nMEDIA:{mp3}"})
+    out = json.loads(raw)
+    assert out.get("success") is True, out
+    media_paths = [str(m if isinstance(m, (str, os.PathLike)) else m[0]) for m in calls[0][1]] if calls else []
+    assert len(calls) == 1 and media_paths == [mp3]  # 단일 호출 계약: 원문 전체·첨부 전체 1회
+    assert len(thread_server.uploads) == 1
+    posts = _ok_posts(thread_server)
+    assert len(posts) == 3  # 청크 수(9000 code point → 4000 단위 3개)
+    assert posts[0]["attachment_ids"] == [thread_server.uploads[0]["attachment_id"]]
+    assert all("attachment_ids" not in p for p in posts[1:])  # 첨부는 첫 청크에만
+    assert len(thread_server.posts) == len(posts)  # 재시도·replay·거부 게시 0
+    assert len({p["client_message_id"] for p in posts}) == len(posts)  # 중복 게시 0

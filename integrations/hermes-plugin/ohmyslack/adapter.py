@@ -900,7 +900,7 @@ def _media_path(descriptor: Any) -> Any:
 
 
 # standalone 호출 계약: 플러그인은 `max_message_length=0`으로 등록해 Hermes가 원문 전체·첨부 전체를 sender **1회** 호출에
-# 싣는다(Hermes `tools/send_message_tool.py` `_platform_max_length`·`_send_to_platform`). 그래서 아래 deadline 하나가
+# 싣는다(Hermes `gateway/outbound/send.py` `_platform_max_length`·`_send_to_platform`, 11-16 이전 `tools/send_message_tool.py`). 그래서 아래 deadline 하나가
 # 전송 전체(`/me` 1회·파일 읽기·업로드·내부 청크 게시와 그 재시도)를 덮는다.
 # standalone 전송 전체 deadline(초, 호출 시작 기준). Hermes 바깥 상한은 정상 분기 60초(`cron.standalone_send_timeout_seconds`
 # 기본값 — 어댑터는 실제 설정값을 알 수 없어 기본값을 가정한다, README)지만, 실행 중인 루프 안에서 불리는 폴백 분기는
@@ -1066,15 +1066,15 @@ async def standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Opt
     `warnings`의 `text: partial_delivery <k>/<n>` — error로 돌려주면 Hermes 재전달 큐가 원문 전체를 다시 보내 앞 청크가
     중복되므로, 중복 대신 보이는 꼬리 유실을 택한다(첫 청크 = 첨부 결속 청크이므로 첨부는 전달됨).
     """
-    from gateway.platforms._shared import send_error
     extra = getattr(pconfig, "extra", None) or {}
     token = (getattr(pconfig, "token", None) or get_scoped_secret(TOKEN_ENV, "") or "").strip()
-    if not token or not chat_id:
-        return send_error("ohmyslack standalone send: OHMYSLACK_BOT_TOKEN and home channel must be set")
+    if not token or not chat_id:  # 게시 시도 전 — 아무것도 안 나감
+        return _send_error("ohmyslack standalone send: OHMYSLACK_BOT_TOKEN and home channel must be set",
+                           nothing_sent=True)
     try:
         base = resolve_bot_url(extra)
     except ValueError as exc:
-        return send_error(f"ohmyslack standalone send: {exc}")
+        return _send_error(f"ohmyslack standalone send: {exc}", nothing_sent=True)
     clock = clock or _clock  # 기본값은 호출 시점의 모듈 속성(진입점 테스트 주입 훅)
     upload_budget = STANDALONE_UPLOAD_BUDGET_S if upload_budget is None else upload_budget
     total = STANDALONE_TOTAL_DEADLINE_S  # 호출 시점 값 — 축소 테스트는 이것만 바꾼다
@@ -1238,13 +1238,25 @@ async def _confirm_chunk(client: BotClient, chat_id: str, rec: _ChunkRecord, me_
         logger.warning("ohmyslack: standalone confirm %s", check)
 
 
+def _send_error(message: str, *, nothing_sent: bool = False) -> dict:
+    """Hermes `send_error` 래퍼(N-2). `nothing_sent=True`면 Hermes가 `retryable: True`를 붙인다
+    (`gateway/platforms/_shared.py` `send_error(message, *, nothing_sent=False)`). 그 kw가 없는 구 Hermes는
+    TypeError → plain `send_error`로 폴백(재시도 표시 없음 = 이전 동작)."""
+    from gateway.platforms._shared import send_error
+    if not nothing_sent:
+        return send_error(message)
+    try:
+        return send_error(message, nothing_sent=True)
+    except TypeError:
+        return send_error(message)
+
+
 def _standalone_result(record: _SendRecord) -> dict:
     """기록 → sender 결과(설계 r4 §Q1-7 반환표·§Q3 M1). 청크 0 불명·충돌은 성공으로 숨기지 않는다.
 
     경고는 파일 경고(업로드 단계)와 텍스트 경고(청크 결과)로 따로 모아 그 순서로 싣는다. `media_delivered`는
     첨부 ID 있음 ∧ 파일 경고 0 ∧ 청크 0 confirmed일 때만 — 텍스트 경고(`partial_delivery` 등)와 독립이다.
     """
-    from gateway.platforms._shared import send_error
     file_warnings = list(record.file_warnings)
     text_warnings: list[str] = []
     n = len(record.chunks)
@@ -1260,7 +1272,10 @@ def _standalone_result(record: _SendRecord) -> dict:
             reason = f"idempotency_conflict chunk 1/{n}"
         else:
             reason = (first.reason if first is not None else "") or record.reason
-        return send_error(f"ohmyslack standalone send: {reason}{suffix}")
+        # N-2: 어떤 청크도 `attempted`에 들어가지 않았을 때만(상태가 pending을 떠나는 곳은 `_post_chunk` 한 곳)
+        # 재시도 안전 표시. POST를 한 번이라도 시도했으면(확정 4xx·불명·충돌 포함) 중복 없음 증거가 없어 plain.
+        nothing_sent = all(c.state == "pending" for c in record.chunks)
+        return _send_error(f"ohmyslack standalone send: {reason}{suffix}", nothing_sent=nothing_sent)
     if k < n:  # 부분 게시: 재전달(전체 재전송)을 타지 않게 성공 + 보이는 경고
         state = record.chunks[k].state
         logger.warning("ohmyslack: standalone send partial (%d/%d chunks, %s)", k, n, state)
