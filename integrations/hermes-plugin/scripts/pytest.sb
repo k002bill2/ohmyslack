@@ -76,6 +76,9 @@
 (allow file-read* (subpath "@HERMES_SRC@/tools"))
 ;; pm — 사람 실행 (나)-2 1회차 114 errors PermissionError …/hermes-agent/pm/__init__.py(G1.md:29)
 (allow file-read* (subpath "@HERMES_SRC@/pm"))
+;; hermes_platform — 2026-11-20 --run-attested 230 errors 전부 같은 거부: agent/file_safety.py:21 이 import 하는
+;;   …/hermes-agent/hermes_platform/__init__.py PermissionError(pr37-merge-main-20261120/gates/run.out). Hermes 갱신으로 새로 생긴 import.
+(allow file-read* (subpath "@HERMES_SRC@/hermes_platform"))
 ;; Hermes 소스 루트 디렉터리 자체의 목록 읽기(하위 파일 내용 허용 아님). PYTHONPATH 의 FileFinder 가
 ;; 이 디렉터리를 os.listdir 로 캐시하는데, 목록 읽기가 거부되면 빈 캐시로 처리해 gateway 등을
 ;; 못 찾는다(사람 실행 (나)-0 의 ModuleNotFoundError). 노출 범위는 최상위 이름 목록뿐 — .env 등의 내용은 읽을 수 없다.
