@@ -101,6 +101,7 @@
 .msg-item > .msg-editor,
 .msg-item > .msg-status {
   flex: 1 0 100%;
+  min-width: 0;
 }
 .msg-body {
   display: flex;
@@ -249,6 +250,7 @@
 }
 /* 01 코드 블록·링크. */
 .msg-body .msg-code {
+  max-width: 100%;
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
