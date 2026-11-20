@@ -79,6 +79,18 @@
 ;; hermes_platform — 2026-11-20 --run-attested 230 errors 전부 같은 거부: agent/file_safety.py:21 이 import 하는
 ;;   …/hermes-agent/hermes_platform/__init__.py PermissionError(pr37-merge-main-20261120/gates/run.out). Hermes 갱신으로 새로 생긴 import.
 (allow file-read* (subpath "@HERMES_SRC@/hermes_platform"))
+;; 아래 8개 — 2026-11-20 사람 실행 --run 230 errors(utils/__init__.py 거부, human-run-1/run.out) 뒤 패키지마다 사람 재실행을
+;;   반복하지 않으려고 정적 import 폐포로 한 번에 확정: 사람이 실행한 hermes-import-scan.txt(Hermes HEAD caafe538)에서
+;;   gateway·hermes_cli·tools·agent·cron 으로부터 패키지 간 import 를 따라간 15개 중 기존 7개 밖 8개. tests·evals 는 제외.
+;;   정적 import 기준이라 실제 필요보다 넓을 수 있다(조건부·지연 import 포함) — 폴더 단위 subpath 한 줄씩 원칙은 유지.
+(allow file-read* (subpath "@HERMES_SRC@/utils"))
+(allow file-read* (subpath "@HERMES_SRC@/persistence"))
+(allow file-read* (subpath "@HERMES_SRC@/session_rules"))
+(allow file-read* (subpath "@HERMES_SRC@/providers"))
+(allow file-read* (subpath "@HERMES_SRC@/plugins"))
+(allow file-read* (subpath "@HERMES_SRC@/acp_adapter"))
+(allow file-read* (subpath "@HERMES_SRC@/tui_gateway"))
+(allow file-read* (subpath "@HERMES_SRC@/hermes_agent"))
 ;; Hermes 소스 루트 디렉터리 자체의 목록 읽기(하위 파일 내용 허용 아님). PYTHONPATH 의 FileFinder 가
 ;; 이 디렉터리를 os.listdir 로 캐시하는데, 목록 읽기가 거부되면 빈 캐시로 처리해 gateway 등을
 ;; 못 찾는다(사람 실행 (나)-0 의 ModuleNotFoundError). 노출 범위는 최상위 이름 목록뿐 — .env 등의 내용은 읽을 수 없다.
