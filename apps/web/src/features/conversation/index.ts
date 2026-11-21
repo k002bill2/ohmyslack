@@ -35,3 +35,4 @@ export { ThreadSummary, type ThreadSummaryProps } from './MessageItemThreadSumma
 export { lastServerSeq, scrolledToBottom } from './seen.js';
 export { useMessageRoving } from './message-keys.js';
 export { MessageMenu, type MessageMenuItem, type MessageMenuProps } from './MessageMenu.js';
+export type { AttachmentDraftStore, UploadFn } from './attachments/composer-upload.js';
