@@ -509,6 +509,13 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     if (spaceId === undefined) return undefined;
     return () => attachmentDrafts.discard(spaceId);
   }, [spaceId, attachmentDrafts]);
+  // 스레드 답글 첨부 초안(키 = root id): 스레드를 닫거나 다른 root로 바꾸면 진행 중 업로드를 끊고 칩을 버린다(글 초안과 달리 남기지 않는다).
+  // 대화 전환은 스레드를 닫으므로 같은 경로로 정리된다. 폭 구간 전환은 root가 같아 유지된다.
+  const threadRootId = state.threadRootId;
+  useEffect(() => {
+    if (threadRootId === null) return undefined;
+    return () => attachmentDrafts.discard(threadRootId);
+  }, [threadRootId, attachmentDrafts]);
   const mainLink = useMemo(() => (spaceId === undefined ? undefined : messageLinkIn(spaceId, null)), [spaceId]);
   const threadLink = useMemo(
     () => (spaceId === undefined || state.threadRootId === null ? undefined : messageLinkIn(spaceId, state.threadRootId)),
@@ -613,6 +620,12 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {settings === 'members' ? <MemberAdmin account={snap.account} {...memberApi} /> : <SessionList {...sessionApi} />}
     </div>
   );
+  // 이미지·문서 업로드(W-22): 본문 작성기와 스레드 답글 작성기가 같은 대상 대화(지금 대화)로 올린다.
+  const upload: UploadFn | undefined =
+    space === undefined || dataSource.uploadAttachment === undefined
+      ? undefined
+      : (file: File, options?: UploadAttachmentOptions) =>
+          dataSource.uploadAttachment?.(space.id, file, options) ?? Promise.resolve({ ok: false as const, status: 'network' as const });
   const pane = space && (
     <ConversationPane
       space={space}
@@ -631,12 +644,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onBack={() => dispatch({ type: 'back' })}
       onReply={(id) => dispatch({ type: 'open-thread', rootId: id })}
       onSend={(body, mentionUserIds, attachmentIds) => dataSource.send({ conversationId: space.id }, body, mentionUserIds, attachmentIds)}
-      {...(dataSource.uploadAttachment === undefined
-        ? {}
-        : {
-            onUpload: (file: File, options?: UploadAttachmentOptions) =>
-              dataSource.uploadAttachment?.(space.id, file, options) ?? Promise.resolve({ ok: false as const, status: 'network' as const }),
-          })}
+      {...(upload === undefined ? {} : { onUpload: upload })}
       onRetry={retry}
       onDiscard={discard}
       itemActions={{
@@ -676,7 +684,9 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       root={root}
       replies={snap.messages.filter((m) => m.rootId === root.id)}
       onClose={closeThread}
-      onSend={(body) => dataSource.send({ conversationId: space.id, rootId: root.id }, body)}
+      onSend={(body, mentionUserIds, attachmentIds) => dataSource.send({ conversationId: space.id, rootId: root.id }, body, mentionUserIds, attachmentIds)}
+      attachmentDrafts={attachmentDrafts}
+      {...(upload === undefined ? {} : { onUpload: upload })}
       announce={setAnnouncement}
       drafts={drafts}
       onRetry={retry}

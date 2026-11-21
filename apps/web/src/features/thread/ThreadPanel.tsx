@@ -2,6 +2,7 @@ import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, withDiscardFocus, THREAD_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import type { AttachmentDraftStore, UploadFn } from '../conversation/attachments/composer-upload.js';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -10,7 +11,11 @@ export interface ThreadPanelProps {
   readonly root: MessageItemData;
   readonly replies: readonly MessageItemData[];
   readonly onClose: () => void;
-  readonly onSend: (body: string) => void;
+  readonly onSend: (body: string, mentionUserIds?: readonly string[], attachmentIds?: readonly string[]) => void;
+  /** 이미지·문서 첨부 업로드(W-22). 있을 때만 답글 작성기에 첨부 버튼·칩·붙여넣기를 붙인다(대상 대화는 호출자가 묶는다). */
+  readonly onUpload?: UploadFn;
+  /** 첨부 초안 저장소(칩·진행 중 업로드). 키는 글 초안과 같은 스레드 root id — 본문 작성기(대화 id)와 섞이지 않는다. */
+  readonly attachmentDrafts?: AttachmentDraftStore;
   /** StatusRegion(CMP-16) 안내. */
   readonly announce: (text: string) => void;
   /** 대상별 초안 저장소(디자인 §7-3 초안 규칙). 키는 스레드 root id. */
@@ -70,7 +75,7 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice, composerNotice }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, onUpload, attachmentDrafts, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice, composerNotice }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
   const locked = composerNotice !== undefined;
   const container = useRef<HTMLElement>(null);
@@ -196,6 +201,8 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, announce,
           showHint={variant !== 'compact'}
           onSend={onSend}
           {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
+          {...(onUpload === undefined ? {} : { onUpload })}
+          {...(attachmentDrafts === undefined ? {} : { attachmentDraft: { store: attachmentDrafts, key: root.id } })}
         />
       )}
     </Tag>
