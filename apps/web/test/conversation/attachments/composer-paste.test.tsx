@@ -1,7 +1,7 @@
 /** 작성기 클립보드 붙여넣기 첨부: 순수 판정 함수 + Composer onPaste 연결(브리프 composer-paste 규칙 1~7). */
 import { act, cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AttachmentView } from '../../../../../packages/shared/src/index.js';
+import { ATTACHMENTS_PER_MESSAGE_MAX, type AttachmentView } from '../../../../../packages/shared/src/index.js';
 import type { ActionResult } from '../../../src/data/index.js';
 import { Composer } from '../../../src/features/conversation';
 import { pastedFiles } from '../../../src/features/conversation/attachments/clipboard-files.js';
@@ -61,6 +61,22 @@ describe('pastedFiles', () => {
     const b = file('a.png', 'image/png');
     const c = file('b.png', 'image/png');
     expect(pastedFiles(clip({ files: [b, c], text: 'a.png\r\nb.png\n' }))).toEqual([b, c]);
+  });
+
+  it('파일명과 text/plain의 유니코드 정규화(NFC/NFD)가 달라도 같은 이름이면 첨부', () => {
+    const nfc = '보고서.pdf';
+    const nfd = nfc.normalize('NFD');
+    expect(nfd).not.toBe(nfc);
+    const a = file(nfc, 'application/pdf');
+    expect(pastedFiles(clip({ files: [a], text: nfd }))).toEqual([a]);
+    const b = file(nfd, 'application/pdf');
+    expect(pastedFiles(clip({ files: [b], text: nfc }))).toEqual([b]);
+  });
+
+  it('줄바꿈이 CR 단독이어도 파일명 목록이면 첨부', () => {
+    const a = file('a.png', 'image/png');
+    const b = file('b.png', 'image/png');
+    expect(pastedFiles(clip({ files: [a, b], text: 'a.png\rb.png' }))).toEqual([a, b]);
   });
 
   it('파일 + 공백뿐인 text/plain → 첨부', () => {
@@ -160,11 +176,12 @@ describe('Composer 붙여넣기 첨부', () => {
   it('칩이 가득 차면(full) preventDefault만, 추가 0', async () => {
     const upload = vi.fn(() => new Promise<Result>(() => {}));
     const { paste } = mount(upload);
-    const many = Array.from({ length: 20 }, (_, i) => file(`f${i}.png`, 'image/png'));
+    const many = Array.from({ length: ATTACHMENTS_PER_MESSAGE_MAX + 1 }, (_, i) => file(`f${i}.png`, 'image/png'));
     await paste(clip({ files: many }));
     const before = upload.mock.calls.length + document.querySelectorAll('[title$=".png"]').length;
     expect(await paste(clip({ files: [file('extra.png', 'image/png')] }))).toBe(true);
     expect(screen.queryByTitle('extra.png')).toBeNull();
+    expect((screen.getByRole('textbox', { name: '메시지' }) as HTMLTextAreaElement).value).toBe('');
     expect(upload.mock.calls.length + document.querySelectorAll('[title$=".png"]').length).toBe(before);
   });
 });
