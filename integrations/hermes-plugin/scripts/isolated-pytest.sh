@@ -53,13 +53,23 @@
 #     확인의 `cd` 를, BASH_ENV·ENV 는 이 래퍼가 띄우는 자식 bash(자기시험 복사본은 env -i 라 원래 없음)를 바꿀 수 있다.
 #     (4) 게이트(snap_read·sha256_text·attest_value·attest_verify_snapshot)는 외부 명령을 절대 경로로 부른다
 #     (/bin/cat·/usr/bin/grep·/usr/bin/sed·/usr/bin/cut·/usr/bin/shasum).
-#   - 한계: BASH_ENV 는 bash 가 이 스크립트를 읽기 전에 이미 실행했고, SHELLOPTS·BASHOPTS 도 시작 때 적용된다 — 여기서
-#     되돌릴 수 없다. `builtin`·`unset` 이름의 export 함수가 있으면 (1) 자체가 무력화될 수 있다. 호출자가 env 를 통째로
+#     (5) xtrace 끄기(N-3): export 된 SHELLOPTS=xtrace·BASH_XTRACEFD 로 시작돼도 `--run-live` 의 비밀 대입·write_secret
+#     인자가 stderr·지정 fd 에 찍히지 않게, 게이트·옵션 해석보다 먼저 BASH_XTRACEFD 를 unset 하고 xtrace 를 끈다.
+#     자기시험 사례 `xtrace_env`(SHELLOPTS=xtrace 로 시작한 valid env → EXIT 6, stderr 에 비밀 표지 0건).
+#   - 한계: BASH_ENV 는 bash 가 이 스크립트를 읽기 전에 이미 실행했고, SHELLOPTS·BASHOPTS 도 시작 때 적용된다 — 시작
+#     시점 효과(BASH_ENV 실행, 이 줄 이전에 이미 xtrace 로 찍힌 맨 앞 줄)는 되돌릴 수 없다. xtrace 는 여기서 끌 수 있지만
+#     그 밖의 SHELLOPTS 옵션(예: posix·verbose)은 그대로다. `builtin`·`unset` 이름의 export 함수가 있으면 (1) 자체가
+#     무력화될 수 있다. 호출자가 env 를 통째로
 #     고를 수 있는 행위자는 래퍼를 어차피 마음대로 실행할 수 있으므로, 이 고정은 「우발적인 셸 환경(다른 PATH 의 GNU
 #     coreutils, 사용자 alias 성 함수)」이 대조 결과를 바꾸지 않게 하는 장치다. sandbox 안 env 는 원래 base_env 허용목록
 #     (PATH=/usr/bin:/bin 포함, env -i)이라 이 고정과 무관하게 바뀌지 않는다.
 builtin unset -f -- cat grep sed cut shasum realpath readlink dirname env bash mkdir rm mv ln od tr find stat \
-  printf echo test '[' cd pwd read local return exit eval set shift umask trap command type source . 2>/dev/null || true
+  printf echo test '[' cd pwd read local return exit eval set shift umask trap command type source . \
+  true export : 2>/dev/null || true   # 이름이 함수가 아니면 unset -f 는 조용히 0 — bash 3.2 에서도 `:`·`true`·`export` 는 유효한 함수 이름
+# N-3: 호출자가 export 한 BASH_XTRACEFD·SHELLOPTS=xtrace 가 비밀 대입을 찍지 못하게 — 게이트·옵션 해석보다 먼저.
+# unset 이 먼저(xtrace 출력 fd 를 되돌린 뒤 끈다). set +x 는 bash 3.2 에서 안전하다(SHELLOPTS 가 readonly 여도 옵션 해제는 가능).
+builtin unset BASH_XTRACEFD 2>/dev/null || true
+builtin set +x +o xtrace 2>/dev/null || true
 PATH=/usr/bin:/bin
 export PATH
 builtin unset CDPATH BASH_ENV ENV 2>/dev/null || true
@@ -412,7 +422,7 @@ RUN_LIVE_CASES=(extra_arg confirm_arg empty_confirm url_malformed url_prod_8787 
                 url_https url_low_port url_port_over token_missing token_empty token_newline live_flag_missing
                 live_flag_not_1 main_url_prod origin_bad cookie_missing csrf_missing valid_env
                 url_port_1023 url_port_1024 url_port_65535 main_url_8788 origin_8787 hash_profile_modified hash_guard_modified
-                hash_ini_modified)
+                hash_ini_modified xtrace_env)
 run_live_selftest() {
   local d="$ISO/tmp/run-live-selftest" dir base c rc u=__UNSET__ s=OMS-SELFTEST-SECRET
   local e2e url main origin token cookie csrf
@@ -463,8 +473,10 @@ run_live_selftest() {
       main_url_8788) main=http://127.0.0.1:8788 ;;     # 운영 포트 → 64
       origin_8787) origin=http://127.0.0.1:8787 ;;     # 운영 포트 → 64
       hash_*) ;;                                       # 모든 env 유효 — 해시 게이트에서 먼저 멈춰야 한다(EXIT 5)
+      xtrace_env) ;;                                   # valid env + SHELLOPTS=xtrace(아래 envs, 자기시험 호출에만) → EXIT 6, 비밀 표지 0건
     esac
     envs=(PATH=/usr/bin:/bin)
+    [ "$c" != xtrace_env ] || envs+=(SHELLOPTS=xtrace)
     [ "$e2e" = "$u" ] || envs+=(OHMYSLACK_LIVE_E2E="$e2e")
     [ "$url" = "$u" ] || envs+=(OHMYSLACK_BOT_URL="$url")
     [ "$main" = "$u" ] || envs+=(OHMYSLACK_LIVE_MAIN_URL="$main")

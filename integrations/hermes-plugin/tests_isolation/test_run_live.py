@@ -55,7 +55,7 @@ REJECT = {
 }
 # 대조군: 모든 값이 유효하면 검증을 통과해 다음 단계(require_sandbox)에서 멈춘다 — 가짜 P 에 .venv 가 없어 EXIT 6.
 VALID = "valid_env"
-PASS = (VALID, "url_port_1024", "url_port_65535")
+PASS = (VALID, "url_port_1024", "url_port_65535", "xtrace_env")
 # QA O-2: 가짜 P 복사본에서 해시 대상 1바이트 변형 → 해시 게이트 EXIT 5(env 는 모두 유효).
 HASH_MISMATCH = {
     "hash_profile_modified": "scripts/pytest.sb sha256 differs from G3-ATTESTATION",
@@ -99,6 +99,16 @@ def test_run_live_valid_env_passes_validation(case):
     assert NO_ARGS not in err and "must be" not in err  # 64 사유 없음
     assert REFUSAL not in err
     assert SECRET_MARK not in out and SECRET_MARK not in err
+
+
+def test_run_live_xtrace_env_does_not_trace_secret_assignments():
+    """N-3: SHELLOPTS=xtrace 로 시작해도 래퍼가 게이트 전에 xtrace 를 끈다 → 비밀 대입·write_secret 인자가 stderr 에
+    나오지 않는다(맨 앞 몇 줄의 trace 에는 비밀이 없다). valid env 와 같은 EXIT 6."""
+    assert _result()["xtrace_env"] == "6"
+    out, err = _read("xtrace_env.out"), _read("xtrace_env.err")
+    assert SECRET_MARK not in out and SECRET_MARK not in err
+    assert "LIVE_BOT_TOKEN=" not in err and "write_secret" not in err and "OHMYSLACK_BOT_TOKEN" not in err, err
+    assert "venv interpreter missing" in err, err
 
 
 @pytest.mark.parametrize("case", sorted(HASH_MISMATCH))

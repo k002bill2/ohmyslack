@@ -130,10 +130,10 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 
 | 모드 | 명령(`integrations/hermes-plugin` 에서) | 기대 |
 |---|---|---|
-| 에이전트 점검 | `bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` | `tests_isolation` 통과 → 수집 4조합 rc 0·outside 0건 → 직접 지정 rc 4 + outside 표지 → `PREFLIGHT PASS`, `EXIT=0`. 실패 때 `PREFLIGHT FAIL: …`·`PREFLIGHT STOPPED`, `EXIT=1`(sandbox 오류·신호는 `EXIT=6`) |
-| 가드 거부 점검 | `bash scripts/isolated-pytest.sh --probe-guard; echo EXIT=$?` | `OHMYSLACK-ISOLATION-GUARD-REFUSED: …`, `PROBE-GUARD PASS`, `EXIT=3` |
-| 전체 실행(G3 뒤, 사람) | `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` | TTY·난수 입력 뒤 `tests` 실행 |
-| 전체 실행(레인·에이전트, 해시 대조) | `bash scripts/isolated-pytest.sh --run-attested [-q] [-x] [-k <식>]; echo EXIT=$?` | 해시 대상 6파일(`scripts/pytest.sb`·`scripts/_iso_fs.sh`·`scripts/isolated-pytest.sh`·`tests/_isolation_guard.py`·`tests/conftest.py`·`pytest.ini`) sha256 이 `scripts/G3-ATTESTATION` 과 같으면 `--run` 과 같은 경로(env·sandbox·가드)로 `tests` 실행. 없음·형식 오류·불일치면 아무것도 하지 않고 `re-attestation by human required`, `EXIT=5`. 그 밖 인자는 `EXIT=64` |
+| 에이전트 점검 | `/bin/bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` | `tests_isolation` 통과 → 수집 4조합 rc 0·outside 0건 → 직접 지정 rc 4 + outside 표지 → `PREFLIGHT PASS`, `EXIT=0`. 실패 때 `PREFLIGHT FAIL: …`·`PREFLIGHT STOPPED`, `EXIT=1`(sandbox 오류·신호는 `EXIT=6`) |
+| 가드 거부 점검 | `/bin/bash scripts/isolated-pytest.sh --probe-guard; echo EXIT=$?` | `OHMYSLACK-ISOLATION-GUARD-REFUSED: …`, `PROBE-GUARD PASS`, `EXIT=3` |
+| 전체 실행(G3 뒤, 사람) | `/bin/bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` | TTY·난수 입력 뒤 `tests` 실행 |
+| 전체 실행(레인·에이전트, 해시 대조) | `/bin/bash scripts/isolated-pytest.sh --run-attested [-q] [-x] [-k <식>]; echo EXIT=$?` | 해시 대상 6파일(`scripts/pytest.sb`·`scripts/_iso_fs.sh`·`scripts/isolated-pytest.sh`·`tests/_isolation_guard.py`·`tests/conftest.py`·`pytest.ini`) sha256 이 `scripts/G3-ATTESTATION` 과 같으면 `--run` 과 같은 경로(env·sandbox·가드)로 `tests` 실행. 없음·형식 오류·불일치면 아무것도 하지 않고 `re-attestation by human required`, `EXIT=5`. 그 밖 인자는 `EXIT=64` |
 | 실서버 live(레인·`scripts/live-e2e.sh`, 해시 대조) | `scripts/live-e2e.sh` 가 live env 를 그 한 호출에만 붙여 `bash scripts/isolated-pytest.sh --run-live` 실행 | `--run-attested` 와 같은 해시 게이트(EXIT 5) → 인자 0개(`--confirm` 포함 무엇이든 `EXIT=64`) → live env 검증(위반 `EXIT=64`, 사유만) → 비밀은 `.isolation/` 0600 파일, sandbox 안 고정 인자 `-q -m live tests/test_live_e2e.py tests/test_live_standalone.py`. 거부 경로는 `--preflight` 자기시험(`tests_isolation/test_run_live.py`) |
 
 ### `--run-attested` 와 G3-ATTESTATION — 한계
@@ -145,14 +145,14 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 - 한계 2(TOCTOU): 래퍼는 각 대상 파일을 한 번만 읽어 메모리 스냅숏으로 대조합니다. `pytest.sb`·`_iso_fs.sh` 는 그 스냅숏으로 렌더·적재하므로 대조 바이트 = 쓰는 바이트지만, 가드·`tests/conftest.py`·`pytest.ini` 는 sandbox 안 Python(pytest)이 다시 읽으므로 대조 뒤 실행 전 사이의 변경은 감지하지 못합니다. 래퍼 자신도 bash 가 실행 중 파일을 조금씩 읽으므로 대조 뒤 실행 중 변경은 같은 한계입니다. (layout 검사 `[ -f "$P/pytest.ini" ]` 는 존재 확인만 하고 내용을 열지 않습니다.)
 - 한계 3(symlink 거부는 파일 단위, QA O-1): 해시 대상 **파일 자신**이 symlink 면 「missing or not a regular file」 로 EXIT 5 입니다. 그러나 상위 디렉터리(`scripts/`·`tests/`)가 symlink 인 경우는 따로 거부하지 않고 **해시(내용)로만** 보호합니다 — 가리킨 곳의 바이트가 승인 해시와 같아야 통과합니다. P 경로 자체의 symlink 는 래퍼 시작의 P 위치 확인이 EXIT 2 로 막습니다.
 - 한계 4(NUL 바이트, QA O-2): 스냅숏은 bash 명령 치환이라 NUL 바이트가 제거된 뒤 해시됩니다. 대상 6파일은 모두 텍스트(bash·sandbox 프로필·Python·ini)라 NUL 만 넣고 빼는 변경은 해석기(bash·Python·pytest ini 파서)가 받는 의미를 바꿀 수 없다고 판단합니다 — NUL 이 들어간 파일은 해석기에서 오류가 나거나 그 바이트가 무시될 뿐이고, NUL 이 아닌 바이트는 모두 해시에 들어갑니다.
-- 한계 5(호출 환경 고정, QA O-4): 래퍼는 옵션 해석·게이트 전에 export 함수(`BASH_FUNC_*`) 중 래퍼가 쓰는 명령 이름의 정의를 지우고(`builtin unset -f`), `PATH=/usr/bin:/bin` 으로 고정·export 하고, `CDPATH`·`BASH_ENV`·`ENV` 를 unset 합니다. 게이트는 `/bin/cat`·`/usr/bin/grep`·`/usr/bin/sed`·`/usr/bin/cut`·`/usr/bin/shasum` 절대 경로만 씁니다. 남는 한계: `BASH_ENV` 는 bash 가 래퍼를 읽기 **전에** 이미 실행했고 `SHELLOPTS`·`BASHOPTS` 도 시작 때 적용되므로 래퍼 안에서 되돌릴 수 없으며, `builtin`·`unset` 이름의 export 함수는 정리 자체를 무력화할 수 있습니다 — 이 고정은 우발적인 셸 환경(다른 PATH 의 GNU 도구, 사용자 함수)이 대조 결과를 바꾸지 않게 하는 장치입니다. sandbox 안 env 는 예전처럼 `env -i` + 허용목록(`PATH=/usr/bin:/bin` 포함)이라 바뀌지 않습니다.
-- 해시 밖으로 남는 것: `tests/` 의 다른 파일(시험 본문·`tests/conftest.py` 가 import 하는 모듈), `tests_isolation/`, `scripts/live-e2e.sh`, Hermes 소스·인터프리터. 이 중 실효 격리를 바꾸는 변경은 여전히 사람 재확인 대상입니다(문서 약속).
+- 한계 5(호출 환경 고정, QA O-4): 래퍼는 옵션 해석·게이트 전에 export 함수(`BASH_FUNC_*`) 중 래퍼가 쓰는 명령 이름의 정의를 지우고(`builtin unset -f`), `PATH=/usr/bin:/bin` 으로 고정·export 하고, `CDPATH`·`BASH_ENV`·`ENV` 를 unset 합니다. 게이트는 `/bin/cat`·`/usr/bin/grep`·`/usr/bin/sed`·`/usr/bin/cut`·`/usr/bin/shasum` 절대 경로만 씁니다. 남는 한계: `BASH_ENV` 는 bash 가 래퍼를 읽기 **전에** 이미 실행했고 `SHELLOPTS`·`BASHOPTS` 도 시작 때 적용되므로 래퍼 안에서 되돌릴 수 없으며(단 `SHELLOPTS=xtrace`·`BASH_XTRACEFD` 는 래퍼가 게이트 전에 `BASH_XTRACEFD` 를 unset 하고 xtrace 를 꺼 비밀 대입이 찍히지 않게 합니다 — 자기시험 `xtrace_env`; 그 밖 옵션은 그대로), `builtin`·`unset` 이름의 export 함수는 정리 자체를 무력화할 수 있습니다. 인터프리터(shebang `#!/usr/bin/env bash`·`bash scripts/…`)는 호출자 PATH 로 정해지므로 PATH 고정 **이전** 단계입니다 — 사람 실행은 `/bin/bash scripts/isolated-pytest.sh …` 형태로 합니다(`scripts/live-e2e.sh` 는 이번 범위 밖이라 후속) — 이 고정은 우발적인 셸 환경(다른 PATH 의 GNU 도구, 사용자 함수)이 대조 결과를 바꾸지 않게 하는 장치입니다. sandbox 안 env 는 예전처럼 `env -i` + 허용목록(`PATH=/usr/bin:/bin` 포함)이라 바뀌지 않습니다.
+- 해시 밖으로 남는 것: `tests/` 의 다른 파일(시험 본문·`tests/conftest.py` 가 import 하는 모듈), `tests_isolation/`, `scripts/live-e2e.sh`, Hermes 소스·인터프리터, P 루트에 새로 추가하는 `conftest.py`·`pyproject.toml`·`tox.ini`·`setup.cfg`(rootdir conftest 는 가드보다 먼저 로드됨). 이 중 실효 격리를 바꾸는 변경은 여전히 사람 재확인 대상입니다(문서 약속).
 - 대조는 `_iso_fs.sh` 를 source 하기 전, `.isolation/` 을 건드리기 전에 합니다. EXIT 5 경로는 `--preflight` 가 `.isolation/tmp` 안 복사본(P 루트 형태 `scripts/`·`tests/`·`pytest.ini`)을 바꿔 자기시험하고 `tests_isolation/test_attestation.py`·`test_run_live.py` 가 결과를 단언합니다(작업 트리 파일은 바꾸지 않음). 래퍼 symlink(EXIT 2) 사례도 같은 자기시험에 있습니다.
 - **해시 대상 편집 뒤 사람 재승인 전 `--preflight` FAIL 은 정상입니다(QA O-3).** 자기시험 기준이 실제 승인 파일 바이트라, 승인 파일이 현재 6파일과 맞지 않으면 `unmodified` 등이 EXIT 5 가 되어 `PREFLIGHT FAIL` 입니다. 에이전트·구현자는 편집을 확인하려면 **임시** 승인 파일(현재 6파일 해시로 쓴 9키 파일)로 바꿔 `--preflight` **만** 돌린 뒤 원본 `G3-ATTESTATION` 을 바이트 그대로 복원합니다. 임시 승인 파일 상태에서 `--run`·`--run-attested`·`--run-live`·`--prove-outside`(모든 `--run*`) 는 실행하지 않습니다 — 임시 파일은 사람 G3 확인이 아닙니다.
 
 #### 사람 재승인 절차(해시 대상 변경 뒤)
 
-1. (나)-0 `bash scripts/isolated-pytest.sh --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN` 과 (나)-2 `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` 을 사람이 실행해 통과를 확인합니다(아래 「사람 실행 (나) 0–5」).
+1. (나)-0 `/bin/bash scripts/isolated-pytest.sh --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN` 과 (나)-2 `/bin/bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` 을 사람이 실행해 통과를 확인합니다(아래 「사람 실행 (나) 0–5」).
 2. 확인한 커밋에서 6파일이 그 뒤 바뀌지 않았는지 확인합니다(`git status`·`git diff <main_commit> -- <6파일>` 이 비어 있음, 필요하면 `stat -f '%Sm' <파일>` 로 수정 시각이 실행 시각 이전인지).
 3. `shasum -a 256 scripts/pytest.sb scripts/_iso_fs.sh scripts/isolated-pytest.sh tests/_isolation_guard.py tests/conftest.py pytest.ini` 값으로 승인 파일을 씁니다. 형식(주석·빈 줄 허용, 키 9줄 각 정확히 1번, `키=값` 공백 없음):
 
@@ -168,7 +168,7 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
    evidence=<증거 문서 경로>
    main_commit=<7–40 hex>
    ```
-4. `bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` → `PREFLIGHT PASS`, `EXIT=0` 을 확인합니다(자기시험 `unmodified` 등이 새 승인 파일로 통과).
+4. `/bin/bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` → `PREFLIGHT PASS`, `EXIT=0` 을 확인합니다(자기시험 `unmodified` 등이 새 승인 파일로 통과).
 
 ### 사람 실행 (나) 0–5 — 에이전트는 실행하지 않습니다
 
@@ -176,7 +176,7 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 
 | # | 명령 | 기대 출력 |
 |---|---|---|
-| 0 | `bash scripts/isolated-pytest.sh --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN; echo EXIT=$?` (사람 터미널, 화면의 4자리 입력) | `probe_outside/test_outside_probe.py` 6건 PASS: 홈·`/tmp` 카나리 쓰기 `PermissionError`, `~/.hermes/config.yaml`·`hermes-agent/.git/HEAD` 열기 `PermissionError`, `gateway` import 스모크 성공, 임의 포트 X listen 뒤 연결 `PermissionError`. `EXIT=0` |
+| 0 | `/bin/bash scripts/isolated-pytest.sh --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN; echo EXIT=$?` (사람 터미널, 화면의 4자리 입력) | `probe_outside/test_outside_probe.py` 6건 PASS: 홈·`/tmp` 카나리 쓰기 `PermissionError`, `~/.hermes/config.yaml`·`hermes-agent/.git/HEAD` 열기 `PermissionError`, `gateway` import 스모크 성공, 임의 포트 X listen 뒤 연결 `PermissionError`. `EXIT=0` |
 | 1 | `ls -la ~/.ohmyslack-sbx-canary-* /tmp/ohmyslack-sbx-canary-* 2>&1` | `No such file or directory` 2줄 |
 | 2 | `touch .isolation/marker` → `--run` 전체 실행 → `find ~/.hermes/hermes-agent -newer .isolation/marker -not -path '*/.git/*' -print \| head -20` | 0줄(게이트웨이가 쓰는 파일이 섞이면 경로를 붙여 사람이 판정) |
 | 3 | `realpath .venv/bin/python` | `…/generation-1786174606-…/cpython-3.11.15-macos-aarch64-none/bin/python3.11` (래퍼가 이 실경로로 프로필을 렌더링) |

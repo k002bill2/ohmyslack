@@ -154,7 +154,9 @@ def test_reopen_regex_catches_variants():
 
 def test_wrapper_opens_protected_files_only_in_snapshot():
     """P2-1 정적 보조: 원본 해시 대상(pytest.sb·_iso_fs.sh·G3-ATTESTATION·래퍼·가드·conftest·pytest.ini)을 여는 곳은
-    스냅숏 진입(`take_snapshot "$P" "$WRAPPER_SELF"`)뿐이고, 자기시험 래퍼 복사본은 cp 가 아니라 스냅숏 바이트다."""
+    스냅숏 진입(`take_snapshot "$P" "$WRAPPER_SELF"`)뿐이고, 자기시험 래퍼 복사본은 cp 가 아니라 스냅숏 바이트다.
+
+    보조 휴리스틱이다 — 경로 정규화·간접 변수·`cd` 후 상대 경로로 여는 것은 범위 밖."""
     with open(WRAPPER, encoding="utf-8") as fh:
         code = [line for line in fh if not line.lstrip().startswith("#")]
     text = "".join(code)
