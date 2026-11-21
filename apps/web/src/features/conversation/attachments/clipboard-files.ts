@@ -39,11 +39,11 @@ export function pastedFiles(data: ClipboardLike | null): File[] | null {
 /** `text/plain`이 비었거나(공백뿐 포함), 줄 단위 목록이 수집한 파일의 원래 이름 집합과 같으면(Finder 복사) true. */
 function textIsEmptyOrFileNames(text: string, files: readonly File[]): boolean {
   const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
+    .split(/\r\n|\r|\n/)
+    .map((l) => l.trim().normalize('NFC'))
     .filter((l) => l !== '');
   if (lines.length === 0) return true;
   if (lines.length !== files.length) return false;
-  const names = files.map((f) => f.name).sort();
+  const names = files.map((f) => f.name.normalize('NFC')).sort();
   return [...lines].sort().every((l, i) => l === names[i]);
 }
