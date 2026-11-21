@@ -1,5 +1,5 @@
 import { BotBadge } from '../../ui/BotBadge.js';
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import {
   JUST_COMPOSED_WINDOW_MS,
   MESSAGE_BODY_MAX_CODE_POINTS,
@@ -11,6 +11,7 @@ import type { DraftStore } from './drafts.js';
 import { MENTION_DRAFT_SUFFIX, filterCandidates, insertMention, mentionIdsIn, mentionQuery, parseSelections, type MentionCandidate, type MentionQuery, type MentionSelection } from './mention.js';
 import { ComposerAttachments } from './attachments/ComposerAttachments.js';
 import { useComposerAttachments, type AttachmentDraft, type UploadFn } from './attachments/composer-upload.js';
+import { pastedFiles } from './attachments/clipboard-files.js';
 import { COMPOSER_COPY, MENTION_EMPTY_TEXT, MENTION_POPOVER_COPY, overText, remainingText } from '../../ui/copy.js';
 import './composer-copy.css';
 
@@ -187,6 +188,15 @@ export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = f
     }
   };
 
+  /** 클립보드 이미지·파일 붙여넣기 → 「파일 첨부」와 같은 경로. 첨부 비활성·파일 없음·텍스트 동반이면 기본 동작. 가득 차면 막기만 한다. */
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (onUpload === undefined) return;
+    const pasted = pastedFiles(e.clipboardData);
+    if (pasted === null) return;
+    e.preventDefault();
+    if (!files.full) files.add(pasted);
+  };
+
   const length = codePointLength(text);
   const overLimit = length > MESSAGE_BODY_MAX_CODE_POINTS;
   const counter = counterText(length, MESSAGE_BODY_MAX_CODE_POINTS);
@@ -211,6 +221,7 @@ export function Composer({ label, placeholder, onSend, onUpload, mentionOpen = f
             })}
         onChange={(e) => onInput(e.target.value, e.target.selectionStart)}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
         onKeyUp={endJustComposed}
         onCompositionStart={() => {
           composing.current = true;

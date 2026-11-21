@@ -53,6 +53,11 @@ export function extensionOf(name: string): string {
   return dot <= 0 || dot === name.length - 1 ? '' : name.slice(dot + 1).toLowerCase();
 }
 
+/** 허용 이미지 MIME의 대표 확장자(점 제외). 허용 밖이면 null — 붙여넣은 이름 없는 이미지의 이름 보정용. */
+export function imageExtensionFor(mime: string): string | null {
+  return Object.hasOwn(IMAGE_EXTENSIONS, mime) ? (IMAGE_EXTENSIONS[mime as ComposerImageMime][0] ?? null) : null;
+}
+
 export type ComposerFileKind = 'image' | 'document';
 
 /** 선택한 파일의 계열(확장자 기준, G-55 「형식은 확장자로 클라이언트가 고른다」). 허용 밖이면 null. */
