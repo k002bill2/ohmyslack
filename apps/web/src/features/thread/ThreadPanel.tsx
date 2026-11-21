@@ -1,8 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
-import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, withDiscardFocus, THREAD_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
-import type { AttachmentDraftStore, UploadFn } from '../conversation/attachments/composer-upload.js';
+import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, withDiscardFocus, THREAD_DISCARD_FOCUS, type AttachmentDraftStore, type DraftStore, type MessageItemData, type MessageItemProps, type UploadFn } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
