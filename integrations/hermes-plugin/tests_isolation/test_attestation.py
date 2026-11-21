@@ -46,14 +46,18 @@ CASES = {
     "missing_guard": (5, "tests/_isolation_guard.py missing or not a regular file"),
     "missing_conftest": (5, "tests/conftest.py missing or not a regular file"),
     "guard_symlink": (5, "tests/_isolation_guard.py missing or not a regular file"),
+    # Issue #48 2차(QA O-7): pytest.ini(addopts 로 --noconftest·-p 를 넣으면 conftest 가드를 건너뛸 수 있음) 해시 대상.
+    "ini_modified": (5, "pytest.ini sha256 differs"),
+    "missing_ini": (5, "pytest.ini missing or not a regular file"),
 }
-# 승인 파일의 해시 키 → P 루트 기준 대상 파일(래퍼 HASH_KEYS 와 같은 5개).
+# 승인 파일의 해시 키 → P 루트 기준 대상 파일(래퍼 HASH_KEYS 와 같은 6개).
 HASHED = {
     "profile_sha256": os.path.join("scripts", "pytest.sb"),
     "iso_fs_sha256": os.path.join("scripts", "_iso_fs.sh"),
     "wrapper_sha256": os.path.join("scripts", "isolated-pytest.sh"),
     "guard_sha256": os.path.join("tests", "_isolation_guard.py"),
     "conftest_sha256": os.path.join("tests", "conftest.py"),
+    "ini_sha256": "pytest.ini",
 }
 
 
@@ -110,26 +114,102 @@ def test_run_attested_missing_file_exits_5_before_layout(missing):
     assert "layout mismatch" not in err
 
 
+def test_run_attested_wrapper_symlink_exits_2():
+    """QA O-5: 가짜 P 의 래퍼가 가짜 P 밖 실파일을 가리키는 symlink → realpath 불일치 EXIT 2(해시 대조 전),
+    가짜 P 에 .isolation 미생성."""
+    assert _result()["entry_wrapper_symlink"] == "2"
+    out, err = _read("entry-wrapper_symlink.out"), _read("entry-wrapper_symlink.err")
+    assert out == ""
+    assert "running wrapper is not" in err, err
+    assert REFUSAL not in err  # 해시 게이트까지 가지 않음
+    fake_p = os.path.join(SELFTEST, "entry-wrapper_symlink", "integrations", "hermes-plugin")
+    link = os.path.join(fake_p, "scripts", "isolated-pytest.sh")
+    assert os.path.islink(link)  # 대조군: 실제로 symlink 였음
+    assert os.path.isfile(os.path.join(fake_p, "pytest.ini"))  # 대조군: layout 은 갖춰져 있었음
+    assert not os.path.lexists(os.path.join(fake_p, ".isolation"))
+
+
+# QA O-6: `$P/…` 뿐 아니라 `"$P"/…`·`${P}/…`·`"${P}"/…`, 그리고 래퍼 자신(`$P/$WRAPPER_REL`·`${WRAPPER_REL}`)도 잡는다.
+_P_REF = r'"?\$(?:P|\{P\})"?/'
+_PROTECTED = (r'(?:scripts/(?:pytest\.sb|_iso_fs\.sh|G3-ATTESTATION|isolated-pytest\.sh)'
+              r'|tests/(?:_isolation_guard\.py|conftest\.py)|pytest\.ini|"?\$(?:WRAPPER_REL|\{WRAPPER_REL\}))')
+REOPEN_RE = re.compile(_P_REF + _PROTECTED)
+# 내용을 열지 않는 허용 사용(경로 문자열 비교·존재 확인)만 지운 뒤 검사한다.
+REOPEN_ALLOWED = (
+    '[ "$WRAPPER_REAL" = "$P/$WRAPPER_REL" ]',          # realpath 결과와 경로 문자열 비교
+    'running wrapper is not $P/$WRAPPER_REL',          # 거부 사유 문구
+    '[ -f "$P/pytest.ini" ]',                          # layout 존재 확인(stat, 내용 안 읽음)
+)
+
+
+def test_reopen_regex_catches_variants():
+    """O-6 정규식 자체 대조: 변형은 잡고, 다른 디렉터리 경로는 잡지 않는다."""
+    for bad in ('cat "$P"/scripts/pytest.sb', 'cat ${P}/tests/conftest.py', 'cat "${P}"/pytest.ini',
+                'cat "$P/$WRAPPER_REL"', 'cat $P/${WRAPPER_REL}', 'grep x "$P/scripts/G3-ATTESTATION"',
+                'cat "$P"/"$WRAPPER_REL"'):
+        assert REOPEN_RE.search(bad), bad
+    for ok in ('cat "$dir/$WRAPPER_REL"', 'ISO="$P/.isolation"', 'cat "$P_LOGICAL/x"', 'snap_read "$1/pytest.ini"'):
+        assert not REOPEN_RE.search(ok), ok
+
+
 def test_wrapper_opens_protected_files_only_in_snapshot():
-    """P2-1 정적 보조: 원본 해시 대상(pytest.sb·_iso_fs.sh·G3-ATTESTATION·가드·conftest)을 여는 곳은
+    """P2-1 정적 보조: 원본 해시 대상(pytest.sb·_iso_fs.sh·G3-ATTESTATION·래퍼·가드·conftest·pytest.ini)을 여는 곳은
     스냅숏 진입(`take_snapshot "$P" "$WRAPPER_SELF"`)뿐이고, 자기시험 래퍼 복사본은 cp 가 아니라 스냅숏 바이트다."""
     with open(WRAPPER, encoding="utf-8") as fh:
         code = [line for line in fh if not line.lstrip().startswith("#")]
     text = "".join(code)
-    assert not [line for line in code if re.search(
-        r'\$P/(scripts/(pytest\.sb|_iso_fs\.sh|G3-ATTESTATION)|tests/(_isolation_guard\.py|conftest\.py))', line)]
+    stripped = []
+    for line in code:
+        for allowed in REOPEN_ALLOWED:
+            line = line.replace(allowed, "")
+        stripped.append(line)
+    assert not [line for line in stripped if REOPEN_RE.search(line)]
+    for allowed in REOPEN_ALLOWED:
+        assert allowed in text, allowed  # 허용 목록이 낡지 않게(문구가 바뀌면 함께 고친다)
     assert not [line for line in code if re.match(r"\s*\.\s", line) or re.match(r"\s*source\s", line)]
     assert 'attest_gate "$P" "$WRAPPER_SELF"' in text
     assert 'take_snapshot "$P" "$WRAPPER_SELF"' in text
     assert 'cp -- "${BASH_SOURCE[0]}"' not in text
 
 
-def test_wrapper_attest_keys_cover_five_files():
-    """정적: 래퍼의 승인 키·해시 키 목록이 이 파일의 HASHED 와 같다(키 추가·삭제가 한쪽만 바뀌지 않게)."""
+def test_wrapper_pins_env_before_gate_and_uses_absolute_commands():
+    """QA O-4 정적: PATH 고정·export 함수 정리·CDPATH 등 unset 이 옵션 해석·게이트보다 앞이고, 게이트 함수는
+    외부 명령을 절대 경로로 부른다."""
     with open(WRAPPER, encoding="utf-8") as fh:
         text = fh.read()
+    pin = text.index("\nPATH=/usr/bin:/bin\n")
+    unset_f = text.index("\nbuiltin unset -f -- cat grep sed cut shasum")
+    unset_v = text.index("\nbuiltin unset CDPATH BASH_ENV ENV")
+    first_cd = text.index('P_LOGICAL="$(cd -- ')
+    gate = text.index('  attest_gate "$P" "$WRAPPER_SELF"')
+    args = text.index('MODE="${1:-}"')
+    assert unset_f < pin < first_cd < gate < args
+    assert unset_v < first_cd
+    start, end = text.index("\nsnap_read() {"), text.index("\nattest_gate() {")
+    body = "\n".join(line for line in text[start:end].splitlines() if not line.lstrip().startswith("#"))
+    bare = re.findall(r'(?:^|[|;&(]|\$\()\s*(cat|grep|sed|cut|shasum)\s', body, re.M)
+    assert bare == [], bare
+    for exe in ("/bin/cat", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/cut", "SHASUM=/usr/bin/shasum"):
+        assert exe in text, exe
+
+
+def test_wrapper_attest_keys_cover_hashed_files():
+    """정적: 래퍼의 승인 키·해시 키 목록·알 수 없는 줄 정규식이 이 파일의 HASHED(6파일)와 같다(키 추가·삭제가 한쪽만
+    바뀌지 않게). 해시 대상 각각에 누락 사유·불일치 사유가 있다."""
+    with open(WRAPPER, encoding="utf-8") as fh:
+        text = fh.read()
+    assert len(HASHED) == 6
+    all_keys = set(HASHED) | {"attested_at", "evidence", "main_commit"}
     hash_keys = re.search(r"^HASH_KEYS=\(([^)]*)\)$", text, re.M)
     attest_keys = re.search(r"^ATTEST_KEYS=\(([^)]*)\)$", text, re.M)
     assert hash_keys and attest_keys
     assert set(hash_keys.group(1).split()) == set(HASHED)
-    assert set(attest_keys.group(1).split()) == set(HASHED) | {"attested_at", "evidence", "main_commit"}
+    assert set(attest_keys.group(1).split()) == all_keys
+    known = re.search(r"grep -v -E '\^\(([a-z0-9_|]+)\)='", text)
+    assert known and set(known.group(1).split("|")) == all_keys
+    for key, rel in HASHED.items():
+        # 래퍼 사유는 문구에 "$WRAPPER_REL" 을 쓴다(WRAPPER_REL=scripts/isolated-pytest.sh).
+        rel = "$WRAPPER_REL" if key == "wrapper_sha256" else rel.replace(os.sep, "/")
+        assert f"attestation: {rel} sha256 differs from G3-ATTESTATION" in text, key
+        assert f"attestation: {rel} missing or not a regular file" in text, key
+        assert f'attest_value {key})" ]' in text, key

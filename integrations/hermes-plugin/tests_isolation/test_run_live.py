@@ -60,6 +60,8 @@ PASS = (VALID, "url_port_1024", "url_port_65535")
 HASH_MISMATCH = {
     "hash_profile_modified": "scripts/pytest.sb sha256 differs from G3-ATTESTATION",
     "hash_guard_modified": "tests/_isolation_guard.py sha256 differs from G3-ATTESTATION",
+    # Issue #48 2차(QA O-7): pytest.ini 도 해시 대상.
+    "hash_ini_modified": "pytest.ini sha256 differs from G3-ATTESTATION",
 }
 REFUSAL = "re-attestation by human required"
 
@@ -101,7 +103,7 @@ def test_run_live_valid_env_passes_validation(case):
 
 @pytest.mark.parametrize("case", sorted(HASH_MISMATCH))
 def test_run_live_hash_mismatch_exits_5(case):
-    """QA O-2: 해시 대상(pytest.sb·가드) 1바이트 변형 → env 검증·sandbox·.isolation 전에 EXIT 5, 비밀 표지 0건."""
+    """QA O-2: 해시 대상(pytest.sb·가드·pytest.ini) 1바이트 변형 → env 검증·sandbox·.isolation 전에 EXIT 5, 비밀 표지 0건."""
     assert _result()[case] == "5"
     out, err = _read(f"{case}.out"), _read(f"{case}.err")
     assert out == ""
