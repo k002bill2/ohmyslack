@@ -68,6 +68,8 @@ BOT_THREADS_MAX = RECENT_IDS_MAX
 NOT_BOT_THREAD_TTL_SECONDS = 60.0
 # 루트 조회 상한: 수신 루프를 오래 붙잡지 않도록 세션 기본(30초)보다 짧게. 넘기면 거부(fail-closed).
 ROOT_LOOKUP_TIMEOUT_SECONDS = 5.0
+# #52: live 경로는 본문 `send` 직후 첨부를 caption·루트 없이 따로 부른다 → 이 창 안의 유일한 최상위 본문 스레드로 붙인다.
+MEDIA_FOLLOW_WINDOW_SECONDS = 60.0
 WS_CLOSE_TOKEN_INVALID = 1008  # 토큰 폐기·봇 비활성화·회전(token_revoked·session_ended) — 재연결하지 않는다
 
 
@@ -269,6 +271,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
         self._backlog: dict[str, int] = {}
         self._bot_threads: dict[str, None] = {}  # 이번 프로세스에서 owner 지시를 넘긴 채널 스레드 루트(삽입 순서 = 오래된 순)
         self._not_bot_threads: dict[str, float] = {}  # 조회 결과 음성·오류인 루트 → 캐시 만료 시각
+        # #52: 채널별 최근 최상위 게시 (시각, 첫 조각 id, "text"|"media"). 창 밖 항목은 기록·조회 때 버린다.
+        self._top_posts: dict[str, list[tuple[float, str, str]]] = {}
 
     # ---------- lifecycle ----------
     async def connect(self, *, is_reconnect: bool = False) -> bool:
@@ -736,8 +740,55 @@ class OhmySlackAdapter(BasePlatformAdapter):
             return None
         return first_id
 
+    def _recent_top_posts(self, chat_id: str) -> list[tuple[float, str, str]]:
+        """창(`MEDIA_FOLLOW_WINDOW_SECONDS`) 안의 최상위 게시 기록. 창 밖 항목은 여기서 버린다."""
+        cid = str(chat_id)
+        now = self._clock()
+        kept = [e for e in self._top_posts.get(cid, ()) if now - e[0] <= MEDIA_FOLLOW_WINDOW_SECONDS]
+        if kept:
+            self._top_posts[cid] = kept
+        else:
+            self._top_posts.pop(cid, None)
+        return kept
+
+    def _record_top_post(self, chat_id: str, first_id: str, kind: str) -> None:
+        """채널 최상위로 실제 게시된 글만 기록한다(#52). DM·스레드 답글은 부르지 않는다."""
+        if self._kinds.get(str(chat_id)) != "channel":
+            return
+        kept = self._recent_top_posts(chat_id)
+        kept.append((self._clock(), first_id, kind))
+        self._top_posts[str(chat_id)] = kept
+
+    def _media_follow_metadata(self, chat_id: str, caption: Optional[str], reply_to: Optional[str],
+                               metadata: Optional[dict]) -> tuple[Optional[dict], bool]:
+        """live 경로 후속 첨부 루트 판정(#52) → (넘길 metadata, 따라붙었나).
+
+        조건 전부: 루트 지정 없음·caption 비어 있음·allowlist 채널·창 안 최상위 기록이 정확히 1개이고 text이며 id 있음.
+        충족하면 `metadata["thread_id"]`에 그 본문 첫 조각 id를 넣어 돌려준다. 아니면 입력 그대로(기존 동작).
+        동기 함수 — 판정과 사용 사이에 다른 작업이 끼지 않도록 첨부 메서드 진입 시 await 전에 부른다.
+        """
+        if reply_to or self._thread_root(None, metadata) is not None or caption:
+            return metadata, False
+        cid = str(chat_id)
+        if self._kinds.get(cid) != "channel" or not self._is_post_channel(cid):
+            return metadata, False
+        recent = self._recent_top_posts(cid)
+        if len(recent) > 1:
+            logger.warning("ohmyslack: attachment follow skipped (ambiguous recent top-level posts)")
+            return metadata, False
+        if len(recent) != 1 or recent[0][2] != "text" or not recent[0][1]:
+            return metadata, False
+        merged = dict(metadata) if isinstance(metadata, dict) else {}
+        merged["thread_id"] = recent[0][1]
+        return merged, True
+
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
                    metadata: Optional[dict[str, Any]] = None) -> SendResult:
+        return await self._send_text(chat_id, content, reply_to, metadata, top_kind="text")
+
+    async def _send_text(self, chat_id: str, content: str, reply_to: Optional[str],
+                         metadata: Optional[dict[str, Any]], *, top_kind: str) -> SendResult:
+        """`send` 본체. `top_kind`: 채널 최상위로 게시될 때 기록할 종류(본문 "text", 첨부 대체 글 "media")."""
         if self._client is None:
             return SendResult(success=False, error="ohmyslack: not connected", retryable=True, error_kind="transient")
         root = self._thread_root(reply_to, metadata)
@@ -751,6 +802,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
                 res = await self._client.post_message(
                     str(chat_id), chunk, thread_root_id=self._chunk_root(chat_id, root, ids[0]) if i else root)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
+                if i == 0 and root is None:
+                    # #52: 첫 조각 id를 얻은 즉시(나머지 조각 await 전) 기록 → 후속 첨부가 이 본문 스레드를 찾는다.
+                    self._record_top_post(chat_id, ids[0], top_kind)
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
         except BotApiError as exc:
@@ -804,7 +858,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         # 경로·캡션·토큰은 로그에 남기지 않는다(reason·notice는 고정 문구만).
         logger.warning("ohmyslack: %s %s; sending text fallback", method, reason)
         text = f"{caption}\n{notice}" if caption else notice
-        return await self.send(chat_id, text, reply_to=reply_to, metadata=metadata)
+        # 첨부 자리의 대체 글: 최상위로 나가면 media로 기록(뒤 첨부가 이 글에 따라붙지 않게, #52).
+        # 따라붙기 판정 루트는 호출자가 `metadata["thread_id"]`로 넘긴다 → 스레드 답글이라 기록되지 않는다.
+        return await self._send_text(chat_id, text, reply_to, metadata, top_kind="media")
 
     async def _send_attachment(self, method: str, allowed: dict[str, str], chat_id: str, path: Any,
                                caption: Optional[str], reply_to: Optional[str], metadata: Optional[dict],
@@ -816,6 +872,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
         """
         if self._client is None:
             return SendResult(success=False, error="ohmyslack: not connected", retryable=True, error_kind="transient")
+        # #52: await 전에 루트 판정. 따라붙으면 metadata.thread_id로 이후 대체 글·게시 모두 같은 스레드가 된다.
+        metadata, followed = self._media_follow_metadata(chat_id, caption, reply_to, metadata)
         refused = self._refuse_channel_top_level(chat_id, self._thread_root(reply_to, metadata))
         if refused is not None:
             return refused  # 업로드 전에 막는다(대체 텍스트도 채널 최상위가 되므로 보내지 않음)
@@ -850,6 +908,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
                     str(chat_id), chunk, thread_root_id=self._chunk_root(chat_id, root, ids[0]) if i else root,
                     attachment_ids=[attachment_id] if i == 0 else None)
                 ids.append(str((res.get("message") or {}).get("id") or ""))
+                if i == 0 and root is None and not followed:
+                    self._record_top_post(chat_id, ids[0], "media")  # 최상위 첨부 글(#52) — 뒤 첨부의 루트가 되지 않게
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
         except BotApiError as exc:
@@ -871,6 +931,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
 
     async def send_document(self, chat_id, file_path, caption=None, file_name=None, reply_to=None,
                             metadata=None, **kwargs):
+        metadata, _ = self._media_follow_metadata(chat_id, caption, reply_to, metadata)  # #52 같은 루트 판정
         return await self._attachment_fallback("send_document", chat_id, caption, reply_to, metadata)
 
     async def send_image_file(self, chat_id, image_path, caption=None, reply_to=None, metadata=None, **kwargs):
@@ -878,6 +939,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
                                            metadata, kwargs.get("mime_type"))
 
     async def send_video(self, chat_id, video_path, caption=None, reply_to=None, metadata=None, **kwargs):
+        metadata, _ = self._media_follow_metadata(chat_id, caption, reply_to, metadata)  # #52 같은 루트 판정
         return await self._attachment_fallback("send_video", chat_id, caption, reply_to, metadata)
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
