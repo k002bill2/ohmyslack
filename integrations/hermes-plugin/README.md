@@ -133,17 +133,37 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 | 에이전트 점검 | `bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` | `tests_isolation` 통과 → 수집 4조합 rc 0·outside 0건 → 직접 지정 rc 4 + outside 표지 → `PREFLIGHT PASS`, `EXIT=0`. 실패 때 `PREFLIGHT FAIL: …`·`PREFLIGHT STOPPED`, `EXIT=1`(sandbox 오류·신호는 `EXIT=6`) |
 | 가드 거부 점검 | `bash scripts/isolated-pytest.sh --probe-guard; echo EXIT=$?` | `OHMYSLACK-ISOLATION-GUARD-REFUSED: …`, `PROBE-GUARD PASS`, `EXIT=3` |
 | 전체 실행(G3 뒤, 사람) | `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` | TTY·난수 입력 뒤 `tests` 실행 |
-| 전체 실행(레인·에이전트, 해시 대조) | `bash scripts/isolated-pytest.sh --run-attested [-q] [-x] [-k <식>]; echo EXIT=$?` | `scripts/pytest.sb`·`scripts/_iso_fs.sh` sha256 이 `scripts/G3-ATTESTATION` 과 같으면 `--run` 과 같은 경로(env·sandbox·가드)로 `tests` 실행. 없음·형식 오류·불일치면 아무것도 하지 않고 `re-attestation by human required`, `EXIT=5`. 그 밖 인자는 `EXIT=64` |
+| 전체 실행(레인·에이전트, 해시 대조) | `bash scripts/isolated-pytest.sh --run-attested [-q] [-x] [-k <식>]; echo EXIT=$?` | 해시 대상 5파일(`scripts/pytest.sb`·`scripts/_iso_fs.sh`·`scripts/isolated-pytest.sh`·`tests/_isolation_guard.py`·`tests/conftest.py`) sha256 이 `scripts/G3-ATTESTATION` 과 같으면 `--run` 과 같은 경로(env·sandbox·가드)로 `tests` 실행. 없음·형식 오류·불일치면 아무것도 하지 않고 `re-attestation by human required`, `EXIT=5`. 그 밖 인자는 `EXIT=64` |
 | 실서버 live(레인·`scripts/live-e2e.sh`, 해시 대조) | `scripts/live-e2e.sh` 가 live env 를 그 한 호출에만 붙여 `bash scripts/isolated-pytest.sh --run-live` 실행 | `--run-attested` 와 같은 해시 게이트(EXIT 5) → 인자 0개(`--confirm` 포함 무엇이든 `EXIT=64`) → live env 검증(위반 `EXIT=64`, 사유만) → 비밀은 `.isolation/` 0600 파일, sandbox 안 고정 인자 `-q -m live tests/test_live_e2e.py tests/test_live_standalone.py`. 거부 경로는 `--preflight` 자기시험(`tests_isolation/test_run_live.py`) |
 
 ### `--run-attested` 와 G3-ATTESTATION — 한계
 
-- `scripts/G3-ATTESTATION` 은 사람 G3 확인((나)-0 `--prove-outside`·(나)-2 `--run`)을 통과한 프로필·정리 함수의 sha256 기록입니다(`main_commit`·`evidence`·`attested_at` 포함). **사람만 갱신합니다.** `pytest.sb`·`_iso_fs.sh` 를 바꾸는 변경은 사람이 (나)-0·(나)-2 를 다시 확인한 뒤 이 파일을 고칩니다.
-- 해시 대조는 **우발 실행·무심사 프로필 변경 방지**입니다. 저장소 쓰기 권한이 있는 행위자의 의도적 우회(래퍼·이 파일 자체 수정)는 막지 못합니다.
-- 해시는 두 파일만 덮습니다. 래퍼(`isolated-pytest.sh`)·가드(`tests/_isolation_guard.py`)·`tests/conftest.py` 변경은 감지하지 않습니다.
-- 그래서 실효 프로필을 만드는 해시 밖 래퍼 부분 — 프로필 렌더 치환(`@HERMES_SRC@`·`@HERMES_SRC_RE@`·`@ISO@`·`@P@`·`;;@DENY_PORT_RULES@`), `base_env` 의 env 허용목록·`PYTHONPATH`, `DENY_PORTS`, `PY_HOME`·`PY_EXE`·`HERMES_SRC`(읽기·exec 경로), 실행 인자(`PYTEST_ARGS`·`--run-attested` 허용 인자) — 가 바뀌면 `profile_sha256`·`iso_fs_sha256` 이 그대로여도 사람 G3 재확인((나)-0·(나)-2)이 필요합니다. 두 해시만으로는 그 변경을 검출하지 못합니다. 이 규칙은 문서 약속이며 자동 검사는 없습니다.
-- Issue #47 레인 B 의 `--run-live` 추가(새 모드·해시 게이트 적용 범위·live 전용 env 7개와 `*_FILE` 경로·고정 pytest 인자·`--preflight` 의 `run_live_selftest` 단계)는 이 규칙의 대상인 해시 밖 래퍼 변경입니다 — 사람 재확인 전에는 쓰지 않습니다.
-- 대조는 `_iso_fs.sh` 를 source 하기 전, `.isolation/` 을 건드리기 전에 합니다. EXIT 5 경로는 `--preflight` 가 `.isolation/tmp` 안 복사본을 바꿔 자기시험하고 `tests_isolation/test_attestation.py` 가 결과를 단언합니다(작업 트리 파일은 바꾸지 않음).
+- `scripts/G3-ATTESTATION` 은 사람 G3 확인((나)-0 `--prove-outside`·(나)-2 `--run`)을 통과한 해시 대상 5파일의 sha256 기록입니다(`main_commit`·`evidence`·`attested_at` 포함). **사람만 갱신합니다.**
+- 해시 대상(Issue #48 부터 5파일): `profile_sha256`=`scripts/pytest.sb`, `iso_fs_sha256`=`scripts/_iso_fs.sh`, `wrapper_sha256`=`scripts/isolated-pytest.sh`(실행 중인 래퍼 자신 — 그 realpath 가 `P/scripts/isolated-pytest.sh` 가 아니면 EXIT 2), `guard_sha256`=`tests/_isolation_guard.py`, `conftest_sha256`=`tests/conftest.py`. 키가 하나라도 없으면(예: 키 5개짜리 구 형식 파일) EXIT 5 — 재승인 필요.
+- 규칙: **해시 대상 5파일 중 하나라도 바꾸면 사람 재승인**((나)-0·(나)-2 재확인 뒤 승인 파일 갱신)이 필요하고, 그 전까지 `--run-attested`·`--run-live` 는 EXIT 5 로 멈춥니다. 이전의 「해시 밖 래퍼 변경은 사람 재확인(문서 약속, 자동 검사 없음)」 규칙은 래퍼가 해시 대상이 되면서 자동 검사로 바뀌었습니다 — 렌더 치환·`base_env` 허용목록·`DENY_PORTS`·`PY_HOME`·`PYTEST_ARGS`·`--run-live` 검증 등 래퍼 안 어느 줄이 바뀌어도 `wrapper_sha256` 불일치입니다.
+- 한계 1(의도적 우회): 해시 대조는 **우발 실행·무심사 변경 방지**입니다. 저장소 쓰기 권한이 있는 행위자가 래퍼에서 이 검사 자체를 지우거나 승인 파일을 함께 고치면 막지 못합니다.
+- 한계 2(TOCTOU): 래퍼는 각 대상 파일을 한 번만 읽어 메모리 스냅숏으로 대조합니다. `pytest.sb`·`_iso_fs.sh` 는 그 스냅숏으로 렌더·적재하므로 대조 바이트 = 쓰는 바이트지만, 가드·`tests/conftest.py` 는 sandbox 안 Python 이 다시 읽으므로 대조 뒤 실행 전 사이의 변경은 감지하지 못합니다. 래퍼 자신도 bash 가 실행 중 파일을 조금씩 읽으므로 대조 뒤 실행 중 변경은 같은 한계입니다.
+- 해시 밖으로 남는 것: `pytest.ini`, `tests/` 의 다른 파일(시험 본문·`tests/conftest.py` 가 import 하는 모듈), `tests_isolation/`, `scripts/live-e2e.sh`, Hermes 소스·인터프리터. 이 중 실효 격리를 바꾸는 변경은 여전히 사람 재확인 대상입니다(문서 약속).
+- 대조는 `_iso_fs.sh` 를 source 하기 전, `.isolation/` 을 건드리기 전에 합니다. EXIT 5 경로는 `--preflight` 가 `.isolation/tmp` 안 복사본(P 루트 형태 `scripts/`·`tests/`)을 바꿔 자기시험하고 `tests_isolation/test_attestation.py`·`test_run_live.py` 가 결과를 단언합니다(작업 트리 파일은 바꾸지 않음). 자기시험 기준은 실제 승인 파일 바이트라, 승인 파일이 현재 5파일과 맞지 않으면(예: Issue #48 직후 재승인 전) `--preflight` 도 `PREFLIGHT FAIL` 입니다.
+
+#### 사람 재승인 절차(해시 대상 변경 뒤)
+
+1. (나)-0 `bash scripts/isolated-pytest.sh --prove-outside --confirm=OUTSIDE-PROBE-BY-HUMAN` 과 (나)-2 `bash scripts/isolated-pytest.sh --run --confirm=G3-CLEARED-BY-HUMAN` 을 사람이 실행해 통과를 확인합니다(아래 「사람 실행 (나) 0–5」).
+2. 확인한 커밋에서 5파일이 그 뒤 바뀌지 않았는지 확인합니다(`git status`·`git diff <main_commit> -- <5파일>` 이 비어 있음, 필요하면 `stat -f '%Sm' <파일>` 로 수정 시각이 실행 시각 이전인지).
+3. `shasum -a 256 scripts/pytest.sb scripts/_iso_fs.sh scripts/isolated-pytest.sh tests/_isolation_guard.py tests/conftest.py` 값으로 승인 파일을 씁니다. 형식(주석·빈 줄 허용, 키 8줄 각 정확히 1번, `키=값` 공백 없음):
+
+   ```
+   # Human G3 revalidation. main_commit records the tested source commit.
+   profile_sha256=<64 hex>
+   iso_fs_sha256=<64 hex>
+   wrapper_sha256=<64 hex>
+   guard_sha256=<64 hex>
+   conftest_sha256=<64 hex>
+   attested_at=YYYY-MM-DD
+   evidence=<증거 문서 경로>
+   main_commit=<7–40 hex>
+   ```
+4. `bash scripts/isolated-pytest.sh --preflight; echo EXIT=$?` → `PREFLIGHT PASS`, `EXIT=0` 을 확인합니다(자기시험 `unmodified` 등이 새 승인 파일로 통과).
 
 ### 사람 실행 (나) 0–5 — 에이전트는 실행하지 않습니다
 

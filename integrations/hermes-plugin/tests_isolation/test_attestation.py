@@ -37,6 +37,23 @@ CASES = {
     "missing_profile": (5, "scripts/pytest.sb missing or not a regular file"),
     "missing_iso_fs": (5, "scripts/_iso_fs.sh missing or not a regular file"),
     "missing_attestation": (5, "G3-ATTESTATION missing or not a regular file"),
+    # Issue #48: 해시 범위 5파일(래퍼·가드·conftest 추가). 기준은 실제 G3-ATTESTATION 바이트 — 사람 재승인 전에는
+    # 새 키가 없어 *_modified·unmodified 류가 실패하는 것이 정상(REPORT 「예상 결과」).
+    "wrapper_modified": (5, "scripts/isolated-pytest.sh sha256 differs"),
+    "guard_modified": (5, "tests/_isolation_guard.py sha256 differs"),
+    "conftest_modified": (5, "tests/conftest.py sha256 differs"),
+    "missing_wrapper_key": (5, "wrapper_sha256 must appear exactly once (found 0)"),
+    "missing_guard": (5, "tests/_isolation_guard.py missing or not a regular file"),
+    "missing_conftest": (5, "tests/conftest.py missing or not a regular file"),
+    "guard_symlink": (5, "tests/_isolation_guard.py missing or not a regular file"),
+}
+# 승인 파일의 해시 키 → P 루트 기준 대상 파일(래퍼 HASH_KEYS 와 같은 5개).
+HASHED = {
+    "profile_sha256": os.path.join("scripts", "pytest.sb"),
+    "iso_fs_sha256": os.path.join("scripts", "_iso_fs.sh"),
+    "wrapper_sha256": os.path.join("scripts", "isolated-pytest.sh"),
+    "guard_sha256": os.path.join("tests", "_isolation_guard.py"),
+    "conftest_sha256": os.path.join("tests", "conftest.py"),
 }
 
 
@@ -56,9 +73,9 @@ def _sha256(path: str) -> str:
 
 def test_attestation_hashes_match_current_files():
     text = _read_attestation()
-    for key, name in (("profile_sha256", "pytest.sb"), ("iso_fs_sha256", "_iso_fs.sh")):
+    for key, rel in HASHED.items():
         found = re.findall(rf"^{key}=([0-9a-f]{{64}})$", text, re.M)
-        assert found == [_sha256(os.path.join(SCRIPTS, name))], key
+        assert found == [_sha256(os.path.join(P_DIR, rel))], key
 
 
 def _read_attestation() -> str:
@@ -94,8 +111,25 @@ def test_run_attested_missing_file_exits_5_before_layout(missing):
 
 
 def test_wrapper_opens_protected_files_only_in_snapshot():
-    """P2-1 정적 보조: 원본 pytest.sb·_iso_fs.sh 를 여는 곳은 스냅숏 진입(`take_snapshot "$P/scripts"`)뿐."""
+    """P2-1 정적 보조: 원본 해시 대상(pytest.sb·_iso_fs.sh·G3-ATTESTATION·가드·conftest)을 여는 곳은
+    스냅숏 진입(`take_snapshot "$P" "$WRAPPER_SELF"`)뿐이고, 자기시험 래퍼 복사본은 cp 가 아니라 스냅숏 바이트다."""
     with open(WRAPPER, encoding="utf-8") as fh:
         code = [line for line in fh if not line.lstrip().startswith("#")]
-    assert not [line for line in code if re.search(r'\$P/scripts/(pytest\.sb|_iso_fs\.sh)', line)]
+    text = "".join(code)
+    assert not [line for line in code if re.search(
+        r'\$P/(scripts/(pytest\.sb|_iso_fs\.sh|G3-ATTESTATION)|tests/(_isolation_guard\.py|conftest\.py))', line)]
     assert not [line for line in code if re.match(r"\s*\.\s", line) or re.match(r"\s*source\s", line)]
+    assert 'attest_gate "$P" "$WRAPPER_SELF"' in text
+    assert 'take_snapshot "$P" "$WRAPPER_SELF"' in text
+    assert 'cp -- "${BASH_SOURCE[0]}"' not in text
+
+
+def test_wrapper_attest_keys_cover_five_files():
+    """정적: 래퍼의 승인 키·해시 키 목록이 이 파일의 HASHED 와 같다(키 추가·삭제가 한쪽만 바뀌지 않게)."""
+    with open(WRAPPER, encoding="utf-8") as fh:
+        text = fh.read()
+    hash_keys = re.search(r"^HASH_KEYS=\(([^)]*)\)$", text, re.M)
+    attest_keys = re.search(r"^ATTEST_KEYS=\(([^)]*)\)$", text, re.M)
+    assert hash_keys and attest_keys
+    assert set(hash_keys.group(1).split()) == set(HASHED)
+    assert set(attest_keys.group(1).split()) == set(HASHED) | {"attested_at", "evidence", "main_commit"}

@@ -48,9 +48,20 @@ REJECT = {
     "origin_bad": f"OHMYSLACK_LIVE_ORIGIN {URL_RULE}",
     "cookie_missing": f"OHMYSLACK_LIVE_COOKIE {SECRET_RULE}",
     "csrf_missing": f"OHMYSLACK_LIVE_CSRF {SECRET_RULE}",
+    # QA O-7 포트 경계(65536 은 위 url_port_over). 운영 포트는 MAIN_URL·ORIGIN 에도 적용.
+    "url_port_1023": f"OHMYSLACK_BOT_URL {URL_RULE}",
+    "main_url_8788": f"OHMYSLACK_LIVE_MAIN_URL {URL_RULE}",
+    "origin_8787": f"OHMYSLACK_LIVE_ORIGIN {URL_RULE}",
 }
 # 대조군: 모든 값이 유효하면 검증을 통과해 다음 단계(require_sandbox)에서 멈춘다 — 가짜 P 에 .venv 가 없어 EXIT 6.
 VALID = "valid_env"
+PASS = (VALID, "url_port_1024", "url_port_65535")
+# QA O-2: 가짜 P 복사본에서 해시 대상 1바이트 변형 → 해시 게이트 EXIT 5(env 는 모두 유효).
+HASH_MISMATCH = {
+    "hash_profile_modified": "scripts/pytest.sb sha256 differs from G3-ATTESTATION",
+    "hash_guard_modified": "tests/_isolation_guard.py sha256 differs from G3-ATTESTATION",
+}
+REFUSAL = "re-attestation by human required"
 
 
 def _read(name: str) -> str:
@@ -63,7 +74,7 @@ def _result() -> dict[str, str]:
 
 
 def test_every_case_recorded():
-    assert set(_result()) == set(REJECT) | {VALID}
+    assert set(_result()) == set(REJECT) | set(PASS) | set(HASH_MISMATCH)
 
 
 @pytest.mark.parametrize("case", sorted(REJECT))
@@ -73,16 +84,32 @@ def test_run_live_rejects_with_64_and_no_secret(case):
     assert out == ""
     assert REJECT[case] in err, err
     assert SECRET_MARK not in out and SECRET_MARK not in err
-    assert "re-attestation by human required" not in err  # 해시 게이트는 통과한 뒤의 거부
+    assert REFUSAL not in err  # 해시 게이트는 통과한 뒤의 거부
 
 
-def test_run_live_valid_env_passes_validation():
-    """검증 통과 → require_sandbox 에서 EXIT 6(가짜 P 에 venv 없음). 검증이 유효 값을 거부하지 않는다는 대조군."""
-    assert _result()[VALID] == "6"
-    out, err = _read(f"{VALID}.out"), _read(f"{VALID}.err")
+@pytest.mark.parametrize("case", PASS)
+def test_run_live_valid_env_passes_validation(case):
+    """검증 통과 → require_sandbox 에서 EXIT 6(가짜 P 에 venv 없음). 검증이 유효 값(포트 1024·65535 경계 포함)을
+    거부하지 않는다는 대조군."""
+    assert _result()[case] == "6"
+    out, err = _read(f"{case}.out"), _read(f"{case}.err")
     assert "venv interpreter missing" in err, err
     assert NO_ARGS not in err and "must be" not in err  # 64 사유 없음
+    assert REFUSAL not in err
     assert SECRET_MARK not in out and SECRET_MARK not in err
+
+
+@pytest.mark.parametrize("case", sorted(HASH_MISMATCH))
+def test_run_live_hash_mismatch_exits_5(case):
+    """QA O-2: 해시 대상(pytest.sb·가드) 1바이트 변형 → env 검증·sandbox·.isolation 전에 EXIT 5, 비밀 표지 0건."""
+    assert _result()[case] == "5"
+    out, err = _read(f"{case}.out"), _read(f"{case}.err")
+    assert out == ""
+    assert REFUSAL in err and HASH_MISMATCH[case] in err, err
+    assert SECRET_MARK not in out and SECRET_MARK not in err
+    fake_p = os.path.join(SELFTEST, f"fake-{case}", "integrations", "hermes-plugin")
+    assert os.path.isfile(os.path.join(fake_p, "pytest.ini"))  # 경로 대조군(가짜 P 가 실제로 그 자리에 있음)
+    assert not os.path.lexists(os.path.join(fake_p, ".isolation"))
 
 
 def _function_body(text: str, name: str) -> str:
