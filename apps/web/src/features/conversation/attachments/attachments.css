@@ -157,6 +157,17 @@
   font-size: var(--text-xs);
   font-weight: 600;
 }
+/* 이미지 칩 미리보기(D §6-5): 정사각 2.5rem, 투명 PNG도 보이게 바탕 깔기. 칩 높이는 내용으로 결정된다. */
+.composer-chip-thumb {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-block: var(--space-1);
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
 .composer-chip-state {
   display: inline-flex;
   align-items: center;

@@ -1,7 +1,8 @@
 import { useRef } from 'react';
 import { ATTACHMENT_COPY } from '../../../ui/copy.js';
 import { formatBytes, type ComposerChip } from './composer-upload.js';
-import { COMPOSER_ACCEPT, composerKindLabel } from './file-kinds.js';
+import { ChipLead } from './ChipLead.js';
+import { COMPOSER_ACCEPT } from './file-kinds.js';
 import { FileName } from './FileName.js';
 import './attachments.css';
 
@@ -17,7 +18,7 @@ export interface ComposerAttachmentsProps {
 }
 
 /**
- * Composer 첨부(이미지·문서 업로드, UI_STATES §2-6·§2-13): 「파일 첨부」 버튼(G-53) + 칩(형식 표지·파일명·크기·제거) + 실패 알림 1개(`role="alert"`).
+ * Composer 첨부(이미지·문서 업로드, UI_STATES §2-6·§2-13): 「파일 첨부」 버튼(G-53) + 칩(이미지 썸네일 또는 형식 표지·파일명·크기·제거) + 실패 알림 1개(`role="alert"`).
  * 제거 뒤 포커스: 다음 칩의 「첨부 제거」 → 없으면 이전 칩 → 없으면 입력란.
  */
 export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, onRetry, onEmptied }: ComposerAttachmentsProps) {
@@ -74,10 +75,9 @@ export function ComposerAttachments({ chips, full, uploading, onAdd, onRemove, o
       {chips.length > 0 && (
         <ul ref={list} className="composer-chips" aria-busy={uploading}>
           {chips.map((c) => {
-            const label = composerKindLabel(c.file.name);
             return (
               <li key={c.key} className={`composer-chip composer-chip-${c.status}`} aria-busy={c.status === 'uploading'}>
-                {label !== null && <span className="composer-chip-kind">{label}</span>}
+                <ChipLead chip={c} />
                 <FileName name={c.file.name} base="composer-chip-name" />
                 <span className="composer-chip-size">{formatBytes(c.file.size)}</span>
                 {c.status === 'uploading' && (
