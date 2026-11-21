@@ -38,3 +38,17 @@ describe('QA r2 D1 작성기 문서 칩 CSS', () => {
     }
   });
 });
+
+describe('작성기 칩 이미지 썸네일 CSS(D §6-5)', () => {
+  it('정사각 2.5rem·cover·--radius-sm·1px --border-subtle·바탕 --bg-elevated, 줄지 않음', () => {
+    const body = rule('.composer-chip-thumb');
+    expect(body).toMatch(/width: 2\.5rem/);
+    expect(body).toMatch(/height: 2\.5rem/);
+    expect(body).toMatch(/object-fit: cover/);
+    expect(body).toMatch(/border-radius: var\(--radius-sm\)/);
+    expect(body).toMatch(/border: 1px solid var\(--border-subtle\)/);
+    expect(body).toMatch(/background: var\(--bg-elevated\)/);
+    expect(body).toMatch(/flex: none/);
+    expect(body).not.toMatch(/px;?\s*(height|width)/);
+  });
+});
