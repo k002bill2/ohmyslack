@@ -64,7 +64,7 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
 - **standalone sender**: 게이트웨이 밖에서 도는 cron이 같은 HTTP 클라이언트로 홈 채널에 **최상위** 메시지를 보냅니다
   - **단일 호출 계약**: 플랫폼을 `max_message_length=0`으로 등록합니다. 그래서 Hermes는 원문을 쪼개지 않고 원문 전체와 첨부 전체를 sender **한 번** 호출에 넘깁니다(Hermes `gateway/outbound/send.py` `_platform_max_length`, 이 등록값을 읽는 유일한 곳 — 2026-11-16 이전 `tools/send_message_tool.py`). `/me`도 한 번, deadline도 하나입니다. 4,000 code point 청크 분할(`(i/n)` 표기 포함)은 어댑터 안에서 합니다. 라이브 어댑터 경로도 어댑터가 같은 함수로 나누므로 게시 형태는 같습니다
   - 첨부(ADR-002 1a): `media_files`의 mp3·png·jpeg·webp는 라이브 경로와 같은 판정·상한(파일당 10 MiB, 메시지당 4개)으로 업로드해 텍스트의 **첫 청크**에 결속합니다(본문이 비면 첫 파일명). 모든 첨부가 결속되면 `media_delivered: True`를 함께 돌려줍니다. 라이브 경로(`send_message` → 텍스트 뒤 별도 미디어 메시지)와 첨부 위치가 다른 것은 알려진 차이입니다
-  - 라이브 경로 후속 첨부(#52): `OHMYSLACK_POST_CHANNELS` 채널에서 caption·루트 없는 첨부(`send_voice`·`send_image_file`, 대체 글 포함)가 60초(`MEDIA_FOLLOW_WINDOW_SECONDS`) 안 **유일한** 최상위 본문 뒤에 오면, 새 최상위 글 대신 그 본문 첫 조각 스레드에 별도 답글로 붙습니다. 첫 청크 결속은 여전히 standalone만 합니다
+  - 라이브 경로 후속 첨부(#52): `OHMYSLACK_POST_CHANNELS` 채널에서 caption·루트 없는 첨부(`send_voice`·`send_image_file`과 그 대체 글, `send_document`·`send_video` 대체 글)가 60초(`MEDIA_FOLLOW_WINDOW_SECONDS`) 안 **유일한** 최상위 본문 뒤에 오면, 새 최상위 글 대신 그 본문 첫 조각 스레드에 별도 답글로 붙습니다. 첫 청크 결속은 여전히 standalone만 합니다
   - 창 안 최상위 글이 2개 이상(모호)·창 초과·caption 있음·루트 지정·DM·직전 최상위가 첨부 글이면 기존 동작(최상위 또는 지정 루트)입니다
   - 파일 검사·읽기는 daemon 스레드 1개에서 한 번만 합니다(`O_NOFOLLOW` open → `fstat`으로 사유 판정, 이벤트 루프 스레드의 파일 시스템 호출 없음). 멈춘 파일 시스템 읽기가 있어도 Hermes `asyncio.run` 종료가 그 스레드를 기다리지 않습니다
   - 지원 밖 형식(문서·영상 등)·없는 파일·상한 초과·업로드 실패·4개 초과(지원 형식 앞 4개만 시도)·시간 예산 초과는 업로드하지 않고 파일마다 `warnings`에 `"<파일명>: <사유>"` 한 줄(`unsupported_type`·`not_found`·`too_large`·`rejected`·`upload_failed`·`too_many`·`budget_exceeded`·`read_unavailable`)을 싣습니다. 텍스트는 그대로 보냅니다
