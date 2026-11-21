@@ -395,7 +395,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 「받기」 버튼 | `download` 아이콘 + 「받기」 텍스트, 보조 버튼 스타일(기존 `.btn` 계열), 글자 `--accent-text` | 히트 영역 터치(`pointer: coarse`)·compact **44×44px 이상**, 정밀 포인터는 시안 밀도 32px 허용(§7-1 R4), 최소 24px 하드 룰 |
 | 포커스 | 「받기」에만 2px `--focus-ring` + 2px 오프셋(§7-1 2.4.7) | 행은 탭 정류장이 아님. 작성기·고정 배너에 가리면 `scroll-margin`(2.4.11) |
 | 만료 | 행 바탕 유지, 글자 전부 `--text-muted`, 「받기」 없음 | 이탤릭 금지(삭제 자리표시자와 구분) |
-| 작성기 칩 | 기존 이미지 칩과 같은 칩(`--bg-elevated`·`--radius-md`), 실패는 왼쪽 2px `--danger-solid` 선 + 문구 `--danger-text`. 이미지 칩은 형식 표지 대신 맨 앞에 썸네일: 정사각 2.5rem `object-fit: cover`, 반경 `--radius-sm`, 1px `--border-subtle`, 바탕 `--bg-elevated`, `alt=""`·`aria-hidden`, 소스는 메모리 전용 object URL(칩 사라짐·언마운트 시 revoke), 디코딩 실패면 확장자 대문자 표지로 대체 | 진행 표시는 비결정형(퍼센트 없음), `prefers-reduced-motion`에서 움직임 0 |
+| 작성기 칩 | 기존 이미지 칩과 같은 칩(`--bg-elevated`·`--radius-md`), 실패는 왼쪽 2px `--danger-solid` 선 + 문구 `--danger-text`. 이미지 칩은 형식 표지 대신 맨 앞에 썸네일: 정사각 2.5rem `object-fit: cover`, 반경 `--radius-sm`, 1px `--border-subtle`, 바탕 `--bg-elevated`, `alt=""`·`aria-hidden`, 소스는 메모리 전용 축소 data URL(CSP `img-src 'self' data:` — blob: 금지, 정사각 cover 크롭·한 변 2.5rem×DPR 상한 128px), 생성 중에는 같은 크기 빈 자리, 이미지 상한 초과·디코딩 실패면 확장자 대문자 표지로 대체 | 진행 표시는 비결정형(퍼센트 없음), `prefers-reduced-motion`에서 움직임 0 |
 
 **폭별 배치**
 
