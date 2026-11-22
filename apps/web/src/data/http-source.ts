@@ -518,6 +518,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
    */
   const forgetConversation = (conversationId: string) => {
     deleted = new Set(deleted).add(conversationId);
+    purgeConversation(conversationId);
+  };
+
+  /**
+   * 대화 정리 공용 helper — `forgetConversation`(삭제 확정)과 재연결 정합의 not_found(release·join 404)가 함께 탄다.
+   * 나간 채널·배경 구독·ACK 대기·읽음 대기열·보류 스레드 읽음·전송 대기·접힌 메시지를 비우고 초안 폐기를 알린다.
+   */
+  const purgeConversation = (conversationId: string) => {
     if (leftChannels.has(conversationId)) leftChannels = new Map([...leftChannels].filter(([id]) => id !== conversationId));
     if (background.has(conversationId)) {
       background = new Set([...background].filter((b) => b !== conversationId));
@@ -539,6 +547,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     }
     spaces = spaces.filter((sp) => sp.id !== conversationId);
     deletedListeners.forEach((l) => l(conversationId));
+    // 오프라인 큐의 메시지가 online 복귀 때 삭제된 대화로 POST되지 않게 버리고, 접힌 본문도 지운다(agy r2).
+    sendController.discardConversation(conversationId);
+    if ([...fold.messages.values()].some((m) => m.conversationId === conversationId)) {
+      fold = { applied: fold.applied, messages: new Map([...fold.messages].filter(([, m]) => m.conversationId !== conversationId)) };
+    }
     emit();
   };
 
@@ -747,7 +760,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   /** 거절된 대화를 현재 대화에서 내리고 목록을 다시 읽는다(접근 권한이 사라졌으면 목록에서도 빠진다). */
   const release = async (conversationId: string) => {
     if (current === conversationId) current = null;
-    await loadList();
+    const list = await loadList();
+    // 확정 신호(not_found) + 다시 읽은 목록에도 없음 → 오프라인 중 삭제·접근 상실: 초안·읽음 대기열 등을 정리한다(agy r2).
+    // `deleted`에는 넣지 않는다 — 다른 기기에서 다시 참여하면 목록이 되살린다.
+    if (!ended && !list.some((c) => c.id === conversationId) && !leftChannels.has(conversationId)) purgeConversation(conversationId);
     if (!ended) emit();
   };
 
@@ -772,7 +788,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     fold = emptyFold;
     let first: number | null = null;
     for (const c of await loadList()) {
-      const snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
+      if (deleted.has(c.id)) continue;
+      let snap: SnapshotResponse;
+      try {
+        snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
+      } catch (e) {
+        // 목록 뒤 순회 중 삭제된 대화(404)는 그 대화만 정리하고 계속한다 — 복귀 절차가 「최신 상태 확인 중」에 멈추지 않게(agy r2).
+        if (!(e instanceof HttpStatusError) || e.status !== 404) throw e;
+        forgetConversation(c.id);
+        continue;
+      }
       first ??= snap.snapshot_cursor;
       for (const m of snap.messages) {
         fold = foldView(0, m);
@@ -820,6 +845,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 복귀 중 대화가 바뀌었으면 바뀐 대화를 다시 구독한다 — 현재 대화의 ACK 뒤에만 연결됨·checkpoint 전진(Codex r2 P2).
     for (let target = current; target !== null; target = current) {
       await waitOpen();
+      // 소켓을 기다리는 동안 삭제(forgetConversation)·전환됐으면 그 대화는 구독하지 않는다(agy r2).
+      if (current !== target) continue;
       try {
         await subscribe(target, watermark);
       } catch (e) {
@@ -1064,7 +1091,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       }),
     joinChannel: (conversationId) =>
       attempt(async () => {
-        const ref = await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`);
+        let ref: ConversationRef;
+        try {
+          ref = await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`);
+        } catch (e) {
+          // 나가 있는 동안 삭제된 채널(404): 「다시 참여」가 남지 않게 정리하고 실패를 돌려준다(agy r2).
+          if (e instanceof HttpStatusError && e.status === 404) forgetConversation(conversationId);
+          throw e;
+        }
         const next = new Map(leftChannels);
         next.delete(conversationId);
         leftChannels = next;

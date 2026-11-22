@@ -105,6 +105,12 @@ export function createSendController(deps: SendControllerDeps) {
       items = items.map((it) => transition(it, { type: 'ws-closed' }));
       deps.onChange(items);
     },
+    /** 대화 삭제(FR-CONV-06): 그 대화의 보류·실패·오프라인 항목을 버린다 — 진행 중 재전송 루프도 남은 항목을 보내지 않는다. */
+    discardConversation(conversationId: string): void {
+      if (!items.some((it) => it.conversationId === conversationId)) return;
+      items = items.filter((it) => it.conversationId !== conversationId);
+      deps.onChange(items);
+    },
     discard(clientMessageId: string): void {
       items = items.filter((it) => it.clientMessageId !== clientMessageId);
       deps.onChange(items);
