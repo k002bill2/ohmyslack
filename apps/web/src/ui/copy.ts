@@ -261,6 +261,15 @@ export const MESSAGE_MENU_COPY = {
   copyFailed: '복사하지 못했습니다',
 } as const;
 
+/** 메시지 본문 코드 블록 「복사」 버튼(CMP-08). 실패 문구는 MESSAGE_MENU_COPY.copyFailed를 쓴다. */
+export const CODE_BLOCK_COPY = {
+  copy: '복사',
+  label: '코드 복사',
+  copied: '복사됨',
+  /** 실패 시 버튼 글자(안내 낭독은 MESSAGE_MENU_COPY.copyFailed). */
+  failed: '복사 실패',
+} as const;
+
 /** R4 시안 대화 헤더 더보기 메뉴(Floating-Menus D). 「멤버 보기」는 채널 멤버 화면이 없어 아직 렌더하지 않는다. */
 export const HEADER_MENU_COPY = {
   more: '대화 더보기',
