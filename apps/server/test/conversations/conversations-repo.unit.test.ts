@@ -53,8 +53,13 @@ describe('createPgConversationsStore: 접근·조회', () => {
     expect(fx.params[1]).toEqual(['u', 'c0', 3]);
   });
 
-  it('leave: 대화 잠금 0행이면 deleted, 바뀐 행 유무로 ended/none', async () => {
-    expect(await createPgConversationsStore(fakePool(() => ok()).pool).leave('c', 'u', at)).toBe('ended');
+  it('leave: 바뀐 행 있으면 ended, 0행이면 살아 있는 대화는 none·삭제/없음은 deleted', async () => {
+    const sqls: string[] = [];
+    const ended = fakePool((sql) => (sqls.push(sql), ok()));
+    expect(await createPgConversationsStore(ended.pool).leave('c', 'u', at)).toBe('ended');
+    // 대화 행을 잠그지 않는다(전송과 비직렬화): 멤버 갱신 문장이 deleted_at을 같이 확인한다.
+    expect(sqls.some((s) => /FOR (SHARE|UPDATE)/.test(s))).toBe(false);
+    expect(sqls.some((s) => s.startsWith('UPDATE conversation_members') && s.includes('c.deleted_at IS NULL'))).toBe(true);
     expect(await createPgConversationsStore(fakePool(none).pool).leave('c', 'u', at)).toBe('deleted');
     const liveOnly = fakePool((sql) => (sql.startsWith('SELECT 1 FROM conversations') ? ok() : none()));
     expect(await createPgConversationsStore(liveOnly.pool).leave('c', 'u', at)).toBe('none');

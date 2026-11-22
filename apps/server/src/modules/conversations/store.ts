@@ -87,12 +87,12 @@ export interface ConversationsStore {
   /** 봇 멤버십 UPSERT(joinIn과 같은 규칙). 대상이 대화와 같은 워크스페이스의 활성 봇이 아니면 invalid_target(변경 0). */
   addBot(conversationId: string, botUserId: string, at: Date): Promise<AddBotResult>;
   /**
-   * 공개 채널 소프트 삭제(FR-CONV-06): `deleted_at`·`deleted_by` 기록 + 그 시점 활성 멤버 반환(한 트랜잭션).
+   * 공개 채널 소프트 삭제(FR-CONV-06): `deleted_at`·`deleted_by` 기록 + 통지 대상 반환(한 트랜잭션) — 멤버 행이 있었던 사람 전원(먼저 나간 사람 포함)·삭제 시점 활성 봇.
    * 같은 트랜잭션에서 활성 멤버십 전원(사람·봇)에 left_at=삭제 시각을 기록한다(fix1 구조 수정).
    * 없는 ID·DM·이미 삭제된 채널이면 undefined(변경 0). 메시지·첨부 행은 바꾸지 않는다.
    */
   deleteChannel(conversationId: string, deletedBy: string, at: Date): Promise<readonly DeletedMember[] | undefined>;
-  /** 활성 **봇** 멤버십에만 left_at을 기록한다(사람 대상은 바뀌지 않음). 대화 행을 FOR SHARE로 잠가 삭제와 직렬화한다. */
+  /** 활성 **봇** 멤버십에만 left_at을 기록한다(사람 대상은 바뀌지 않음). 대화 행은 잠그지 않고 멤버 행 갱신으로 삭제와 직렬화한다(삭제됨·없음이면 deleted). */
   removeBot(conversationId: string, botUserId: string, at: Date): Promise<MembershipEndResult>;
   /** 채널 생성 + 생성자 멤버십·read state(한 트랜잭션). 같은 workspace의 같은 name_norm은 name_taken. */
   createChannel(channel: NewChannel): Promise<CreateChannelResult>;
@@ -100,7 +100,7 @@ export interface ConversationsStore {
   discover(userId: string, after: string | undefined, limit: number): Promise<readonly ChannelListing[]>;
   /** 참여·재참여: joined_seq=last_seq, read cursor 초기화. 이미 활성 멤버면 바꾸지 않는다. */
   join(conversationId: string, userId: string, at: Date): Promise<JoinResult>;
-  /** 활성 멤버십에 left_at을 기록한다. 대화 행을 FOR SHARE로 잠가 삭제와 직렬화한다. */
+  /** 활성 멤버십에 left_at을 기록한다. 대화 행은 잠그지 않고 멤버 행 갱신으로 삭제와 직렬화한다(삭제됨·없음이면 deleted). */
   leave(conversationId: string, userId: string, at: Date): Promise<MembershipEndResult>;
   listMembers(conversationId: string): Promise<readonly MemberRow[]>;
   /** 활성 멤버십 대화(id 오름차순 cursor, 최대 limit행). */

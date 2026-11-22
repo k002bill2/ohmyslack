@@ -114,3 +114,47 @@ describe('FR-CONV-06 owner가 나간 채널 삭제', () => {
     }
   });
 });
+
+describe('FR-CONV-06 먼저 나간 사람 멤버 통지', () => {
+  it('사람 멤버가 먼저 나간 뒤 owner가 삭제하면 그 멤버 연결도 conversation.deleted를 받는다', async () => {
+    const ws = await setupWsInt();
+    try {
+      const { app } = ws.conv;
+      const owner = await as(app, 'a');
+      const b = await as(app, 'b');
+      const cid = await createChannel(app, owner, 'left-first');
+      expect((await req(app, 'POST', `/api/conversations/${cid}/join`, b)).statusCode).toBe(200);
+      expect((await req(app, 'DELETE', `/api/conversations/${cid}/membership`, b)).statusCode).toBe(204);
+      const wsB = await ws.open(b.token);
+      expect((await req(app, 'DELETE', `/api/conversations/${cid}`, owner)).statusCode).toBe(204);
+      await wsB.waitFor((f) => f.type === 'conversation.deleted' && f.conversation_id === cid, 3000);
+    } finally {
+      await ws.teardown();
+    }
+  });
+});
+
+describe('FR-CONV-06 복구 정합: 삭제가 찍은 left_at = deleted_at', () => {
+  it('삭제로 종료된 멤버 행의 left_at은 conversations.deleted_at과 정확히 같고 먼저 나간 행은 그대로다', async () => {
+    const app = lc.conv.app;
+    const owner = await as(app, 'a');
+    const b = await as(app, 'b');
+    const c = await as(app, 'c');
+    const cid = await createChannel(app, owner, 'restorable');
+    expect((await req(app, 'POST', `/api/conversations/${cid}/join`, b)).statusCode).toBe(200);
+    expect((await req(app, 'POST', `/api/conversations/${cid}/join`, c)).statusCode).toBe(200);
+    expect((await req(app, 'DELETE', `/api/conversations/${cid}/membership`, c)).statusCode).toBe(204);
+    expect((await req(app, 'POST', `/api/conversations/${cid}/bots`, owner, { bot_user_id: lc.bot.botUserId })).statusCode).toBe(201);
+    expect((await req(app, 'DELETE', `/api/conversations/${cid}`, owner)).statusCode).toBe(204);
+    const res = await lc.conv.schema.pool.query<{ user_id: string; same: boolean }>(
+      `SELECT m.user_id, m.left_at = c.deleted_at AS same FROM conversation_members m
+         JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = $1 ORDER BY m.user_id`,
+      [cid],
+    );
+    const same = new Map(res.rows.map((r) => [r.user_id, r.same]));
+    expect(same.get(lc.conv.ids.a)).toBe(true);
+    expect(same.get(lc.conv.ids.b)).toBe(true);
+    expect(same.get(lc.bot.botUserId)).toBe(true);
+    expect(same.get(lc.conv.ids.c)).toBe(false);
+  });
+});

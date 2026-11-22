@@ -2,6 +2,14 @@
 -- 스키마 중립: 이름을 스키마로 한정하지 않는다(실행기가 search_path의 스키마에 적용). 트랜잭션은 실행기가 연다.
 -- 소프트 삭제: 메시지·첨부·멤버 행은 물리 삭제하지 않는다(물리 정리는 범위 밖).
 -- 삭제 트랜잭션은 그 채널의 활성 멤버 행 전원(사람·봇)에 left_at = 삭제 시각을 기록한다(멤버십 종료, 행은 유지).
+-- 운영자 복구 절차(앱 안 복구 UI 없음, 사람이 직접): 한 트랜잭션에서
+--   1) UPDATE conversation_members SET left_at = NULL
+--        WHERE conversation_id = $1 AND left_at = (SELECT deleted_at FROM conversations WHERE id = $1);
+--   2) UPDATE conversations SET deleted_at = NULL, deleted_by = NULL WHERE id = $1;
+--   삭제가 찍은 left_at은 conversations.deleted_at과 정확히 같은 값이다(같은 바인딩, 통합 테스트가 단언) —
+--   그 값인 행만 되살리고 먼저 나간 멤버는 그대로 둔다. joinIn(참여·봇 추가)을 다시 실행하지 않는다
+--   (joined_seq·읽음 cursor가 last_seq로 덮여 미읽음·봇 가시 범위가 사라진다). 같은 이름의 살아 있는 채널이 있으면
+--   2)가 이름 유니크 인덱스에 걸리므로 먼저 이름을 정리한다.
 -- 롤백 주의: 삭제된 채널 이름을 새 채널이 재사용한 뒤에는 0008 이전 바이너리·전체 유니크 인덱스로 되돌릴 수 없다(인덱스 재생성 실패).
 -- 배포 순서: 새 서버를 올리기 전에 이 마이그레이션을 먼저 적용한다(새 조회 SQL이 deleted_at을 항상 참조한다).
 ALTER TABLE conversations
