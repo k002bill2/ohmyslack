@@ -258,11 +258,11 @@
   font-size: var(--text-sm);
   line-height: var(--leading-body);
 }
-/* 코드 블록 「복사」 버튼: 래퍼 오른쪽 위 고정(pre 가로 스크롤과 함께 밀리지 않게). 배경·테두리로 아래 코드 글자를 가린다.
-   --code-copy-w = 버튼 최소 폭(가장 긴 글자 「복사 실패」 약 4.3em < 5em + 좌우 여백). pre는 그만큼 + 간격 2배를 오른쪽 여백으로 두어
-   긴 한 줄을 끝까지 스크롤하면 마지막 글자가 버튼 왼쪽에 보인다(리뷰 P2-1). */
+/* 코드 블록 복사 아이콘 버튼: 래퍼 오른쪽 위 고정(pre 가로 스크롤과 함께 밀리지 않게). 배경·테두리로 아래 코드 글자를 가린다.
+   --code-copy-w = 보이는 정사각 버튼 한 변(1.75rem = 28px, 아이콘 16px 가운데). pre는 그만큼 + 간격 2배를 오른쪽 여백으로 두어
+   긴 한 줄을 끝까지 스크롤하면 마지막 글자가 버튼 왼쪽에 보인다(리뷰 P2-1: 버튼 오른쪽 8~36px, 내용 끝 44px → 간격 ≥ --space-2 − 1px). */
 .msg-code-block {
-  --code-copy-w: calc(var(--text-xs) * 5 + var(--space-2) * 2);
+  --code-copy-w: 1.75rem;
   position: relative;
   max-width: 100%;
   min-width: 0;
@@ -275,18 +275,24 @@
   top: var(--space-2);
   inset-inline-end: var(--space-2);
   box-sizing: border-box;
-  min-width: var(--code-copy-w);
-  padding: var(--space-1) var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--code-copy-w);
+  height: var(--code-copy-w);
+  padding: 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   color: var(--text);
-  font-size: var(--text-xs);
-  white-space: nowrap;
   -webkit-user-select: none;
   user-select: none;
   cursor: pointer;
   transition: opacity 120ms ease;
+}
+/* 실패(x 아이콘)만 위험 글자색 — 모양(x)과 status 낭독이 함께 있어 색만으로 구분하지 않는다. */
+.msg-code-copy[data-state="failed"] {
+  color: var(--danger-text);
 }
 /* 마우스 환경: 래퍼 hover·포커스 안에 있을 때만 보인다(투명이어도 포커스 가능 — display:none·visibility:hidden 금지). */
 @media (hover: hover) {
@@ -298,8 +304,9 @@
     opacity: 1;
   }
 }
-/* 터치 환경: 항상 보인다. 보이는 크기는 그대로 두고 투명 ::after로 히트 영역을 44px 이상으로 넓힌다
-   (위·오른쪽은 래퍼 안쪽 여백 --space-2까지만 — 래퍼 밖 가로 넘침 없음, 아래로 더 넓힘). */
+/* 터치 환경: 항상 보인다. 보이는 28px은 그대로 두고 투명 ::after로 히트 영역을 넓힌다.
+   inset은 버튼 padding box(테두리 1px 안쪽, 26px) 기준이라 테두리 1px을 보정해 네 방향 -(8+1)px — 26 + 9 + 9 = 44px(가로·세로).
+   위·오른쪽은 래퍼 테두리에 정확히 닿아 밖으로 넘치지 않고, 아래는 버튼 아래 8px까지만이라 한 줄 블록 래퍼 안에 머문다. */
 @media (hover: none) {
   .msg-code-block .msg-code-copy {
     opacity: 1;
@@ -307,13 +314,13 @@
   .msg-code-block .msg-code-copy::after {
     content: '';
     position: absolute;
-    inset-block-start: calc(var(--space-2) * -1);
-    inset-inline-end: calc(var(--space-2) * -1);
-    inset-block-end: calc(var(--space-4) * -1);
-    inset-inline-start: calc(var(--space-2) * -1);
+    inset-block-start: calc(var(--space-2) * -1 - 1px);
+    inset-inline-end: calc(var(--space-2) * -1 - 1px);
+    inset-block-end: calc(var(--space-2) * -1 - 1px);
+    inset-inline-start: calc(var(--space-2) * -1 - 1px);
   }
 }
-/* 복사 결과 안내(role=status, 늘 렌더): 결과는 버튼 글자로 보이므로 보조기술 전용 — 레이아웃을 밀지 않는다. */
+/* 복사 결과 안내(role=status, 늘 렌더): 결과는 버튼 아이콘으로 보이므로 보조기술 전용 — 레이아웃을 밀지 않는다. */
 .msg-code-note {
   position: absolute;
   width: 1px;

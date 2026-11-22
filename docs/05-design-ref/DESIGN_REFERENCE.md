@@ -157,6 +157,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | 검색(P1)·설정·로그아웃·추가·참여·나가기 | `search`·`settings`·`log-out`·`plus`·`log-in`·`door-open` 계열 | ✅ / ⚠️ `log-in`·`door-open`은 빌드 시 확인 |
 | 멤버·관리자 | `users`·`shield` 계열 | ⚠️ 빌드 시 확인 |
 | 기기(세션 목록 진입·행) | `smartphone` / `laptop` | ✅ / ✅ (`laptop` raw 200, Claude-Fable §5-3 2026-11-10) |
+| 코드 복사 / 복사됨 / 복사 실패 | `copy` / `check` / `x` | ✅ raw SVG 200 (2026-11-22) |
 | 파일 첨부 / 문서 / 받기 | `paperclip` / `file-text` / `download` | ✅ 200 (Claude-Fable §5-3 2026-11-10) |
 | 오류·경고 | **확인 필요** — `circle-alert`·`alert-circle`·`triangle-alert` 모두 raw 경로 404. 빌드 시 패키지 내 실제 이름으로 확정 | ⚠️ |
 
