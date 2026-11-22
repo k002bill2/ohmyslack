@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory } from '../../src/app/route.js';
 import { createMemoryDataSource, type DataSource, type Snapshot } from '../../src/data';
 import { AppShell } from '../../src/features/layout';
-import { ANCHOR_GRACE_MS, ANCHOR_HIGHLIGHT_MS, ANCHOR_NOTICE_MS, ANCHOR_REPLIES_TIMEOUT_MS, parseMessageAnchor } from '../../src/features/layout/message-anchor.js';
+import { ANCHOR_GRACE_MS, ANCHOR_HIGHLIGHT_MS, ANCHOR_NOTICE_MS, ANCHOR_REPLIES_TIMEOUT_MS, isUserScrollInput, parseMessageAnchor } from '../../src/features/layout/message-anchor.js';
 import { MESSAGE_ANCHOR_COPY } from '../../src/ui/copy.js';
 import { T0 } from '../helpers/fixtures.js';
 import { installViewport } from '../helpers/viewport.js';
@@ -75,6 +75,50 @@ describe('parseMessageAnchor', () => {
     expect(h.pathname()).toBe(`/c/${C1}`);
     expect(h.search?.()).toBe(`?thread=${M1}`);
     expect(h.hash?.()).toBe(`#message-${R1}`);
+  });
+});
+
+describe('isUserScrollInput — 직접 스크롤 판정(agy r3 #1)', () => {
+  /** scope에 리스너를 달고 target에서 이벤트를 보내 판정 결과를 돌려준다(실제 버블링 경로의 target). */
+  function judge(html: string, pick: (scope: HTMLElement) => Element, event: Event): boolean {
+    const scope = document.createElement('div');
+    scope.innerHTML = html;
+    document.body.append(scope);
+    let result: boolean | null = null;
+    scope.addEventListener(event.type, (e) => (result = isUserScrollInput(e, scope)));
+    pick(scope).dispatchEvent(event);
+    scope.remove();
+    if (result === null) throw new Error('not dispatched');
+    return result;
+  }
+  const HTML = '<p class="msg">본문 <a href="#x">링크</a></p><span role="button">메뉴</span><div class="composer"><textarea></textarea><button>보내기</button><div class="hint">힌트</div></div><div contenteditable="true">편집</div>';
+  const key = (k: string) => new KeyboardEvent('keydown', { key: k, bubbles: true });
+  const down = () => new Event('pointerdown', { bubbles: true });
+  const touch = () => new Event('touchstart', { bubbles: true });
+
+  it('휠은 어디서든 직접 스크롤', () => {
+    expect(judge(HTML, (s) => s.querySelector('textarea')!, new Event('wheel', { bubbles: true }))).toBe(true);
+  });
+
+  it('pointerdown·touchstart: 스크롤 영역 자체(스크롤바·빈 영역)와 비상호작용 내용은 직접 스크롤, 작성기·상호작용 요소는 아님', () => {
+    for (const ev of [down, touch]) {
+      expect(judge(HTML, (s) => s, ev())).toBe(true);
+      expect(judge(HTML, (s) => s.querySelector('.msg')!, ev())).toBe(true);
+      expect(judge(HTML, (s) => s.querySelector('textarea')!, ev())).toBe(false);
+      expect(judge(HTML, (s) => s.querySelector('.composer button')!, ev())).toBe(false);
+      expect(judge(HTML, (s) => s.querySelector('.composer .hint')!, ev())).toBe(false);
+      expect(judge(HTML, (s) => s.querySelector('a')!, ev())).toBe(false);
+      expect(judge(HTML, (s) => s.querySelector('[role="button"]')!, ev())).toBe(false);
+    }
+  });
+
+  it('keydown: 스크롤 키만, 편집 가능 요소 밖에서만 직접 스크롤', () => {
+    for (const k of ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']) expect(judge(HTML, (s) => s, key(k))).toBe(true);
+    for (const k of ['a', 'Shift', 'Enter', 'Tab', 'Meta']) expect(judge(HTML, (s) => s, key(k))).toBe(false);
+    for (const k of ['ArrowUp', 'PageDown', ' ', 'a', 'Shift']) {
+      expect(judge(HTML, (s) => s.querySelector('textarea')!, key(k))).toBe(false);
+      expect(judge(HTML, (s) => s.querySelector('[contenteditable]')!, key(k))).toBe(false);
+    }
   });
 });
 
@@ -646,6 +690,56 @@ describe('스레드 앵커 hold는 대상 강조가 끝날 때까지(agy r2 #2)'
       panel.dispatchEvent(new Event('scroll'));
     });
     expect(markRead).toHaveBeenCalledWith(C1, M1, LAST);
+  });
+
+  it('강조 중 작성기에 타이핑(일반 키·Shift·Space)하거나 작성기·버튼을 눌러도 강조·hold가 유지된다 — agy r3 #1', () => {
+    const { ds, markRead } = longThread();
+    const view = render(<AppShell dataSource={ds} history={createMemoryHistory(`/c/${C1}?thread=${M1}#message-${REPLIES[8]}`)} />);
+    const panel = view.container.querySelector<HTMLElement>('.thread-panel')!;
+    const target = item(panel, REPLIES[8]!)!;
+    // 끝에서 두 번째 답글: 가운데 정렬 위치가 맨 아래에 걸린다 — hold가 풀리면 바로 마지막 답글 읽음이 보고되는 자리.
+    expect(panel.scrollTop).toBe(panel.scrollHeight - VIEW);
+    const textarea = panel.querySelector<HTMLTextAreaElement>('.composer textarea')!;
+    act(() => {
+      for (const key of ['a', 'Shift', ' ']) fireEvent.keyDown(textarea, { key });
+      fireEvent.change(textarea, { target: { value: 'a ' } });
+      fireEvent.pointerDown(textarea);
+      fireEvent.pointerDown(panel.querySelector<HTMLElement>('.composer button')!);
+    });
+    expect(target.getAttribute('data-highlighted')).toBe('true');
+    expect(markRead).not.toHaveBeenCalledWith(C1, M1, LAST);
+    // 강조가 끝나면 그때 위치(맨 아래)로 정상 보고.
+    act(() => vi.advanceTimersByTime(ANCHOR_HIGHLIGHT_MS));
+    expect(markRead).toHaveBeenCalledWith(C1, M1, LAST);
+  });
+
+  it('대조: 패널에 포커스가 있을 때 스크롤 키(PageDown)는 직접 스크롤로 보고 강조·hold를 푼다 — agy r3 #1', () => {
+    const { ds } = longThread();
+    const view = render(<AppShell dataSource={ds} history={createMemoryHistory(`/c/${C1}?thread=${M1}#message-${REPLIES[3]}`)} />);
+    const panel = view.container.querySelector<HTMLElement>('.thread-panel')!;
+    const target = item(panel, REPLIES[3]!)!;
+    act(() => {
+      fireEvent.keyDown(panel, { key: 'PageDown' });
+    });
+    expect(target.hasAttribute('data-highlighted')).toBe(false);
+  });
+
+  it('강조 중 원문이 삭제돼 패널이 내려가면(스레드 id 그대로) 강조·크기 관찰을 바로 끝낸다 — agy r3 #3', () => {
+    const { ds: base } = longThread();
+    let snap = base.getSnapshot();
+    const listeners = new Set<() => void>();
+    const ds: DataSource = { ...base, getSnapshot: () => snap, subscribe: (l) => (listeners.add(l), () => listeners.delete(l)) };
+    const view = render(<AppShell dataSource={ds} history={createMemoryHistory(`/c/${C1}?thread=${M1}#message-${REPLIES[3]}`)} />);
+    const target = item(view.container.querySelector('.thread-panel')!, REPLIES[3]!)!;
+    const replies = target.closest('.thread-replies')!;
+    expect(target.getAttribute('data-highlighted')).toBe('true');
+    act(() => {
+      snap = { ...snap, messages: snap.messages.filter((m) => m.id !== M1) };
+      listeners.forEach((l) => l());
+    });
+    expect(view.container.querySelector('.thread-panel')).toBeNull();
+    expect(target.hasAttribute('data-highlighted')).toBe(false);
+    expect(observers.every((o) => !o.targets.has(replies))).toBe(true);
   });
 
   it('강조 중 스레드를 닫으면 강조(크기 관찰·hold)를 바로 끝낸다 — 남은 관찰이 떨어진 대상을 다시 스크롤하지 않게', () => {

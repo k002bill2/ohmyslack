@@ -474,6 +474,115 @@ describe('FR-SYNC-03 읽음 저장(L43b, Codex r2 P2)', () => {
     expect(w.puts).toEqual([{ conversation_id: CONV, thread_root_id: ROOT, last_read_seq: 6 }]);
   });
 
+  it('snapshot 전에 시작한 여러 페이지 답글 조회의 남은 페이지는 버린다 — 새 조회가 끝나기 전엔 조회 완료·저장 없음(agy r3 #2a)', async () => {
+    const ROOT = U(101);
+    let releaseOld = () => {};
+    let releaseNew = () => {};
+    const oldPage2 = new Promise<void>((r) => (releaseOld = r));
+    const newPage2 = new Promise<void>((r) => (releaseNew = r));
+    let page2Calls = 0;
+    const w = world({
+      threads: [{ root_message_id: ROOT, last_read_seq: 0, last_reply_seq: 9, unread_reply_count: 2 }],
+      gate: (input) => {
+        if (!input.includes(`/api/messages/${ROOT}/replies`) || !input.includes('after_seq=5')) return undefined;
+        page2Calls += 1;
+        return page2Calls === 1 ? oldPage2 : newPage2;
+      },
+    });
+    w.server.on(`GET /api/messages/${ROOT}/replies`, (url) =>
+      url.searchParams.get('after_seq') === '0'
+        ? { status: 200, body: { root: message(1, { id: ROOT }), replies: [message(5, { id: U(205), thread_root_id: ROOT })], has_more: true } }
+        : { status: 200, body: { root: message(1, { id: ROOT }), replies: [message(9, { id: U(209), thread_root_id: ROOT })], has_more: false } },
+    );
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    w.ds.openThread?.(ROOT); // 1페이지 도착, 2페이지 대기(옛 조회)
+    await settle();
+    // 410: snapshot이 fold·답글 로드 상태를 비우고 새 조회를 시작한다(새 조회도 2페이지에서 대기).
+    w.server.on('GET /api/sync', (url) =>
+      url.searchParams.get('after') === '0'
+        ? { status: 200, body: { changes: [], through_cursor: 0, scanned_through: 0, has_more: false, next_cursor: 0 } }
+        : { status: 410 },
+    );
+    expect(await w.ds.resume()).toBe(true);
+    await settle();
+    expect(page2Calls).toBe(2);
+    // 옛 조회의 2페이지가 먼저 도착 — 앞 페이지가 빠진 fold로 "조회 완료"가 되면 안 된다.
+    releaseOld();
+    await settle();
+    expect(w.ds.getSnapshot().loadedReplies).not.toContain(ROOT);
+    w.ds.markRead?.(CONV, ROOT, 9);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(putCount(w.server.log)).toBe(0);
+    // 새 조회가 끝까지 받은 뒤에만 저장한다.
+    releaseNew();
+    await settle();
+    expect(w.ds.getSnapshot().loadedReplies).toContain(ROOT);
+    w.ds.markRead?.(CONV, ROOT, 9);
+    w.timers.run(READ_FLUSH_MS);
+    await settle();
+    expect(w.puts).toEqual([{ conversation_id: CONV, thread_root_id: ROOT, last_read_seq: 9 }]);
+  });
+
+  it('같은 root 답글 조회가 진행 중이면 같은 세대의 중복 조회를 시작하지 않는다(agy r3 #2a)', async () => {
+    const ROOT = U(101);
+    let release = () => {};
+    const pending = new Promise<void>((r) => (release = r));
+    const w = world({ gate: (input) => (input.includes(`/api/messages/${ROOT}/replies`) ? pending : undefined) });
+    w.server.on(`GET /api/messages/${ROOT}/replies`, () => ({ status: 200, body: { root: message(1, { id: ROOT }), replies: [], has_more: false } }));
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    w.ds.openThread?.(ROOT);
+    w.ds.openThread?.(null);
+    w.ds.openThread?.(ROOT); // 닫았다 다시 열기 — 앞 조회가 아직 진행 중
+    release();
+    await settle();
+    expect(w.server.log.filter((l) => l.startsWith(`GET /api/messages/${ROOT}/replies`))).toHaveLength(1);
+    expect(w.ds.getSnapshot().loadedReplies).toContain(ROOT);
+  });
+
+  /** 410을 일으켜 snapshot 재초기화를 돌린다. */
+  const snapshot410 = async (w: ReturnType<typeof world>) => {
+    w.server.on('GET /api/sync', (url) =>
+      url.searchParams.get('after') === '0'
+        ? { status: 200, body: { changes: [], through_cursor: 0, scanned_through: 0, has_more: false, next_cursor: 0 } }
+        : { status: 410 },
+    );
+    expect(await w.ds.resume()).toBe(true);
+    await settle();
+  };
+  const repliesGets = (w: ReturnType<typeof world>, root: string) => w.server.log.filter((l) => l.startsWith(`GET /api/messages/${root}/replies`)).length;
+
+  it('스레드를 연 채 다른 대화로 옮긴 뒤 410이 와도 지난 스레드 답글을 다시 조회하지 않는다(agy r3 #2b)', async () => {
+    const ROOT = U(101);
+    const OTHER = U(11);
+    const w = world();
+    w.server.on(`GET /api/conversations/${OTHER}/messages`, () => ({ status: 200, body: { messages: [], has_more: false } }));
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    await openLoadedThread(w, ROOT);
+    expect(repliesGets(w, ROOT)).toBe(1);
+    w.ds.open?.(OTHER);
+    await settle();
+    await snapshot410(w);
+    expect(repliesGets(w, ROOT)).toBe(1);
+  });
+
+  it('스레드를 연 채 채널에서 나간 뒤 410이 와도 지난 스레드 답글을 다시 조회하지 않는다(agy r3 #2b)', async () => {
+    const ROOT = U(101);
+    const w = world();
+    w.server.on(`DELETE /api/conversations/${CONV}/membership`, () => ({ status: 204 }));
+    w.ds.open?.(CONV);
+    expect(await w.ds.resume()).toBe(true);
+    await openLoadedThread(w, ROOT);
+    expect(repliesGets(w, ROOT)).toBe(1);
+    expect((await w.ds.leaveChannel!(CONV)).ok).toBe(true);
+    await settle();
+    await snapshot410(w);
+    expect(repliesGets(w, ROOT)).toBe(1);
+  });
+
   it('stop() 뒤에는 대기 중 읽음·재시도·목록 재조회를 보내지 않는다', async () => {
     const w = world();
     w.ds.open?.(CONV);
