@@ -663,7 +663,7 @@ describe('FR-CONV-06 미확정 접근 상실은 초안·큐를 남긴다 (fix4, 
     await settle();
     expect(res?.ok).toBe(true);
     expect(within(nav()).getByRole('button', { name: 'general' })).toBeTruthy();
-    act(() => ref.source?.open(CONV));
+    act(() => ref.source?.open?.(CONV));
     await settle();
     expect(ref.source?.getSnapshot().spaces.some((sp) => sp.id === CONV)).toBe(true);
     expect(queued()).toBe(true);
