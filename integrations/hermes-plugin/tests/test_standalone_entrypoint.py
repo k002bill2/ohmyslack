@@ -5,6 +5,7 @@
 거친다(PYTHONPATH = Hermes 체크아웃, 읽기 전용). Hermes `f8acc268`(11-16)에서 `tools/send_message_tool.py`가
 `gateway/outbound/{send,senders,targets}.py`로 옮겨졌다.
 Hermes는 sender에 `clock=` 등을 넘길 수 없으므로 시계·deadline은 어댑터 모듈 속성으로 주입한다.
+#11(`_handle_send`)은 설정을 env로만 넣고(실제 로더), relay 가드는 `gateway.relay.egress._live_relay_fronted`만 바꾼다.
 """
 
 from __future__ import annotations
@@ -296,29 +297,30 @@ async def test_send_message_tool_media_tags_reach_sender_once(server, tmp_path, 
 def test_handle_send_home_channel_long_text_with_mp3(thread_server, tmp_path, monkeypatch):
     """Hermes `send_message` 도구 진입점 `gateway.outbound.send._handle_send`(동기, JSON 문자열 반환)를 그대로 부른다.
 
-    `_resolve_platform_config`는 patch하지 않는다 — `_handle_send`가 지연 import하는 `gateway.config.load_gateway_config`만
-    바꿔, 가짜 서버를 가리키는 ohmyslack `PlatformConfig`를 가진 `GatewayConfig`를 돌려준다. 실제
-    `_resolve_platform_config`·`_home_chat_id`·`_resolve_tool_target`·`_send_to_platform`이 돈다.
-    홈 채널은 README의 `OHMYSLACK_HOME_CHANNEL`(cron_deliver_env_var). 동기 진입점(`_run_async`)이 루프를 돌리므로
-    sync 테스트 + 별도 스레드 가짜 서버(#4와 같은 이유).
+    설정은 대체하지 않는다 — env(`OHMYSLACK_BOT_TOKEN`·`OHMYSLACK_BOT_URL`·`OHMYSLACK_HOME_CHANNEL`)만 넣어 실제
+    `load_gateway_config`·`_resolve_platform_config`·`_home_chat_id`·`_resolve_tool_target`·`_send_to_platform`이 돈다
+    (inputs/probe49c.txt:195-198; conftest `_isolated_env`가 env를 비우고 HERMES_HOME을 tmp로 격리, tests/conftest.py:49-55).
+    대체는 `gateway.relay.egress._live_relay_fronted` 한 점(「게이트웨이 runner 없음」)뿐 — 아래 주석.
+    동기 진입점(`_run_async`)이 루프를 돌리므로 sync 테스트 + 별도 스레드 가짜 서버(#4와 같은 이유).
     """
-    import gateway.config as gw_config
     import gateway.outbound.send as smt
-    from gateway.config import GatewayConfig, HomeChannel
+    import gateway.relay.egress as egress
     calls = _spy_sender(monkeypatch)
-    # 홈 채널: 실제 Hermes는 load_gateway_config가 OHMYSLACK_HOME_CHANNEL을 PlatformConfig.home_channel로 싣는다.
-    # 그 로더를 대체하므로 같은 결과(HomeChannel)를 직접 싣는다(관측: GatewayConfig.get_home_channel → platforms[p].home_channel).
-    pconfig = _cfg(thread_server.base)
-    pconfig.home_channel = HomeChannel(platform=_platform(), chat_id=DM_ID, name="home")
-    config = GatewayConfig(platforms={_platform(): pconfig})
-    monkeypatch.setattr(gw_config, "load_gateway_config", lambda *_a, **_kw: config)
-    # relay 송신 허가(`_authorize_relay_target` → `gateway.relay.egress`)는 Hermes 위성·relay 정책이라 플러그인 계약 밖이다.
-    # 격리 HERMES_HOME에는 relay 라우팅 정보가 없어 거부되므로 「허가(None)」로만 바꾼다(관측: 반환 str|None, 문자열=거부 사유).
-    monkeypatch.setattr(smt, "_authorize_relay_target", lambda *_a, **_kw: None)
+    # 실제 로더가 ohmyslack PlatformConfig(enabled, extra.url, home_channel)를 만든다. token은 비고 sender가
+    # get_scoped_secret으로 읽는다(ohmyslack/adapter.py:1147).
+    monkeypatch.setenv("OHMYSLACK_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("OHMYSLACK_BOT_URL", thread_server.base)
+    monkeypatch.setenv("OHMYSLACK_HOME_CHANNEL", DM_ID)
+    # 대체하는 사실은 「이 프로세스에 게이트웨이 runner 없음」(None, CLI·cron의 정상 답 — inputs/probe49d.txt:49-51) 하나다.
+    # 이유: sandbox에서 `gateway.run` import가 실패해 실제 함수가 RelayRouteUnknown을 던지고 가드가 거부한다
+    # (inputs/probe49d.txt:11-74,130-131, inputs/probe49c.txt:193-200). 실제로 남는 경로: `_authorize_relay_target` →
+    # `authorize_relay_target` → `relay_routed_platform` → 설정 기반 `relay_fronted_platforms()`(set(), probe49d.txt:128-129).
+    monkeypatch.setattr(egress, "_live_relay_fronted", lambda: None)
     mp3 = _write(tmp_path, "briefing.mp3", MP3)
     raw = smt._handle_send({"action": "send", "target": "ohmyslack", "message": f"{LONG_TEXT}\nMEDIA:{mp3}"})
     out = json.loads(raw)
     assert out.get("success") is True, out
+    assert "home channel" in out.get("note", "")  # 실제 `_home_chat_id` 경로로 홈 채널에 보냈다
     media_paths = [str(m if isinstance(m, (str, os.PathLike)) else m[0]) for m in calls[0][1]] if calls else []
     assert len(calls) == 1 and media_paths == [mp3]  # 단일 호출 계약: 원문 전체·첨부 전체 1회
     assert len(thread_server.uploads) == 1

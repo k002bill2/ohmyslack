@@ -80,6 +80,10 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
     - A-3: 결정적 멱등 키를 만들 수 없습니다. Hermes가 실행 단위 ID를 넘기지 않아, 원문 해시 키는 같은 문구를 반복하는 cron을 조용히 삼킵니다. 멱등 범위는 "게시 호출 1회 안의 재시도"뿐입니다
     - A-4: 멈춘 파일 시스템 읽기 스레드 자체는 죽일 수 없습니다. 멈춘 파일 읽기 스레드는 프로세스 전체에서 최대 4개입니다(fd 1개씩 점유하는 상한 있는 누수). 슬롯이 다 차 있으면 그 파일은 읽지 않고 standalone은 `"<파일명>: read_unavailable"` 경고, 라이브 첨부는 고정 안내("첨부 파일을 읽을 수 없습니다. 잠시 후 다시 시도해 주세요.")를 텍스트로 보냅니다. 읽기 스레드는 실제 읽기가 끝난 뒤 슬롯을 먼저 반환하고 그다음 결과를 알리므로, 결과를 받은 호출의 다음 읽기는 그 슬롯을 쓸 수 있습니다
   - `thread_id`·`force_document`는 쓰지 않습니다. 대상이 DM이 아니면 업로드도 하지 않고 거부합니다
+  - 명시 대상(#49): `send_message`·`hermes send`의 대상으로 `ohmyslack:<conversation UUID>`를 씁니다. 대소문자는 무시하고 소문자 표준형으로 바꿔 넘깁니다(sender가 `/me` 대화 id와 정확히 비교하므로). 받는 쪽 규칙은 위와 같습니다 — DM 또는 `OHMYSLACK_POST_CHANNELS` 채널만 보냅니다
+    - `ohmyslack:<uuid>:<thread>` 형식은 받지 않습니다. standalone은 `thread_id`를 쓰지 않아 스레드로 보낸 줄 알았던 글이 최상위로 올라갈 수 있기 때문입니다
+    - 플러그인은 `target_ref_syntax_fn`만 등록하고 `parse_target_ref_fn`은 등록하지 않습니다. 후자를 등록하면 Hermes cron이 못 푼 `deliver` 대상을 어댑터에 넘기지 않고 오류로 끝내므로, cron 통과 동작을 그대로 두기 위해서입니다
+    - Hermes `PlatformEntry.target_ref_syntax_fn` 필드에 의존합니다(2026-11-23 관측)
 
 ## Hermes 확인 항목 (ADR REPORT §8 3–6)
 
@@ -113,6 +117,7 @@ bash scripts/isolated-pytest.sh --preflight   # 직접 pytest 실행 금지 — 
 
 - 테스트는 가짜 aiohttp 봇 서버를 상대로 돌고, `HERMES_HOME`을 tmp로 격리합니다. 실제 서버나 게이트웨이에는 연결하지 않습니다.
 - Hermes 본체는 `PYTHONPATH`로 읽기만 하며, 설치하거나 복사하지 않습니다.
+- `tests/test_send_target.py`(Issue #49)는 `ohmyslack:<conversation UUID>` 대상 해석(도구·cron)과 실제 `_handle_send` 경로(DM·채널 allowlist·relay 가드 대조군)를 확인합니다.
 - 실서버 live 테스트(`-m live`, 기본 실행에서 제외)는 `scripts/live-e2e.sh`가 준비한 테스트 스키마·임의 포트 서버만 상대합니다(운영 8787/8788 금지). `tests/test_live_e2e.py`는 owner 메시지 왕복, `tests/test_live_standalone.py`(Issue #47)는 standalone 긴 텍스트 + mp3 실발송(청크 수·순서·첫 청크 첨부 결속·`media_delivered`)과 가짜 서버 400/404 규칙의 실서버 대조(상태·오류 코드)입니다.
 - `scripts/live-e2e.sh` 마지막 단계는 pytest 를 직접 부르지 않고 격리 래퍼 `scripts/isolated-pytest.sh --run-live` 를 한 번 부릅니다(가드가 래퍼 밖 실행을 EXIT 3 으로 끊으므로). 래퍼가 G3 해시 게이트(`--run-attested` 와 같음, 불일치 EXIT 5)와 live env 검증(`OHMYSLACK_LIVE_E2E=1`, URL 3개는 정확히 `http://127.0.0.1:<1024-65535>`·운영 포트 아님, 토큰·쿠키·CSRF 는 비어 있지 않은 한 줄 — 위반 EXIT 64, 값 비공개)을 거친 뒤 sandbox 안에서 `-q -m live tests/test_live_e2e.py tests/test_live_standalone.py` 만 돌립니다.
 - 비밀(토큰·쿠키·CSRF)은 argv 에 싣지 않습니다: 래퍼가 `.isolation/` 아래 0600 새 파일로 옮기고 sandbox env 에는 `*_FILE` 경로만 넘기며, 종료 때 지웁니다(SIGKILL·전원 차단이면 다음 래퍼 실행의 `.isolation/` 재생성 때까지 0700 디렉터리에 남음). 테스트가 실패하면 pytest 출력은 `.isolation/tmp/run-live.out`에도 남습니다. owner 메시지 게시는 테스트 프로세스 안 aiohttp 요청입니다(sandbox 가 subprocess 를 막음, `scripts/live_owner_send.py` 는 미사용).
