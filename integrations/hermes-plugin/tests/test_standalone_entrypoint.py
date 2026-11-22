@@ -5,7 +5,8 @@
 거친다(PYTHONPATH = Hermes 체크아웃, 읽기 전용). Hermes `f8acc268`(11-16)에서 `tools/send_message_tool.py`가
 `gateway/outbound/{send,senders,targets}.py`로 옮겨졌다.
 Hermes는 sender에 `clock=` 등을 넘길 수 없으므로 시계·deadline은 어댑터 모듈 속성으로 주입한다.
-#11(`_handle_send`)은 설정을 env로만 넣고(실제 로더), relay 가드는 `gateway.relay.egress._live_relay_fronted`만 바꾼다.
+#11(`_handle_send`)은 설정을 env로만 넣고(실제 로더), 함수 안 대체는 `gateway.relay.egress._live_relay_fronted` 한 점뿐이다
+(파일 공통 autouse `_standalone_lane`의 `_live_adapter=(None, None)`·플러그인 디스커버리 끔은 그대로).
 """
 
 from __future__ import annotations
@@ -300,7 +301,8 @@ def test_handle_send_home_channel_long_text_with_mp3(thread_server, tmp_path, mo
     설정은 대체하지 않는다 — env(`OHMYSLACK_BOT_TOKEN`·`OHMYSLACK_BOT_URL`·`OHMYSLACK_HOME_CHANNEL`)만 넣어 실제
     `load_gateway_config`·`_resolve_platform_config`·`_home_chat_id`·`_resolve_tool_target`·`_send_to_platform`이 돈다
     (inputs/probe49c.txt:195-198; conftest `_isolated_env`가 env를 비우고 HERMES_HOME을 tmp로 격리, tests/conftest.py:49-55).
-    대체는 `gateway.relay.egress._live_relay_fronted` 한 점(「게이트웨이 runner 없음」)뿐 — 아래 주석.
+    함수 안 대체는 `gateway.relay.egress._live_relay_fronted` 한 점(「게이트웨이 runner 없음」)뿐 — 아래 주석.
+    (파일 공통 autouse `_standalone_lane`의 `_live_adapter=(None, None)`·플러그인 디스커버리 끔은 그대로 적용된다.)
     동기 진입점(`_run_async`)이 루프를 돌리므로 sync 테스트 + 별도 스레드 가짜 서버(#4와 같은 이유).
     """
     import gateway.outbound.send as smt

@@ -3,6 +3,7 @@
 Hermes 실제 코드(`gateway.outbound.send._resolve_tool_target`·`_handle_send`, `gateway.outbound.targets.resolve_send_target`,
 `gateway.relay.egress.authorize_relay_target`)를 그대로 부른다. 대체하는 것:
 - `_live_adapter` = (None, None), 플러그인 디스커버리 끔 — 게이트웨이 밖(CLI·cron) 상태(test_standalone_entrypoint.py와 같은 이유).
+  라이브 어댑터 경로 테스트 1건만 함수 안에서 `_live_adapter` = (None, 실제 어댑터)로 덮어쓴다.
 - `gateway.relay.egress._live_relay_fronted` — 「이 프로세스에 게이트웨이 runner 없음」(None) 또는 대조군에서 「relay가
   ohmyslack을 대신 보냄」({"ohmyslack"}). sandbox에서는 `gateway.run` import가 실패해 실제 함수가 RelayRouteUnknown을
   던지므로(inputs/probe49d.txt:11-74,130-131) 이 한 점만 바꾼다.
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -180,6 +182,50 @@ def test_handle_send_channel_target_without_allowlist_is_refused_by_sender(threa
     assert len(calls) == 1 and calls[0][0] == CHANNEL_ID  # 해석은 됐고 sender가 거부했다
     assert "target must be the owner DM or an allowlisted channel" in out.get("error", "")
     assert thread_server.uploads == [] and thread_server.posts == []
+
+
+def test_handle_send_non_member_uuid_target_is_refused_by_sender(thread_server, tmp_path, monkeypatch):
+    """형식상 UUID지만 봇이 멤버가 아닌 대화(QA P3-3 a) — 해석은 되고 sender가 거부한다(adapter.py:1189-1193)."""
+    not_member = str(uuid.UUID(int=999))  # /me에 없는 대화(conftest OTHER_ID는 사용자 id라 쓰지 않음)
+    _bot_env(monkeypatch, thread_server.base)
+    _no_gateway_runner(monkeypatch)
+    assert not_member not in {c["id"] for c in thread_server.conversations}
+    calls = _spy(monkeypatch)
+    out = _handle_send(f"ohmyslack:{not_member}", f"아침 브리핑\nMEDIA:{_mp3(tmp_path)}")
+    assert out.get("success") is not True
+    assert len(calls) == 1 and calls[0][0] == not_member  # 해석은 됐고 sender가 거부했다
+    assert "target must be the owner DM or an allowlisted channel" in out.get("error", ""), out
+    assert thread_server.uploads == [] and thread_server.posts == []
+
+
+async def test_live_adapter_uppercase_target_posts_to_canonical_dm(server, make_adapter, monkeypatch):
+    """라이브 어댑터 경로(QA P3-3 b, test_standalone_entrypoint.py #9 패턴). 어댑터 `_kinds`는 `/me` id와 정확 일치
+    (adapter.py:721-736)이므로 대문자 대상은 파서의 소문자 표준형이 있어야 게시된다.
+
+    conftest `DM_ID`(UUID int=100 → `…000000000064`)는 숫자뿐이라 `.upper()`가 원문과 같다 — 대문자 경로를 실제로 타도록
+    hex 문자가 든 지역 DM id를 `/me`에 둔다."""
+    import gateway.outbound.send as smt
+    import gateway.outbound.senders as senders
+    from gateway.config import Platform, PlatformConfig
+    from gateway.outbound.send import _resolve_tool_target
+    letter_dm = str(uuid.UUID(int=0xABCDEF))  # 소문자 표준형 `…000000abcdef`
+    assert letter_dm.upper() != letter_dm
+    server.conversations = [{"id": letter_dm, "kind": "dm"}]
+    platform_name, chat_id, thread_id, error = _resolve_tool_target(f"ohmyslack:{letter_dm.upper()}")
+    assert (platform_name, chat_id, thread_id, error) == ("ohmyslack", letter_dm, None, None)
+    adapter = make_adapter()
+    assert await adapter.connect()
+    for mod in (smt, senders):  # autouse `_outside_gateway`의 (None, None)을 이 테스트 안에서 덮어쓴다
+        monkeypatch.setattr(mod, "_live_adapter", lambda platform, *_a, **_kw: (None, adapter))
+    cfg = PlatformConfig(enabled=True, token=TOKEN, extra={"url": server.base})
+    out = await smt._send_to_platform(Platform("ohmyslack"), cfg, chat_id, "아침 브리핑")
+    assert out.get("success") is True, out
+    posts = _ok_posts(server)
+    assert len(posts) == 1 and posts[0]["conversation_id"] == letter_dm
+    # 대조: 정규화 없이 대문자 원문을 그대로 넘기면 어댑터가 「모르는 대화」로 거부한다(probe49e.txt:55-59 → `error`).
+    raw = await smt._send_to_platform(Platform("ohmyslack"), cfg, letter_dm.upper(), "아침 브리핑")
+    assert raw.get("success") is not True and raw.get("error"), raw
+    assert len(_ok_posts(server)) == 1  # 대조 호출은 게시 0
 
 
 def test_handle_send_allowlisted_channel_target_folds_chunks_into_thread(thread_server, tmp_path, monkeypatch):

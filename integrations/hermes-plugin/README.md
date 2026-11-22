@@ -79,7 +79,7 @@ Hermes 게이트웨이가 ohmyslack **봇 리스너**(`127.0.0.1:<BOT_PORT>/api/
     - A-2: 재전달 큐는 부분 게시를 모릅니다. 정상 반환은 위 규칙으로 피하지만, 취소 경로(바깥 타임아웃·프로세스 종료)에서는 보고할 기회가 없습니다
     - A-3: 결정적 멱등 키를 만들 수 없습니다. Hermes가 실행 단위 ID를 넘기지 않아, 원문 해시 키는 같은 문구를 반복하는 cron을 조용히 삼킵니다. 멱등 범위는 "게시 호출 1회 안의 재시도"뿐입니다
     - A-4: 멈춘 파일 시스템 읽기 스레드 자체는 죽일 수 없습니다. 멈춘 파일 읽기 스레드는 프로세스 전체에서 최대 4개입니다(fd 1개씩 점유하는 상한 있는 누수). 슬롯이 다 차 있으면 그 파일은 읽지 않고 standalone은 `"<파일명>: read_unavailable"` 경고, 라이브 첨부는 고정 안내("첨부 파일을 읽을 수 없습니다. 잠시 후 다시 시도해 주세요.")를 텍스트로 보냅니다. 읽기 스레드는 실제 읽기가 끝난 뒤 슬롯을 먼저 반환하고 그다음 결과를 알리므로, 결과를 받은 호출의 다음 읽기는 그 슬롯을 쓸 수 있습니다
-  - `thread_id`·`force_document`는 쓰지 않습니다. 대상이 DM이 아니면 업로드도 하지 않고 거부합니다
+  - `thread_id`·`force_document`는 쓰지 않습니다. 대상이 DM도 `OHMYSLACK_POST_CHANNELS` 채널도 아니면 업로드도 하지 않고 거부합니다
   - 명시 대상(#49): `send_message`·`hermes send`의 대상으로 `ohmyslack:<conversation UUID>`를 씁니다. 대소문자는 무시하고 소문자 표준형으로 바꿔 넘깁니다(sender가 `/me` 대화 id와 정확히 비교하므로). 받는 쪽 규칙은 위와 같습니다 — DM 또는 `OHMYSLACK_POST_CHANNELS` 채널만 보냅니다
     - `ohmyslack:<uuid>:<thread>` 형식은 받지 않습니다. standalone은 `thread_id`를 쓰지 않아 스레드로 보낸 줄 알았던 글이 최상위로 올라갈 수 있기 때문입니다
     - 플러그인은 `target_ref_syntax_fn`만 등록하고 `parse_target_ref_fn`은 등록하지 않습니다. 후자를 등록하면 Hermes cron이 못 푼 `deliver` 대상을 어댑터에 넘기지 않고 오류로 끝내므로, cron 통과 동작을 그대로 두기 위해서입니다
