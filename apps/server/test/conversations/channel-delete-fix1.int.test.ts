@@ -114,3 +114,22 @@ describe('FR-CONV-06 owner가 나간 채널 삭제', () => {
     }
   });
 });
+
+describe('FR-CONV-06 먼저 나간 사람 멤버 통지', () => {
+  it('사람 멤버가 먼저 나간 뒤 owner가 삭제하면 그 멤버 연결도 conversation.deleted를 받는다', async () => {
+    const ws = await setupWsInt();
+    try {
+      const { app } = ws.conv;
+      const owner = await as(app, 'a');
+      const b = await as(app, 'b');
+      const cid = await createChannel(app, owner, 'left-first');
+      expect((await req(app, 'POST', `/api/conversations/${cid}/join`, b)).statusCode).toBe(200);
+      expect((await req(app, 'DELETE', `/api/conversations/${cid}/membership`, b)).statusCode).toBe(204);
+      const wsB = await ws.open(b.token);
+      expect((await req(app, 'DELETE', `/api/conversations/${cid}`, owner)).statusCode).toBe(204);
+      await wsB.waitFor((f) => f.type === 'conversation.deleted' && f.conversation_id === cid, 3000);
+    } finally {
+      await ws.teardown();
+    }
+  });
+});

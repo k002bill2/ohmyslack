@@ -87,7 +87,7 @@ export interface ConversationsStore {
   /** 봇 멤버십 UPSERT(joinIn과 같은 규칙). 대상이 대화와 같은 워크스페이스의 활성 봇이 아니면 invalid_target(변경 0). */
   addBot(conversationId: string, botUserId: string, at: Date): Promise<AddBotResult>;
   /**
-   * 공개 채널 소프트 삭제(FR-CONV-06): `deleted_at`·`deleted_by` 기록 + 그 시점 활성 멤버 반환(한 트랜잭션).
+   * 공개 채널 소프트 삭제(FR-CONV-06): `deleted_at`·`deleted_by` 기록 + 통지 대상 반환(한 트랜잭션) — 멤버 행이 있었던 사람 전원(먼저 나간 사람 포함)·삭제 시점 활성 봇.
    * 같은 트랜잭션에서 활성 멤버십 전원(사람·봇)에 left_at=삭제 시각을 기록한다(fix1 구조 수정).
    * 없는 ID·DM·이미 삭제된 채널이면 undefined(변경 0). 메시지·첨부 행은 바꾸지 않는다.
    */

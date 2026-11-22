@@ -68,9 +68,12 @@ const REMOVE_BOT_SQL = `UPDATE conversation_members m SET left_at = $3 FROM user
 const DELETE_CHANNEL_SQL = `UPDATE conversations SET deleted_at = $3, deleted_by = $2
   WHERE id = $1 AND kind = 'channel' AND deleted_at IS NULL RETURNING id`;
 
-/** 삭제 시점의 활성 멤버(사람·봇). 갱신 전에 읽는다 — 실시간 계층이 구독을 끊는 대상이다. */
-const ACTIVE_MEMBERS_SQL = `SELECT m.user_id, u.kind FROM conversation_members m JOIN users u ON u.id = m.user_id
-  WHERE m.conversation_id = $1 AND m.left_at IS NULL ORDER BY m.user_id`;
+/**
+ * 삭제 통지 대상. 갱신(END_MEMBERSHIPS_SQL) 전에 읽는다. 사람은 멤버 행이 있었던 전원(먼저 나간 사람 포함 —
+ * 웹이 「나간 채널」로 들고 있다), 봇은 삭제 시점 활성 멤버만(membership.changed left는 활성 봇에게만).
+ */
+const DELETION_RECIPIENTS_SQL = `SELECT m.user_id, u.kind FROM conversation_members m JOIN users u ON u.id = m.user_id
+  WHERE m.conversation_id = $1 AND (u.kind = 'human' OR m.left_at IS NULL) ORDER BY m.user_id`;
 
 /**
  * 삭제 = 활성 멤버십 전원 종료(사람·봇). 「활성 멤버 = left_at IS NULL」을 쓰는 모든 경로(sync·봇·푸시·쓰기)가
@@ -205,7 +208,7 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
       return inTransaction<readonly DeletedMember[] | undefined>(pool, async (client) => {
         const updated = await client.query(DELETE_CHANNEL_SQL, [conversationId, deletedBy, at]);
         if ((updated.rowCount ?? 0) === 0) return { commit: false, value: undefined };
-        const members = await client.query<{ user_id: string; kind: PeerKind }>(ACTIVE_MEMBERS_SQL, [conversationId]);
+        const members = await client.query<{ user_id: string; kind: PeerKind }>(DELETION_RECIPIENTS_SQL, [conversationId]);
         await client.query(END_MEMBERSHIPS_SQL, [conversationId, at]);
         return { commit: true, value: members.rows.map((r) => ({ userId: r.user_id, kind: r.kind })) };
       });
