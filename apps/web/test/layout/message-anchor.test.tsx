@@ -330,3 +330,132 @@ describe('알림 탭 스레드 답글 진입과 읽음(교차 검토 P2)', () =>
     expect(markRead).toHaveBeenCalledWith(C1, M1, LAST);
   });
 });
+
+/**
+ * QA D-1(thread-open-latest-fix2): 스레드 끝 근처 답글 앵커가 작성기 뒤에 가려짐. 실브라우저 원인 — reveal 뒤 이미지 첨부가
+ * 레이아웃되며 내용이 늘어(+320px) 부드러운 스크롤 목적지가 옛 최대 스크롤에 클램프됐다. 수정: 답글 조회 완료 뒤 reveal,
+ * 강조 중 크기 변화마다 다시 맞춤(사용자 스크롤 뒤에는 안 함), 스레드 패널 scroll-padding-bottom = 작성기 높이.
+ */
+describe('알림 탭 스레드 앵커 위치 보정(QA D-1)', () => {
+  const observers: FakeResizeObserver[] = [];
+  class FakeResizeObserver {
+    readonly targets: Element[] = [];
+    constructor(readonly cb: ResizeObserverCallback) {
+      observers.push(this);
+    }
+    observe(el: Element) {
+      this.targets.push(el);
+    }
+    unobserve() {}
+    disconnect() {
+      this.targets.length = 0;
+    }
+  }
+  /** 내용 크기 변화(이미지 로드 등)를 흉내 낸다 — 관찰 중인 모든 관찰자에 알린다. */
+  const resize = () => {
+    for (const o of [...observers]) if (o.targets.length > 0) o.cb([], o as unknown as ResizeObserver);
+  };
+  let sh = 1000;
+  const shDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
+  const roDesc = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+
+  beforeEach(() => {
+    observers.length = 0;
+    sh = 1000;
+    Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, writable: true, value: FakeResizeObserver });
+    Object.defineProperty(Element.prototype, 'scrollHeight', { configurable: true, get: () => sh });
+  });
+  afterEach(() => {
+    if (roDesc === undefined) delete (globalThis as Record<string, unknown>).ResizeObserver;
+    else Object.defineProperty(globalThis, 'ResizeObserver', roDesc);
+    if (shDesc === undefined) delete (Element.prototype as unknown as Record<string, unknown>).scrollHeight;
+    else Object.defineProperty(Element.prototype, 'scrollHeight', shDesc);
+  });
+
+  /** 답글은 처음부터 스냅샷에 있지만 답글 조회(`loadedReplies`)는 `ready()` 전까지 미완료. */
+  function repliesPending(): { ds: DataSource; ready: () => void; markRead: ReturnType<typeof vi.fn> } {
+    const full = seed();
+    let snap: Snapshot = { ...full, loadedReplies: [] };
+    const listeners = new Set<() => void>();
+    const markRead = vi.fn();
+    const ds: DataSource = { ...createMemoryDataSource(full), markRead, getSnapshot: () => snap, subscribe: (l) => (listeners.add(l), () => listeners.delete(l)) };
+    const ready = () => {
+      snap = { ...full, loadedReplies: [M1] };
+      listeners.forEach((l) => l());
+    };
+    return { ds, ready, markRead };
+  }
+
+  it('스레드 대상은 답글이 DOM에 있어도 답글 조회가 끝난 뒤에 reveal한다(그동안 해시·처리 대기 유지)', () => {
+    const { ds, ready } = repliesPending();
+    const history = createMemoryHistory(`/c/${C1}?thread=${M1}#message-${R1}`);
+    const view = render(<AppShell dataSource={ds} history={history} />);
+    const panel = view.container.querySelector('.thread-panel')!;
+    expect(item(panel, R1)).not.toBeNull();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(history.entries().at(-1)).toBe(`/c/${C1}?thread=${M1}#message-${R1}`);
+    act(() => ready());
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.contexts[0]).toBe(item(panel, R1));
+    expect(item(panel, R1)?.getAttribute('data-highlighted')).toBe('true');
+    expect(history.entries().at(-1)).toBe(`/c/${C1}?thread=${M1}`);
+  });
+
+  it('답글 조회가 끝나지 않아도 상한 뒤 DOM에 대상이 있으면 안내 대신 그 대상을 reveal한다', () => {
+    const { ds } = repliesPending();
+    const view = render(<AppShell dataSource={ds} history={createMemoryHistory(`/c/${C1}?thread=${M1}#message-${R1}`)} />);
+    act(() => vi.advanceTimersByTime(ANCHOR_REPLIES_TIMEOUT_MS));
+    const panel = view.container.querySelector('.thread-panel')!;
+    expect(scrollIntoView.mock.contexts[0]).toBe(item(panel, R1));
+    expect(screen.queryByText(MESSAGE_ANCHOR_COPY.notFound)).toBeNull();
+  });
+
+  it('강조 중 내용 크기가 바뀌면 대상으로 다시 맞춘다(변화 1회 → 재조정 1회)', () => {
+    const view = open(`/c/${C1}?thread=${M1}#message-${R1}`).view;
+    const target = item(view.container.querySelector('.thread-panel')!, R1)!;
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    act(() => resize()); // 크기 그대로(관찰 시작 알림 등) → 재조정 없음
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    sh += 320; // 이미지 첨부가 레이아웃됨
+    act(() => resize());
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(scrollIntoView.mock.contexts[1]).toBe(target);
+    expect(scrollIntoView.mock.calls[1]).toEqual([{ block: 'center', behavior: 'smooth' }]);
+  });
+
+  it('대조: 사용자가 직접 스크롤(휠)한 뒤에는 크기가 바뀌어도 다시 맞추지 않는다', () => {
+    const view = open(`/c/${C1}?thread=${M1}#message-${R1}`).view;
+    const panel = view.container.querySelector('.thread-panel')!;
+    fireEvent.wheel(panel, { deltaY: -120 });
+    sh += 320;
+    act(() => resize());
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('대조: 강조가 끝난 뒤의 크기 변화에는 다시 맞추지 않는다', () => {
+    open(`/c/${C1}?thread=${M1}#message-${R1}`);
+    act(() => vi.advanceTimersByTime(ANCHOR_HIGHLIGHT_MS));
+    sh += 320;
+    act(() => resize());
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('스레드 패널 scroll-padding-bottom = sticky 작성기 높이(가운데 정렬이 작성기 뒤로 가지 않게)', () => {
+    const offset = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('composer') ? 118 : 0;
+      },
+    });
+    try {
+      const view = open(`/c/${C1}?thread=${M1}#message-${R1}`).view;
+      const panel = view.container.querySelector<HTMLElement>('.thread-panel')!;
+      expect(panel.querySelector(':scope > .composer')).not.toBeNull();
+      expect(panel.style.scrollPaddingBottom).toBe('118px');
+    } finally {
+      if (offset === undefined) delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+      else Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offset);
+    }
+  });
+});
