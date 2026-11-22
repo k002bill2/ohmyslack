@@ -92,14 +92,16 @@ describe('코드 블록 복사 버튼 CSS', () => {
   });
 
   it('터치(hover: none)만 투명 ::after로 히트 영역 ≥ 44×44px 확장 — 위·오른쪽은 래퍼 안쪽 여백(--space-2)까지만', () => {
-    // 가로 = 왼쪽 8 + 버튼 28 + 오른쪽 8 = 44px, 세로 = 위 8 + 28 + 아래 16(--space-4) = 52px (1rem = 16px).
+    // inset은 버튼 padding box(테두리 1px 안쪽, 26px) 기준 — 테두리 보정 1px 포함 네 방향 모두 -(8+1)px: 26 + 9 + 9 = 44px(가로·세로).
+    // 아래는 버튼 아래 8px까지만이라 한 줄 블록 래퍼 안에 머문다.
     const after = ruleBody(mediaBody('(hover: none)'), '.msg-code-block .msg-code-copy::after');
     expect(after).toContain("content: ''");
     expect(after).toContain('position: absolute');
-    expect(after).toContain('inset-block-start: calc(var(--space-2) * -1)');
-    expect(after).toContain('inset-inline-end: calc(var(--space-2) * -1)');
-    expect(after).toContain('inset-inline-start: calc(var(--space-2) * -1)');
-    expect(after).toContain('inset-block-end: calc(var(--space-4) * -1)');
+    const inset = 'calc(var(--space-2) * -1 - 1px)';
+    for (const prop of ['inset-block-start', 'inset-inline-end', 'inset-block-end', 'inset-inline-start']) {
+      expect(after).toContain(`${prop}: ${inset}`);
+    }
+    expect(after).not.toContain('--space-4');
     expect(ruleBody(css, '.msg-code-copy::after')).toBe('');
   });
 
