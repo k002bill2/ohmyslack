@@ -44,7 +44,7 @@
    - 근거: `docs/03-trd/TRD.md` §4(change_id 적용 키·중복 제거), 재현 `apps/web/test/sync/http-source-list-order.test.ts`.
    - 반복 유형 `f56051a` `4b56584` `fe84f07`.
 14. **Dialog·화면 전환 뒤 포커스가 BODY로 빠지지 않고, Esc·Tab 트랩·busy 중 닫기 잠금이 유지된다.**
-   - 근거: `docs/07-ui-spec/UI_STATES.md` §2-8·§4-2, 재현 `apps/web/test/a11y/labels.test.tsx`.
+   - 근거: `docs/07-ui-spec/UI_STATES.md` §2-8·§4-2, 재현 `apps/web/test/ui/dialog-esc-trap.test.tsx`, `apps/web/test/ui/dialog-busy-focus.test.tsx`.
    - 반복 유형 `4c1ccf6` `dc605de` `4365eac` `7ed1d3a`.
 15. **클린룸.** 외부 제품의 코드·에셋·색·폰트·사운드 도입, 허용되지 않은 디자인 토큰 출처를 지적. 금지 문자열 목록은 여기에 복제하지 않고 `CLEANROOM.md` §3·§5와 `tools/check-cleanroom.ts`를 따른다. 토큰 출처: `docs/05-design-ref/DESIGN_REFERENCE.md` §3.
 
