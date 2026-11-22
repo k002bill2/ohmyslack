@@ -1,4 +1,6 @@
-import { Fragment, useMemo } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { CODE_BLOCK_COPY, MESSAGE_MENU_COPY } from '../../ui/copy.js';
+import { COPY_NOTE_MS, writeClipboard } from './clipboard.js';
 import { parseBody, type Block, type Inline, type Line } from './render.js';
 import './message-format.css';
 
@@ -64,14 +66,40 @@ function ListView({ block }: { readonly block: Extract<Block, { kind: 'list' }> 
   );
 }
 
-function BlockView({ block }: { readonly block: Block }) {
-  if (block.kind === 'code') {
-    return (
+/**
+ * 코드 블록 + 「복사」 버튼. 버튼은 pre 밖·래퍼 안 — pre가 가로 스크롤되어도 오른쪽 위에 고정되고,
+ * pre textContent에 버튼 글자가 섞이지 않는다. 원문(`text`)은 가공 없이 복사한다.
+ * 결과 안내는 role=status(포커스 이동 없음): 성공은 버튼 글자 「복사됨」(안내는 보조기술 전용), 실패는 보이는 문구.
+ */
+function CodeBlockView({ text }: { readonly text: string }) {
+  const [note, setNote] = useState<'copied' | 'failed' | null>(null);
+  useEffect(() => {
+    if (note === null) return;
+    const t = setTimeout(() => setNote(null), COPY_NOTE_MS);
+    return () => clearTimeout(t);
+  }, [note]);
+  const copy = () => {
+    void writeClipboard(text).then((ok) => setNote(ok ? 'copied' : 'failed'));
+  };
+  return (
+    <div className="msg-code-block">
       <pre className="msg-code">
-        <code>{block.text}</code>
+        <code>{text}</code>
       </pre>
-    );
-  }
+      <button type="button" className="msg-code-copy" aria-label={CODE_BLOCK_COPY.label} onClick={copy}>
+        {note === 'copied' ? CODE_BLOCK_COPY.copied : CODE_BLOCK_COPY.copy}
+      </button>
+      {note !== null && (
+        <span className={note === 'failed' ? 'msg-code-note' : 'msg-code-note msg-code-note-quiet'} role="status">
+          {note === 'failed' ? MESSAGE_MENU_COPY.copyFailed : CODE_BLOCK_COPY.copied}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function BlockView({ block }: { readonly block: Block }) {
+  if (block.kind === 'code') return <CodeBlockView text={block.text} />;
   if (block.kind === 'heading') return <HeadingView block={block} />;
   if (block.kind === 'list') return <ListView block={block} />;
   return (

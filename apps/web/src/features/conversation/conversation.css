@@ -258,6 +258,57 @@
   font-size: var(--text-sm);
   line-height: var(--leading-body);
 }
+/* 코드 블록 「복사」 버튼: 래퍼 오른쪽 위 고정(pre 가로 스크롤과 함께 밀리지 않게). 배경·테두리로 아래 코드 글자를 가린다. */
+.msg-code-block {
+  position: relative;
+  max-width: 100%;
+  min-width: 0;
+}
+.msg-code-copy {
+  position: absolute;
+  top: var(--space-2);
+  inset-inline-end: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+/* 마우스 환경: 래퍼 hover·포커스 안에 있을 때만 보인다(투명이어도 포커스 가능 — display:none·visibility:hidden 금지). */
+@media (hover: hover) {
+  .msg-code-block .msg-code-copy {
+    opacity: 0;
+  }
+  .msg-code-block:hover .msg-code-copy,
+  .msg-code-block:focus-within .msg-code-copy {
+    opacity: 1;
+  }
+}
+/* 터치 환경: 항상 보인다. */
+@media (hover: none) {
+  .msg-code-block .msg-code-copy {
+    opacity: 1;
+  }
+}
+.msg-code-note {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+/* 성공 안내는 버튼 글자 「복사됨」이 보이므로 보조기술 전용. */
+.msg-code-note.msg-code-note-quiet {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  margin: 0;
+}
 /* 시안 01 링크: 본문색 + accent 2px 밑줄. */
 .msg-body a {
   color: var(--text);

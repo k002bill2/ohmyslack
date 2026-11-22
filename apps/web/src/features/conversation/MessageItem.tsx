@@ -5,6 +5,7 @@ import { NameParts } from '../../ui/NameParts.js';
 import { MESSAGE_ACTION_COPY, MESSAGE_MENU_COPY } from '../../ui/copy.js';
 import { CONVERSATION_DESIGN_COPY } from '../../ui/copy.js';
 import { MessageBody } from './MessageBody.js';
+import { COPY_NOTE_MS, writeClipboard } from './clipboard.js';
 import { AttachmentList } from './attachments/index.js';
 import type { AttachmentView } from '../../../../../packages/shared/src/index.js';
 import { MessageActionSheet, useLongPress, type MessageSheetAction } from './MessageActionSheet.js';
@@ -74,20 +75,6 @@ export interface MessageItemProps {
   /** 이 메시지로 바로 가는 주소(R4 메뉴 「메시지 링크 복사」). 없으면 그 항목을 렌더하지 않는다. */
   readonly messageLink?: (id: string) => string;
 }
-
-/** 클립보드 쓰기(없거나 거부되면 false). */
-async function writeClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard === undefined) return false;
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 복사 결과 안내를 잠깐 보였다가 지운다(role=status, 포커스 이동 없음 — D §7-1 4.1.3). */
-const COPY_NOTE_MS = 1600;
 
 const TIME = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
 
