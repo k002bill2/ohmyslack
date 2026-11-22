@@ -384,7 +384,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const historyReady = snap.loadedHistory === undefined || snap.loadedHistory === state.conversationId;
   // 알림 탭 `#message-:id` → 대상 메시지 스크롤·강조(W-23 Codex P2-3).
   const repliesReady = state.threadRootId === null || snap.loadedReplies === undefined || snap.loadedReplies.includes(state.threadRootId);
-  const anchorNotice = useMessageAnchor({ history, shell, conversationId: state.conversationId, threadRootId: state.threadRootId, messages: snap.messages, historyReady, repliesReady, threadOpen });
+  const { notice: anchorNotice, pendingThreadRoot } = useMessageAnchor({ history, shell, conversationId: state.conversationId, threadRootId: state.threadRootId, messages: snap.messages, historyReady, repliesReady, threadOpen });
   const anchorNoticeEl = (inThread: boolean) =>
     anchorNotice !== null && anchorNotice.inThread === inThread && (
       <p className="message-anchor-notice" role="status">
@@ -771,6 +771,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       onSeen={(seq) => dataSource.markRead?.(space.id, root.id, seq)}
       spaceTitle={space.name}
       notice={anchorNoticeEl(true)}
+      holdBottom={pendingThreadRoot === root.id}
       {...(composerLocked(space) ? { composerNotice: COMPOSER_COPY.inactivePeer } : {})}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       mentionsSelf={(m) => mentionsSelfOf(m, snap.account?.displayName, snap.account?.id, mentionNames)}

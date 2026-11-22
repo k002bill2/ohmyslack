@@ -312,6 +312,18 @@ describe('알림 탭 스레드 답글 진입과 읽음(교차 검토 P2)', () =>
     expect(panel.scrollTop).toBeLessThan(panel.scrollHeight - VIEW);
   });
 
+  it('대상을 못 찾으면 맨 아래로 내린 뒤 고정·읽음을 정상 재개한다(사용자가 실제로 맨 아래를 봄)', () => {
+    const { ds, markRead } = longThread();
+    const view = render(<AppShell dataSource={ds} history={createMemoryHistory(`/c/${C1}?thread=${M1}#message-${MISSING}`)} />);
+    expect(markRead).not.toHaveBeenCalledWith(C1, M1, LAST);
+    expect(view.container.querySelector<HTMLElement>('.thread-panel')!.scrollTop).toBe(0);
+    act(() => vi.advanceTimersByTime(ANCHOR_REPLIES_TIMEOUT_MS));
+    const panel = view.container.querySelector<HTMLElement>('.thread-panel')!;
+    // 앵커 처리 중에는 맨 위 그대로였다 — 맨 아래는 missing()이 내린 것.
+    expect(panel.scrollTop).toBe(panel.scrollHeight - VIEW);
+    expect(markRead).toHaveBeenCalledWith(C1, M1, LAST);
+  });
+
   it('대조: 앵커 없이 같은 스레드를 열면 맨 아래로 열려 마지막 답글 seq로 읽음 저장한다', () => {
     const { ds, markRead } = longThread();
     render(<AppShell dataSource={ds} history={createMemoryHistory(`/c/${C1}?thread=${M1}`)} />);

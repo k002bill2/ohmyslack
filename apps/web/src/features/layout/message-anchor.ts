@@ -124,6 +124,13 @@ function useAnchorFeedback() {
   return { notice, reveal, missing };
 }
 
+/** `useMessageAnchor` 결과: 보일 안내와, 아직 처리 중인 스레드 앵커의 원문 id(없으면 null). */
+export interface MessageAnchorState {
+  readonly notice: AnchorNotice | null;
+  /** 이 스레드 패널은 앵커 처리가 끝날 때까지 맨 아래 이동·읽음 보고를 멈춘다(FR-SYNC-03 실제 열람, 교차 검토 P2). */
+  readonly pendingThreadRoot: string | null;
+}
+
 /** 알림 탭 대상 메시지로 스크롤·강조. 못 찾으면 맨 아래 + 짧은 안내(이전 이력 불러오기 API가 없어 대체 동작). */
 export function useMessageAnchor({
   history,
@@ -134,7 +141,7 @@ export function useMessageAnchor({
   historyReady,
   repliesReady,
   threadOpen,
-}: MessageAnchorInput): AnchorNotice | null {
+}: MessageAnchorInput): MessageAnchorState {
   const [anchor, setAnchor] = useState<Anchor | null>(() => readAnchor(history));
   const { notice, reveal, missing } = useAnchorFeedback();
   const waitStart = useRef<{ readonly anchor: Anchor; readonly at: number } | null>(null);
@@ -172,5 +179,5 @@ export function useMessageAnchor({
     // reveal·missing은 매 렌더 새 함수지만 ref·setState만 쓴다 — 데이터 변화에만 다시 찾는다.
   }, [anchor, conversationId, threadRootId, messages, historyReady, repliesReady, threadOpen, history, shell]);
 
-  return notice;
+  return { notice, pendingThreadRoot: anchor?.inThread === true ? anchor.threadRootId : null };
 }
