@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import re
+import uuid
+from typing import Any, Dict, Optional, Tuple
 
 from gateway.platforms._shared import env_is_connected, seed_extra_from_env
 
@@ -34,6 +36,24 @@ def validate_config(config: Any) -> bool:
     return bool((getattr(config, "token", None) or get_scoped_secret(TOKEN_ENV, "") or "").strip())
 
 
+# send_message 대상 `ohmyslack:<conversation UUID>`(하이픈 8-4-4-4-12, 대소문자 무시, 앞뒤 공백 허용).
+_SEND_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+
+def parse_send_target(ref: str) -> Optional[Tuple[str, None]]:
+    """Hermes `target_ref_syntax_fn` 계약 `(ref) -> (chat_id, thread_id) | None`(inputs/probe49b.txt:6-8).
+
+    대화 UUID와 완전 일치하면 `(소문자 표준형, None)`, 아니면 None(Hermes 일반 규칙·채널 디렉터리로 넘어감 — Buzz 선례,
+    inputs/probe49b.txt:58-68). Hermes 모듈은 import하지 않는다(정규식·`uuid`만 — 구 Hermes에서도 import가 깨지지 않게).
+    """
+    # 정규화 이유: standalone sender는 `/me` 대화 id(소문자 표준형)와 정확히 일치해야 보낸다(adapter.py:1189-1193).
+    # `<uuid>:<thread uuid>`는 받지 않는다: standalone은 thread_id를 쓰지 않아 스레드 대상이 조용히 최상위로 게시될 수 있다.
+    if not isinstance(ref, str):
+        return None
+    match = _SEND_UUID_RE.fullmatch(ref.strip())
+    return (str(uuid.UUID(match.group(0))), None) if match else None
+
+
 def _env_enablement() -> dict:
     return seed_extra_from_env([(URL_ENV, "url", None), (PORT_ENV, "port", None)], home_env=HOME_CHANNEL_ENV)
 
@@ -55,6 +75,9 @@ def platform_kwargs() -> Dict[str, Any]:
         # 어댑터 경로는 어댑터의 MAX_MESSAGE_LENGTH로 직접 나누므로 게시 형태가 같다.
         max_message_length=0,
         cron_deliver_env_var=HOME_CHANNEL_ENV,
+        # `parse_target_ref_fn`은 일부러 등록하지 않는다: 등록하면 cron이 못 푼 대상을 어댑터에 넘기지 않고 오류로 끝낸다
+        # (inputs/probe49.txt:110-117). `target_ref_syntax_fn`은 그 조건에 들지 않아 cron 통과 동작이 그대로다.
+        target_ref_syntax_fn=parse_send_target,
         allowed_users_env=ALLOWED_USERS_ENV,
         env_enablement_fn=_env_enablement,
         platform_hint=PLATFORM_HINT,
