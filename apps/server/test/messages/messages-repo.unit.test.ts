@@ -56,6 +56,7 @@ function base(sql: string): Result {
   if (sql.startsWith('SELECT id FROM conversations')) return ok([{ id: 'c1' }]);
   if (sql.startsWith('SELECT id FROM messages')) return none();
   if (sql.startsWith('SELECT 1 FROM conversation_members')) return ok([{}]);
+  if (sql.startsWith('SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE')) return ok([{}]);
   if (sql.startsWith('SELECT thread_root_id, deleted_at')) return ok([{ thread_root_id: null, deleted_at: null }]);
   if (sql === MENTION_FILTER_SQL) return ok([{ id: U2 }]);
   if (sql.startsWith('UPDATE conversations SET last_seq')) return ok([{ seq: '6' }]);
@@ -214,6 +215,7 @@ describe('createPgMessagesStore: edit·remove', () => {
     expect(fx.log).toEqual([
       'BEGIN',
       'SELECT conversation_id, author_id,',
+      'SELECT 1 FROM', // 대화 FOR SHARE 잠금(FR-CONV-06)
       'SELECT 1 FROM',
       'SELECT u.id FROM',
       'SELECT user_id FROM',
@@ -226,10 +228,10 @@ describe('createPgMessagesStore: edit·remove', () => {
       'SELECT m.id, m.conversation_id,',
       'COMMIT',
     ]);
-    expect(fx.params[5]).toEqual(['m1', 'new', at]);
-    expect(fx.params[6]).toEqual(['m1', [U2, U3]]);
-    expect(fx.params[8]).toEqual(['m1', [U3], at]);
-    expect(fx.params[10]?.[3]).toBe('edit');
+    expect(fx.params[6]).toEqual(['m1', 'new', at]);
+    expect(fx.params[7]).toEqual(['m1', [U2, U3]]);
+    expect(fx.params[9]).toEqual(['m1', [U3], at]);
+    expect(fx.params[11]?.[3]).toBe('edit');
     expect(fx.released()).toBe(1);
   });
 
@@ -283,6 +285,7 @@ describe('createPgMessagesStore: edit·remove', () => {
     expect(fx.log).toEqual([
       'BEGIN',
       'SELECT conversation_id, author_id,',
+      'SELECT 1 FROM', // 대화 FOR SHARE 잠금(FR-CONV-06)
       'SELECT 1 FROM',
       'UPDATE messages SET',
       'DELETE FROM message_mentions',
@@ -292,9 +295,9 @@ describe('createPgMessagesStore: edit·remove', () => {
       'SELECT m.id, m.conversation_id,',
       'COMMIT',
     ]);
-    expect(fx.params[3]).toEqual(['m1', at]);
-    expect(fx.params[5]).toEqual(['m1', at]);
-    expect(fx.params[7]?.[3]).toBe('delete');
+    expect(fx.params[4]).toEqual(['m1', at]);
+    expect(fx.params[6]).toEqual(['m1', at]);
+    expect(fx.params[8]?.[3]).toBe('delete');
   });
 
   it('remove: forbidden·재조회 실패', async () => {

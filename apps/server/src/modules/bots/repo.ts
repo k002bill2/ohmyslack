@@ -149,7 +149,8 @@ export async function lockUploadGrant(
   if (!(await one('SELECT 1 FROM bot_tokens WHERE id = $1 AND bot_user_id = $2 AND revoked_at IS NULL FOR SHARE', [grant.tokenId, grant.botUserId]))) {
     return 'unauthenticated';
   }
-  if (!(await one('SELECT 1 FROM conversations WHERE id = $1 FOR KEY SHARE', [grant.conversationId]))) return 'not_found';
+  // 삭제(UPDATE conversations)와 충돌하는 FOR SHARE: 가드 통과 후 삭제가 커밋되면 여기서 0행 → not_found(FR-CONV-06).
+  if (!(await one('SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [grant.conversationId]))) return 'not_found';
   const member = 'SELECT 1 FROM conversation_members WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL FOR SHARE';
   return (await one(member, [grant.conversationId, grant.botUserId])) ? 'ok' : 'not_found';
 }
@@ -226,7 +227,7 @@ export async function botMe(db: Db, botUserId: string): Promise<BotMeRow> {
   );
   const convs = await db.query<{ conversation_id: string; kind: 'channel' | 'dm'; name: string | null }>(
     `SELECT m.conversation_id, c.kind, c.name FROM conversation_members m JOIN conversations c ON c.id = m.conversation_id
-      WHERE m.user_id = $1 AND m.left_at IS NULL ORDER BY m.conversation_id`,
+      WHERE m.user_id = $1 AND m.left_at IS NULL AND c.deleted_at IS NULL ORDER BY m.conversation_id`,
     [botUserId],
   );
   const self = await db.query<{ display_name: string }>('SELECT display_name FROM users WHERE id = $1', [botUserId]);
@@ -247,6 +248,7 @@ export async function visibleMessageIds(db: Db, botUserId: string, messageIds: r
     `SELECT m.id FROM messages m
        LEFT JOIN messages r ON r.id = m.thread_root_id
        JOIN conversation_members jm ON jm.conversation_id = m.conversation_id AND jm.user_id = $1 AND jm.left_at IS NULL
+       JOIN conversations c ON c.id = m.conversation_id AND c.deleted_at IS NULL
       WHERE m.id = ANY($2::uuid[]) AND COALESCE(r.seq, m.seq) > jm.joined_seq`,
     [botUserId, [...messageIds]],
   );
@@ -256,7 +258,8 @@ export async function visibleMessageIds(db: Db, botUserId: string, messageIds: r
 /** 봇의 활성 멤버십 joined_seq(BOT_CHANNEL_SPEC §4-5). seq ≤ joined_seq 원문은 항상 숨김이라 페이지 경계를 자르는 데 쓴다. 비활성이면 undefined. */
 export async function joinedSeq(db: Db, botUserId: string, conversationId: string): Promise<number | undefined> {
   const res = await db.query<{ joined_seq: string | number }>(
-    'SELECT joined_seq FROM conversation_members WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL',
+    `SELECT m.joined_seq FROM conversation_members m JOIN conversations c ON c.id = m.conversation_id AND c.deleted_at IS NULL
+      WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.left_at IS NULL`,
     [conversationId, botUserId],
   );
   const raw = res.rows[0]?.joined_seq;

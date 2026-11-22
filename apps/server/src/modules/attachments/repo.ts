@@ -154,6 +154,15 @@ export interface AttachmentsStore {
   retain(now: Date, unboundBefore: Date): Promise<RetentionResult>;
 }
 
+/**
+ * 사람 업로드 저장 tx 안 대화 확인·잠금(FR-CONV-06): 삭제(UPDATE conversations)와 충돌하는 FOR SHARE.
+ * 가드 통과 후 삭제가 커밋됐으면 false(호출자가 404로 거부해 저장 0).
+ */
+export async function lockLiveConversation(client: pg.PoolClient, conversationId: string): Promise<boolean> {
+  const res = await client.query('SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [conversationId]);
+  return (res.rowCount ?? 0) > 0;
+}
+
 /** 메타·바이트를 한 트랜잭션으로 넣는다(부분 저장 0). */
 async function insertTx(pool: pg.Pool, a: NewAttachment, check: InTxCheck | undefined): Promise<AttachmentMeta> {
   const row = await withTransaction(pool, async (client) => {

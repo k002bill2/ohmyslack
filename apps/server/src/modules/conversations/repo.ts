@@ -7,6 +7,8 @@ import type {
   ConversationsStore,
   CreateChannelResult,
   DeletedMember,
+  JoinResult,
+  MembershipEndResult,
   OpenDmResult,
   PeerKind,
   UnreadAggregate,
@@ -58,7 +60,7 @@ const BOT_TARGET_SQL = `SELECT 1 FROM users u
   JOIN conversations c ON c.workspace_id = wm.workspace_id
   WHERE u.id = $2 AND u.kind = 'bot' AND u.status = 'active' AND c.id = $1 AND c.deleted_at IS NULL`;
 
-/** 활성 봇 멤버만 나가게 한다(사람 멤버십은 이 경로로 바뀌지 않음). */
+/** 활성 봇 멤버만 나가게 한다(사람 멤버십은 이 경로로 바뀌지 않음). 호출자가 LIVE_CONVERSATION_LOCK_SQL로 먼저 잠근다. */
 const REMOVE_BOT_SQL = `UPDATE conversation_members m SET left_at = $3 FROM users u
   WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.left_at IS NULL AND u.id = m.user_id AND u.kind = 'bot'`;
 
@@ -66,9 +68,18 @@ const REMOVE_BOT_SQL = `UPDATE conversation_members m SET left_at = $3 FROM user
 const DELETE_CHANNEL_SQL = `UPDATE conversations SET deleted_at = $3, deleted_by = $2
   WHERE id = $1 AND kind = 'channel' AND deleted_at IS NULL RETURNING id`;
 
-/** 삭제 시점의 활성 멤버(사람·봇). 멤버 행은 바꾸지 않는다 — 실시간 계층이 구독을 끊는 대상이다. */
+/** 삭제 시점의 활성 멤버(사람·봇). 갱신 전에 읽는다 — 실시간 계층이 구독을 끊는 대상이다. */
 const ACTIVE_MEMBERS_SQL = `SELECT m.user_id, u.kind FROM conversation_members m JOIN users u ON u.id = m.user_id
   WHERE m.conversation_id = $1 AND m.left_at IS NULL ORDER BY m.user_id`;
+
+/**
+ * 삭제 = 활성 멤버십 전원 종료(사람·봇). 「활성 멤버 = left_at IS NULL」을 쓰는 모든 경로(sync·봇·푸시·쓰기)가
+ * 삭제 채널을 비활성으로 보게 하는 구조 수정이다(FR-CONV-06 fix1). 재참여는 joinIn의 deleted_at 조건이 막는다.
+ */
+const END_MEMBERSHIPS_SQL = 'UPDATE conversation_members SET left_at = $2 WHERE conversation_id = $1 AND left_at IS NULL';
+
+/** 쓰기 경로 tx 첫머리 확인·잠금: 삭제의 UPDATE(FOR NO KEY UPDATE)와 충돌해 삭제 커밋과 직렬화된다. 0행이면 삭제됨/없음. */
+export const LIVE_CONVERSATION_LOCK_SQL = 'SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE';
 
 const WORKSPACE_OF_SQL = 'SELECT workspace_id FROM workspace_members WHERE user_id = $1';
 
@@ -146,16 +157,23 @@ const DISCOVER_SQL = `SELECT c.id, c.name FROM conversations c
 
 
 /** 멤버십 생성·재참여: 대화 행을 잠가 last_seq를 읽고 joined_seq·read cursor를 그 값으로 둔다(TRD §2). */
-async function joinIn(client: pg.PoolClient, conversationId: string, userId: string, at: Date): Promise<boolean> {
+/** 'deleted' = 삭제됐거나 없는 대화(가드 통과 후 삭제 커밋 경쟁 포함, 호출자는 404). */
+type JoinOutcome = JoinResult;
+
+async function joinIn(client: pg.PoolClient, conversationId: string, userId: string, at: Date): Promise<JoinOutcome> {
   const conv = await client.query<{ last_seq: string }>('SELECT last_seq::text AS last_seq FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [
     conversationId,
   ]);
   const lastSeq = conv.rows[0]?.last_seq;
-  if (lastSeq === undefined) return false;
+  if (lastSeq === undefined) return 'deleted';
   const member = await client.query(UPSERT_MEMBER_SQL, [conversationId, userId, at, lastSeq]);
-  const added = (member.rowCount ?? 0) > 0;
-  if (added) await client.query(UPSERT_READ_STATE_SQL, [conversationId, userId, lastSeq, at]);
-  return added;
+  if ((member.rowCount ?? 0) === 0) return 'exists';
+  await client.query(UPSERT_READ_STATE_SQL, [conversationId, userId, lastSeq, at]);
+  return 'added';
+}
+
+async function lockLive(client: pg.PoolClient, conversationId: string): Promise<boolean> {
+  return ((await client.query(LIVE_CONVERSATION_LOCK_SQL, [conversationId])).rowCount ?? 0) > 0;
 }
 
 async function workspaceOf(client: pg.PoolClient, userId: string): Promise<string | undefined> {
@@ -179,7 +197,8 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
       return inTransaction<AddBotResult>(pool, async (client) => {
         const target = await client.query(BOT_TARGET_SQL, [conversationId, botUserId]);
         if ((target.rowCount ?? 0) === 0) return { commit: false, value: 'invalid_target' };
-        return { commit: true, value: (await joinIn(client, conversationId, botUserId, at)) ? 'added' : 'exists' };
+        const joined = await joinIn(client, conversationId, botUserId, at);
+        return joined === 'deleted' ? { commit: false, value: 'deleted' } : { commit: true, value: joined };
       });
     },
     deleteChannel(conversationId, deletedBy, at) {
@@ -187,12 +206,16 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
         const updated = await client.query(DELETE_CHANNEL_SQL, [conversationId, deletedBy, at]);
         if ((updated.rowCount ?? 0) === 0) return { commit: false, value: undefined };
         const members = await client.query<{ user_id: string; kind: PeerKind }>(ACTIVE_MEMBERS_SQL, [conversationId]);
+        await client.query(END_MEMBERSHIPS_SQL, [conversationId, at]);
         return { commit: true, value: members.rows.map((r) => ({ userId: r.user_id, kind: r.kind })) };
       });
     },
-    async removeBot(conversationId, botUserId, at) {
-      const res = await pool.query(REMOVE_BOT_SQL, [conversationId, botUserId, at]);
-      return (res.rowCount ?? 0) > 0;
+    removeBot(conversationId, botUserId, at) {
+      return inTransaction<MembershipEndResult>(pool, async (client) => {
+        if (!(await lockLive(client, conversationId))) return { commit: false, value: 'deleted' };
+        const res = await client.query(REMOVE_BOT_SQL, [conversationId, botUserId, at]);
+        return { commit: true, value: (res.rowCount ?? 0) > 0 ? 'ended' : 'none' };
+      });
     },
     createChannel(channel) {
       return inTransaction<CreateChannelResult>(pool, async (client) => {
@@ -213,17 +236,20 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
       return res.rows.map((r) => ({ id: r.id, name: r.name }));
     },
     join(conversationId, userId, at) {
-      return inTransaction<void>(pool, async (client) => {
-        await joinIn(client, conversationId, userId, at);
-        return { commit: true, value: undefined };
+      return inTransaction<JoinOutcome>(pool, async (client) => {
+        const joined = await joinIn(client, conversationId, userId, at);
+        return { commit: joined !== 'deleted', value: joined };
       });
     },
-    async leave(conversationId, userId, at) {
-      const res = await pool.query(
-        'UPDATE conversation_members SET left_at = $3 WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL',
-        [conversationId, userId, at],
-      );
-      return (res.rowCount ?? 0) > 0;
+    leave(conversationId, userId, at) {
+      return inTransaction<MembershipEndResult>(pool, async (client) => {
+        if (!(await lockLive(client, conversationId))) return { commit: false, value: 'deleted' };
+        const res = await client.query(
+          'UPDATE conversation_members SET left_at = $3 WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL',
+          [conversationId, userId, at],
+        );
+        return { commit: true, value: (res.rowCount ?? 0) > 0 ? 'ended' : 'none' };
+      });
     },
     async listMembers(conversationId) {
       const res = await pool.query<{ id: string; display_name: string }>(

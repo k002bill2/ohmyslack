@@ -16,8 +16,8 @@ const RETENTION_FLOOR_SQL = `SELECT GREATEST(
 const SCAN_SQL = `SELECT change_id::text AS change_id, conversation_id, message_id, op FROM conversation_changes
   WHERE change_id > $1 AND change_id <= $2 ORDER BY change_id LIMIT $3`;
 
-const ACTIVE_OF_SQL = `SELECT conversation_id FROM conversation_members
-  WHERE user_id = $1 AND left_at IS NULL AND conversation_id = ANY($2::uuid[])`;
+const ACTIVE_OF_SQL = `SELECT m.conversation_id FROM conversation_members m JOIN conversations c ON c.id = m.conversation_id
+  WHERE m.user_id = $1 AND m.left_at IS NULL AND c.deleted_at IS NULL AND m.conversation_id = ANY($2::uuid[])`;
 
 const SNAPSHOT_SQL = `SELECT ${MESSAGE_COLUMNS} FROM messages m
   WHERE m.conversation_id = $1 AND ($2::bigint IS NULL OR m.seq < $2) ORDER BY m.seq DESC LIMIT $3`;
