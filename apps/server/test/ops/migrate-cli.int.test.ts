@@ -17,7 +17,7 @@ const SERVER_DIR = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = fileURLToPath(new URL('../../../../node_modules/.bin/tsx', import.meta.url));
 /** 저장소의 마이그레이션 파일 전체(0002_bots 추가, W-18). 출력 순서 = 적용 순서. */
 // 0003_attachments 추가(W-21).
-// 0004_push 추가(W-23). 0005_attachment_documents 추가(W-26). 0006_session_device_label 추가(W-29). 0007_attachment_bind_order 추가(W-31).
+// 0004_push 추가(W-23). 0005_attachment_documents 추가(W-26). 0006_session_device_label 추가(W-29). 0007_attachment_bind_order 추가(W-31). 0008_conversation_deletion 추가(FR-CONV-06).
 const MIGRATIONS = [
   '0001_initial_schema.sql',
   '0002_bots.sql',
@@ -26,6 +26,7 @@ const MIGRATIONS = [
   '0005_attachment_documents.sql',
   '0006_session_device_label.sql',
   '0007_attachment_bind_order.sql',
+  '0008_conversation_deletion.sql',
 ];
 const LISTED = MIGRATIONS.map((name) => `${name}\n`).join('');
 const N = MIGRATIONS.length;
