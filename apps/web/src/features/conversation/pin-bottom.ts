@@ -19,7 +19,7 @@ export function isAtBottom(el: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 
 export function usePinBottom(ref: RefObject<HTMLElement | null>, conversationKey: string, hold = false): () => void {
   const pinned = useRef(true);
   const held = useRef(hold);
-  const observed = useRef<{ el: HTMLElement; ro: ResizeObserver } | null>(null);
+  const observed = useRef<{ el: HTMLElement; ro: ResizeObserver; kids: ReadonlySet<Element> } | null>(null);
   const follow = () => {
     const el = ref.current;
     // 알림 탭 대상 강조 중(message-anchor.ts)에는 따라 내려가지 않는다 — scrollIntoView의 scroll 이벤트가 오기 전 재렌더로 되돌리지 않게.
@@ -36,16 +36,26 @@ export function usePinBottom(ref: RefObject<HTMLElement | null>, conversationKey
   }, [hold, ref]);
   // 매 렌더 후: 내용이 바뀌었으면 고정 상태일 때만 맨 아래로(대입 1회 — 위로 읽는 중이면 아무것도 안 한다).
   useLayoutEffect(follow);
-  // 목록 상자 크기 변화(작성기 높이·배너·창 크기). 목록 요소가 바뀌면(빈 → 목록) 다시 관찰한다.
+  // 목록 상자 크기 변화(작성기 높이·배너·창 크기)와 직계 자식 크기 변화(늦게 레이아웃되는 이미지 첨부 — 상자 크기는 그대로라
+  // 상자만 보면 놓친다, fix2 R-1). 목록 요소가 바뀌면(빈 → 목록) 다시 관찰하고, 직계 자식 집합이 바뀌면 그 차이만 고친다.
   useEffect(() => {
     const el = ref.current;
-    if (observed.current?.el === el) return;
-    observed.current?.ro.disconnect();
-    observed.current = null;
+    if (observed.current !== null && observed.current.el !== el) {
+      observed.current.ro.disconnect();
+      observed.current = null;
+    }
     if (el === null || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(follow);
-    ro.observe(el);
-    observed.current = { el, ro };
+    if (observed.current === null) {
+      const ro = new ResizeObserver(follow);
+      ro.observe(el);
+      observed.current = { el, ro, kids: new Set() };
+    }
+    const { ro, kids } = observed.current;
+    const next = new Set<Element>(Array.from(el.children));
+    if (next.size === kids.size && [...next].every((k) => kids.has(k))) return;
+    for (const k of kids) if (!next.has(k)) ro.unobserve(k);
+    for (const k of next) if (!kids.has(k)) ro.observe(k);
+    observed.current = { el, ro, kids: next };
   });
   useEffect(() => () => observed.current?.ro.disconnect(), []);
   return () => {
