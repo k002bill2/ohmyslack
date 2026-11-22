@@ -634,7 +634,7 @@ body {
 }
 .conversation-pane > .message-list {
   flex: 1 1 auto;
-  /* CMP-06: 목록만 스크롤(헤더·작성기 고정). 하단 고정 로직은 pin-bottom.ts. */
+  /* CMP-06: 목록만 스크롤(헤더·작성기 고정). 하단 고정 로직은 conversation/pin-bottom.ts. */
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;

@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space, UploadAttachmentOptions } from '../../data';
 import { createAttachmentDraftStore, type AttachmentDraftStore, type UploadFn } from '../conversation/attachments/composer-upload.js';
-import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useFocusOnLock, useMessageRoving, withDiscardFocus, MAIN_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
+import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, isAtBottom, MessageItem, NewMessagesDivider, createDraftStore, lastServerSeq, useFocusOnLock, useMessageRoving, usePinBottom, withDiscardFocus, MAIN_DISCARD_FOCUS, type DraftStore, type MessageItemData, type MessageItemProps } from '../conversation';
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
@@ -18,7 +18,6 @@ import type { ActionResult } from '../../data';
 import { SHELL_COPY } from './copy.js';
 import { startsNewDay, useNewMessagesSeq } from './message-dividers.js';
 import { useMessageAnchor } from './message-anchor.js';
-import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
 import { HeaderMenu, type HeaderDelete } from './HeaderMenu.js';

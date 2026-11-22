@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/App.js';
-import { isAtBottom, PIN_THRESHOLD_PX } from '../../src/features/layout/pin-bottom.js';
+import { isAtBottom, PIN_THRESHOLD_PX } from '../../src/features/conversation/index.js';
 import { T0, memory } from '../helpers/fixtures.js';
 import { installViewport } from '../helpers/viewport.js';
 
