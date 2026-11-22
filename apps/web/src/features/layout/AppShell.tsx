@@ -350,6 +350,9 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const space = snap.spaces.find((s) => s.id === state.conversationId);
   /** 비동기 참여 완료 시점의 선택 대화(렌더 당시 값이 아니라 최신). */
   const selectedId = useRef(state.conversationId);
+  /** 최신 목록(await 뒤 판정용, 채널 삭제). */
+  const spacesRef = useRef(snap.spaces);
+  spacesRef.current = snap.spaces;
   useEffect(() => {
     selectedId.current = state.conversationId;
   }, [state.conversationId]);
@@ -453,8 +456,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     const root = shell.current;
     const target =
       root?.querySelector<HTMLElement>('.conversation-title') ??
-      root?.querySelector<HTMLElement>('nav [aria-current="page"]') ??
-      root?.querySelector<HTMLElement>('nav a, nav button');
+      // 마지막 채널 삭제(이동 대상 없음): 사이드바의 첫 항목으로(BODY 금지).
+      root?.querySelector<HTMLElement>('nav button, nav a');
     target?.focus({ preventScroll: true });
   }, [state.conversationId, focusTick]);
 
@@ -588,19 +591,28 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     space === undefined || space.kind !== 'channel' || snap.account?.role !== 'owner' || dataSource.deleteChannel === undefined
       ? undefined
       : {
+          channelId: space.id,
           channelName: space.name,
           onDelete: async () => {
             const id = space.id;
-            const channels = snap.spaces.filter((s) => s.kind === 'channel');
-            const at = channels.findIndex((s) => s.id === id);
-            const next = channels[at + 1] ?? (at > 0 ? channels[at - 1] : undefined);
+            const threadRoot = state.threadRootId;
             const res = (await dataSource.deleteChannel?.(id)) ?? ({ ok: false, status: 403 } as const);
             if (!res.ok) return res;
             drafts.delete(id);
             attachmentDrafts.discard(id);
-            focusAfterDelete.current = true;
-            bumpFocus();
-            if (state.conversationId === id) {
+            // 그 채널의 스레드 초안·스레드 첨부도 폐기(agy).
+            if (threadRoot !== null) {
+              drafts.delete(threadRoot);
+              attachmentDrafts.discard(threadRoot);
+            }
+            // await 뒤에는 최신 선택·목록으로 판정한다 — 늦은 응답 중 다른 채널로 옮겼으면 이동하지 않는다(agy).
+            if (selectedId.current === id) {
+              const channels = spacesRef.current.filter((s) => s.kind === 'channel');
+              const at = channels.findIndex((s) => s.id === id);
+              const rest = channels.filter((s) => s.id !== id);
+              const next = at < 0 ? rest[0] : (channels[at + 1] ?? (at > 0 ? channels[at - 1] : undefined));
+              focusAfterDelete.current = true;
+              bumpFocus();
               dispatch(next === undefined ? { type: 'route', conversationId: null } : { type: 'select-space', conversationId: next.id });
             }
             return res;

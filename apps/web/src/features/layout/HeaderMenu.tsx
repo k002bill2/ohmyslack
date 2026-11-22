@@ -35,6 +35,7 @@ function MenuButton({ items }: { readonly items: readonly MessageMenuItem[] }) {
 
 /** 채널 삭제(FR-CONV-06): owner·채널일 때만 호출자가 넘긴다. */
 export interface HeaderDelete {
+  readonly channelId: string;
   readonly channelName: string;
   readonly onDelete: () => Promise<ActionResult<null>>;
 }
@@ -78,6 +79,8 @@ export function HeaderMenu({ onNotifications, onShortcuts, onLeave, deletion, bo
   if (deletion === undefined) return withLeave(undefined);
   return (
     <ConfirmChannelControl
+      // 채널 전환 시 확인 Dialog의 open·실패 상태가 따라오지 않게 채널마다 새로 만든다(agy).
+      key={deletion.channelId}
       copy={{ title: DELETE_CHANNEL_COPY.title, body: DELETE_CHANNEL_COPY.body(deletion.channelName), confirm: DELETE_CHANNEL_COPY.confirm }}
       onConfirm={deletion.onDelete}
       renderTrigger={withLeave}
