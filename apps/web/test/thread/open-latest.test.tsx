@@ -1,5 +1,5 @@
 /** 스레드를 열면 최근 답글(맨 아래)이 보인다 — CMP-06 하단 고정과 같은 규칙(UI_STATES §2-7). */
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThreadPanel, type ThreadVariant } from '../../src/features/thread/index.js';
 import type { MessageItemData } from '../../src/features/conversation/index.js';
@@ -207,10 +207,12 @@ describe('스레드 내용 높이가 늦게 늘면(이미지 첨부) 맨 아래�
     }
   });
 
-  it('답글 0건으로 열렸다가 답글 목록이 생기면 새 목록을 관찰한다', () => {
+  it('답글 0건으로 열렸다가 답글 목록이 생기면 새 목록을 관찰한다', async () => {
     const root = msg('m1', 1);
     const view = render(panel('wide', root, []));
     view.rerender(panel('wide', root, replies(10)));
+    // 「답글 없음」 → 답글 목록은 개수·첫·끝 자식이 같은 중간 교체 — MutationObserver(마이크로태스크)가 관찰을 고친다(fix4 #6).
+    await act(async () => {});
     expect(scroller().scrollTop).toBe(1100 - VIEW);
     extra = 320;
     resized(repliesList());
