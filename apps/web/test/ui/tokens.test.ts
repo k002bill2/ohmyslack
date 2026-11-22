@@ -128,6 +128,7 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
     expect(tokens.fonts.map((f) => f.name)).toEqual(['Pretendard', 'Noto Sans KR', 'JetBrains Mono']);
     expect(tokens.icons.every((i) => i.license === 'ISC')).toBe(true);
     expect(tokens.icons.map((i) => i.name)).toContain('hash');
+    expect(tokens.icons.map((i) => i.name)).toEqual(expect.arrayContaining(['copy', 'check', 'x']));
   });
 });
 

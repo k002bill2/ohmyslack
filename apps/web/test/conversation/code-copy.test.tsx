@@ -1,8 +1,9 @@
 /**
  * 메시지 본문 코드 블록 「복사」 버튼(CMP-08, UI_STATES §2-5 MessageBody).
  * - 코드 블록마다 버튼 1개(인라인 코드·다른 블록 없음), 자기 블록 원문 그대로 1회 복사.
- * - 성공 「복사됨」 1600ms 후 복귀(연속 성공 시 다시 셈) / 실패(clipboard 없음·거부) 버튼 「복사 실패」·안내 「복사하지 못했습니다」(role=status).
- * - 버튼은 pre 밖(가로 스크롤과 함께 밀리지 않게) — pre textContent에 버튼 글자 없음.
+ * - 버튼은 아이콘 단독(Lucide copy/check/x, 보이는 글자 0) — 접근 이름은 3상태 모두 「코드 복사」 고정, 결과 낭독은 role=status.
+ * - 성공 check 아이콘 1600ms 후 copy 복귀(연속 성공 시 다시 셈) / 실패(clipboard 없음·거부) x 아이콘·안내 「복사하지 못했습니다」(role=status).
+ * - 버튼은 pre 밖(가로 스크롤과 함께 밀리지 않게) — pre textContent에 버튼 내용 없음.
  * - 버튼의 click·키 이벤트가 메시지 항목 동작(답글·수정·삭제·메뉴·액션 시트)을 일으키지 않는다.
  * 기대 문구는 리터럴로 비교한다(상수 import 없음).
  */
@@ -32,6 +33,23 @@ const LONG = 'cd /Users/x/project && agy --conversation 1234567890abcdef --very-
 const MULTI = '  첫 줄 들여쓰기\n\tif (a) {\n    b();\n  }\n';
 
 /** await 체인(writeClipboard → then → setState)을 비운다. */
+/** 버튼 안 아이콘 상태(svg data-icon). 보이는 글자가 없음도 함께 확인한다. */
+function iconOf(button: HTMLElement): string | null {
+  expect(button.textContent).toBe('');
+  expect(button.getAttribute('aria-label')).toBe('코드 복사');
+  expect(button.getAttribute('title')).toBe('코드 복사');
+  const svgs = button.querySelectorAll('svg');
+  expect(svgs).toHaveLength(1);
+  return svgs[0]?.getAttribute('data-icon') ?? null;
+}
+
+/** Lucide 원본(icons/<name>.svg) 도형 — 좌표 오타 방지용 리터럴. */
+const LUCIDE: Record<string, { readonly paths: readonly string[]; readonly rect?: Record<string, string> }> = {
+  copy: { paths: ['M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'], rect: { width: '14', height: '14', x: '8', y: '8', rx: '2', ry: '2' } },
+  check: { paths: ['M20 6 9 17l-5-5'] },
+  x: { paths: ['M18 6 6 18', 'm6 6 12 12'] },
+};
+
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -40,11 +58,51 @@ async function flush() {
 }
 
 describe('코드 블록 복사 버튼', () => {
-  it('코드 블록마다 「코드 복사」 버튼 1개, 보이는 글자는 「복사」', () => {
+  it('코드 블록마다 「코드 복사」 버튼 1개, 보이는 글자 없이 copy 아이콘', () => {
     render(<MessageBody body={'```\n' + LONG + '\n```'} />);
     const buttons = screen.getAllByRole('button', { name: '코드 복사' });
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]?.textContent).toBe('복사');
+    expect(iconOf(buttons[0] as HTMLElement)).toBe('copy');
+  });
+
+  it('아이콘 svg는 장식(aria-hidden·focusable=false)이고 Lucide 원본 도형·24 그리드·16px·stroke 2', async () => {
+    installClipboard(async () => {
+      throw new Error('denied');
+    });
+    render(<MessageBody body={'```\nx\n```\n```\ny\n```'} />);
+    const [a, b] = screen.getAllByRole('button', { name: '코드 복사' }) as HTMLElement[];
+    installClipboard(async () => undefined);
+    fireEvent.click(a as HTMLElement);
+    await flush();
+    installClipboard(async () => {
+      throw new Error('denied');
+    });
+    fireEvent.click(b as HTMLElement);
+    await flush();
+    const svgs = [...document.querySelectorAll('.msg-code-copy svg')];
+    expect(svgs.map((s) => s.getAttribute('data-icon'))).toEqual(['check', 'x']);
+    render(<MessageBody body={'```\nz\n```'} />);
+    const all = [...document.querySelectorAll('.msg-code-copy svg')];
+    expect(all.map((s) => s.getAttribute('data-icon'))).toEqual(['check', 'x', 'copy']);
+    for (const svg of all) {
+      const spec = LUCIDE[svg.getAttribute('data-icon') ?? ''];
+      expect(spec).toBeDefined();
+      expect(svg.getAttribute('aria-hidden')).toBe('true');
+      expect(svg.getAttribute('focusable')).toBe('false');
+      expect(svg.getAttribute('viewBox')).toBe('0 0 24 24');
+      expect(svg.getAttribute('width')).toBe('16');
+      expect(svg.getAttribute('height')).toBe('16');
+      expect(svg.getAttribute('fill')).toBe('none');
+      expect(svg.getAttribute('stroke')).toBe('currentColor');
+      expect(svg.getAttribute('stroke-width')).toBe('2');
+      expect(svg.getAttribute('stroke-linecap')).toBe('round');
+      expect(svg.getAttribute('stroke-linejoin')).toBe('round');
+      expect([...svg.querySelectorAll('path')].map((p) => p.getAttribute('d'))).toEqual(spec?.paths);
+      const rect = svg.querySelector('rect');
+      if (spec?.rect === undefined) expect(rect).toBeNull();
+      else for (const [k, v] of Object.entries(spec.rect)) expect(rect?.getAttribute(k)).toBe(v);
+      expect(svg.getAttribute('style')).toBeNull();
+    }
   });
 
   it('클릭 → 그 블록 원문으로 writeText 정확히 1회', async () => {
@@ -82,18 +140,18 @@ describe('코드 블록 복사 버튼', () => {
     expect(screen.getByRole('button', { name: '코드 복사' }).closest('.msg-code-block')).toBe(pre.parentElement);
   });
 
-  it('성공 → 「복사됨」, 1600ms 뒤 「복사」로 복귀', async () => {
+  it('성공 → check 아이콘·「복사됨」 낭독, 1600ms 뒤 copy 아이콘으로 복귀(접근 이름은 계속 「코드 복사」)', async () => {
     vi.useFakeTimers();
     render(<MessageBody body={'```\nx\n```'} />);
     const button = screen.getByRole('button', { name: '코드 복사' });
     fireEvent.click(button);
     await flush();
-    expect(button.textContent).toBe('복사됨');
+    expect(iconOf(button)).toBe('check');
     expect(screen.getByRole('status').textContent).toBe('복사됨');
     act(() => vi.advanceTimersByTime(1599));
-    expect(button.textContent).toBe('복사됨');
+    expect(iconOf(button)).toBe('check');
     act(() => vi.advanceTimersByTime(1));
-    expect(button.textContent).toBe('복사');
+    expect(iconOf(button)).toBe('copy');
     expect(screen.getByRole('status').textContent).toBe('');
   });
 
@@ -107,7 +165,7 @@ describe('코드 블록 복사 버튼', () => {
     expect(status.textContent).toBe('복사됨');
   });
 
-  it('연속 성공이면 1600ms를 다시 센다(1000ms 뒤 재클릭 → 그 뒤 1000ms에도 「복사됨」, 600ms 더 지나면 「복사」)', async () => {
+  it('연속 성공이면 1600ms를 다시 센다(1000ms 뒤 재클릭 → 그 뒤 1000ms에도 check, 600ms 더 지나면 copy)', async () => {
     vi.useFakeTimers();
     render(<MessageBody body={'```\nx\n```'} />);
     const button = screen.getByRole('button', { name: '코드 복사' });
@@ -117,13 +175,13 @@ describe('코드 블록 복사 버튼', () => {
     fireEvent.click(button);
     await flush();
     act(() => vi.advanceTimersByTime(1000));
-    expect(button.textContent).toBe('복사됨');
+    expect(iconOf(button)).toBe('check');
     act(() => vi.advanceTimersByTime(600));
-    expect(button.textContent).toBe('복사');
+    expect(iconOf(button)).toBe('copy');
     expect(writeText).toHaveBeenCalledTimes(2);
   });
 
-  it('거부(reject) → 「복사하지 못했습니다」, 포커스는 버튼에 그대로', async () => {
+  it('거부(reject) → x 아이콘·「복사하지 못했습니다」 낭독, 포커스는 버튼에 그대로', async () => {
     installClipboard(async () => {
       throw new Error('denied');
     });
@@ -133,7 +191,7 @@ describe('코드 블록 복사 버튼', () => {
     fireEvent.click(button);
     await flush();
     expect(screen.getByRole('status').textContent).toBe('복사하지 못했습니다');
-    expect(button.textContent).toBe('복사 실패');
+    expect(iconOf(button)).toBe('x');
     expect(document.activeElement).toBe(button);
   });
 
