@@ -266,6 +266,8 @@ export const CODE_BLOCK_COPY = {
   copy: '복사',
   label: '코드 복사',
   copied: '복사됨',
+  /** 실패 시 버튼 글자(안내 낭독은 MESSAGE_MENU_COPY.copyFailed). */
+  failed: '복사 실패',
 } as const;
 
 /** R4 시안 대화 헤더 더보기 메뉴(Floating-Menus D). 「멤버 보기」는 채널 멤버 화면이 없어 아직 렌더하지 않는다. */

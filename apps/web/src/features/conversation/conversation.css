@@ -258,22 +258,33 @@
   font-size: var(--text-sm);
   line-height: var(--leading-body);
 }
-/* 코드 블록 「복사」 버튼: 래퍼 오른쪽 위 고정(pre 가로 스크롤과 함께 밀리지 않게). 배경·테두리로 아래 코드 글자를 가린다. */
+/* 코드 블록 「복사」 버튼: 래퍼 오른쪽 위 고정(pre 가로 스크롤과 함께 밀리지 않게). 배경·테두리로 아래 코드 글자를 가린다.
+   --code-copy-w = 버튼 최소 폭(가장 긴 글자 「복사 실패」 약 4.3em < 5em + 좌우 여백). pre는 그만큼 + 간격 2배를 오른쪽 여백으로 두어
+   긴 한 줄을 끝까지 스크롤하면 마지막 글자가 버튼 왼쪽에 보인다(리뷰 P2-1). */
 .msg-code-block {
+  --code-copy-w: calc(var(--text-xs) * 5 + var(--space-2) * 2);
   position: relative;
   max-width: 100%;
   min-width: 0;
+}
+.msg-code-block .msg-code {
+  padding-inline-end: calc(var(--code-copy-w) + var(--space-2) * 2);
 }
 .msg-code-copy {
   position: absolute;
   top: var(--space-2);
   inset-inline-end: var(--space-2);
+  box-sizing: border-box;
+  min-width: var(--code-copy-w);
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   color: var(--text);
   font-size: var(--text-xs);
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
   cursor: pointer;
   transition: opacity 120ms ease;
 }
@@ -287,20 +298,23 @@
     opacity: 1;
   }
 }
-/* 터치 환경: 항상 보인다. */
+/* 터치 환경: 항상 보인다. 보이는 크기는 그대로 두고 투명 ::after로 히트 영역을 44px 이상으로 넓힌다
+   (위·오른쪽은 래퍼 안쪽 여백 --space-2까지만 — 래퍼 밖 가로 넘침 없음, 아래로 더 넓힘). */
 @media (hover: none) {
   .msg-code-block .msg-code-copy {
     opacity: 1;
   }
+  .msg-code-block .msg-code-copy::after {
+    content: '';
+    position: absolute;
+    inset-block-start: calc(var(--space-2) * -1);
+    inset-inline-end: calc(var(--space-2) * -1);
+    inset-block-end: calc(var(--space-4) * -1);
+    inset-inline-start: calc(var(--space-2) * -1);
+  }
 }
+/* 복사 결과 안내(role=status, 늘 렌더): 결과는 버튼 글자로 보이므로 보조기술 전용 — 레이아웃을 밀지 않는다. */
 .msg-code-note {
-  display: block;
-  margin-top: var(--space-1);
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-}
-/* 성공 안내는 버튼 글자 「복사됨」이 보이므로 보조기술 전용. */
-.msg-code-note.msg-code-note-quiet {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -308,6 +322,8 @@
   clip-path: inset(50%);
   white-space: nowrap;
   margin: 0;
+  -webkit-user-select: none;
+  user-select: none;
 }
 /* 시안 01 링크: 본문색 + accent 2px 밑줄. */
 .msg-body a {
