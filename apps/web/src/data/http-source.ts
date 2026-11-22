@@ -121,6 +121,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const storage = deps.storage === undefined ? undefined : deps.storage;
   const isOnline = deps.isOnline ?? (() => navigator.onLine);
   const listeners = new Set<() => void>();
+  /** 채널 삭제 알림 구독자(FR-CONV-06) — 화면이 그 대화의 초안·첨부 초안을 버린다. */
+  const deletedListeners = new Set<(conversationId: string) => void>();
   let snapshot: Snapshot = Object.freeze({ spaces: [], messages: [], connection: 'catching-up' as ConnectionState, loadedHistory: null });
   let fold: FoldState = emptyFold;
   let spaces: readonly Space[] = [];
@@ -536,6 +538,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       deferredThreadReads = new Map([...deferredThreadReads].filter(([, r]) => r.conversationId !== conversationId));
     }
     spaces = spaces.filter((sp) => sp.id !== conversationId);
+    deletedListeners.forEach((l) => l(conversationId));
     emit();
   };
 
@@ -1149,6 +1152,12 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    onConversationDeleted(listener) {
+      deletedListeners.add(listener);
+      return () => {
+        deletedListeners.delete(listener);
+      };
     },
     send(target, body, mentionUserIds, attachmentIds) {
       nextRoot = target.rootId;

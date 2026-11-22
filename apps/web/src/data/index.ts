@@ -250,6 +250,8 @@ export interface MembershipApi {
   leaveChannel?(conversationId: string): Promise<ActionResult<null>>;
   /** FR-CONV-06 owner 채널 삭제(`DELETE /api/conversations/{id}`). 성공하면 목록·배경 구독에서 바로 뺀다. */
   deleteChannel?(conversationId: string): Promise<ActionResult<null>>;
+  /** 채널 삭제(본인 동작 성공·WS `conversation.deleted` 공용) 알림 구독. 반환값은 해제 함수. */
+  onConversationDeleted?(listener: (conversationId: string) => void): () => void;
   /** `GET /api/conversations/:id/members`. */
   listConversationMembers?(
     conversationId: string,

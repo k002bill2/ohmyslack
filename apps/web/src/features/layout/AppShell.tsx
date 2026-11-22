@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space, UploadAttachmentOptions } from '../../data';
 import { createAttachmentDraftStore, type AttachmentDraftStore, type UploadFn } from '../conversation/attachments/composer-upload.js';
@@ -353,6 +353,11 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   /** 최신 목록(await 뒤 판정용, 채널 삭제). */
   const spacesRef = useRef(snap.spaces);
   spacesRef.current = snap.spaces;
+  /** 최신 메시지·열린 스레드(삭제 알림 시점 판정용 — 그 대화의 스레드 초안 키 = root id). */
+  const messagesRef = useRef(snap.messages);
+  messagesRef.current = snap.messages;
+  const threadRef = useRef({ conversationId: state.conversationId, rootId: state.threadRootId });
+  threadRef.current = { conversationId: state.conversationId, rootId: state.threadRootId };
   useEffect(() => {
     selectedId.current = state.conversationId;
   }, [state.conversationId]);
@@ -535,6 +540,21 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     if (threadRootId === null) return undefined;
     return () => attachmentDrafts.discard(threadRootId);
   }, [threadRootId, attachmentDrafts]);
+  // FR-CONV-06: 채널이 삭제되면(본인 동작·다른 기기 WS 공용) 그 대화의 메인·스레드 초안과 첨부 초안을 버린다.
+  // 스레드 초안 키는 root id뿐이라 대화별로 열거할 수 없다 — 받아 둔 그 대화의 메시지 id 전부 + 열린 스레드 root로 지운다.
+  const discardConversationDrafts = useCallback(
+    (conversationId: string) => {
+      const keys = new Set([conversationId, ...messagesRef.current.filter((m) => m.conversationId === conversationId).map((m) => m.id)]);
+      const open = threadRef.current;
+      if (open.conversationId === conversationId && open.rootId !== null) keys.add(open.rootId);
+      keys.forEach((key) => {
+        drafts.delete(key);
+        attachmentDrafts.discard(key);
+      });
+    },
+    [drafts, attachmentDrafts],
+  );
+  useEffect(() => dataSource.onConversationDeleted?.(discardConversationDrafts), [dataSource, discardConversationDrafts]);
   const mainLink = useMemo(() => (spaceId === undefined ? undefined : messageLinkIn(spaceId, null)), [spaceId]);
   const threadLink = useMemo(
     () => (spaceId === undefined || state.threadRootId === null ? undefined : messageLinkIn(spaceId, state.threadRootId)),
@@ -595,16 +615,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
           channelName: space.name,
           onDelete: async () => {
             const id = space.id;
-            const threadRoot = state.threadRootId;
             const res = (await dataSource.deleteChannel?.(id)) ?? ({ ok: false, status: 403 } as const);
             if (!res.ok) return res;
-            drafts.delete(id);
-            attachmentDrafts.discard(id);
-            // 그 채널의 스레드 초안·스레드 첨부도 폐기(agy).
-            if (threadRoot !== null) {
-              drafts.delete(threadRoot);
-              attachmentDrafts.discard(threadRoot);
-            }
+            // 초안 폐기는 onConversationDeleted 알림이 한다(WS 경로와 같은 helper). 알림이 없는 구현이면 여기서 직접.
+            if (dataSource.onConversationDeleted === undefined) discardConversationDrafts(id);
             // await 뒤에는 최신 선택·목록으로 판정한다 — 늦은 응답 중 다른 채널로 옮겼으면 이동하지 않는다(agy).
             if (selectedId.current === id) {
               const channels = spacesRef.current.filter((s) => s.kind === 'channel');
