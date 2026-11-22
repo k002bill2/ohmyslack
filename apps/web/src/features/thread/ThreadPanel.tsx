@@ -1,7 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { COMPOSER_COPY, THREAD_EMPTY_TEXT, THREAD_SUMMARY_COPY } from '../../ui/copy.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
-import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, withDiscardFocus, THREAD_DISCARD_FOCUS, type AttachmentDraftStore, type DraftStore, type MessageItemData, type MessageItemProps, type UploadFn } from '../conversation';
+import { Composer, ComposerNotice, MessageItem, lastServerSeq, scrolledToBottom, useFocusOnLock, usePinBottom, withDiscardFocus, THREAD_DISCARD_FOCUS, type AttachmentDraftStore, type DraftStore, type MessageItemData, type MessageItemProps, type UploadFn } from '../conversation';
 
 export type ThreadVariant = 'wide' | 'medium' | 'compact';
 
@@ -36,6 +36,8 @@ export interface ThreadPanelProps {
   readonly notice?: ReactNode;
   /** 있으면 답글 작성기 대신 이 안내를 둔다(G-52 비활성 상대 DM). 원문·답글 읽기는 그대로. */
   readonly composerNotice?: string;
+  /** 알림 탭 앵커가 이 스레드를 처리하는 동안 true — 맨 아래 이동·읽음 보고를 멈춘다(FR-SYNC-03 실제 열람). */
+  readonly holdBottom?: boolean;
 }
 
 /** 디자인 §7-3: wide 작성기에 입력이 있으면 1.5초 안에 Esc 2회로 닫는다. */
@@ -74,7 +76,7 @@ function trapTab(root: HTMLElement, shiftKey: boolean): boolean {
 }
 
 /** CMP-13 ThreadPanel — wide `aside` / medium `role="dialog"` 오버레이 / compact 화면(디자인 §7-2, UI_STATES §2-7). */
-export function ThreadPanel({ variant, root, replies, onClose, onSend, onUpload, attachmentDrafts, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice, composerNotice }: ThreadPanelProps) {
+export function ThreadPanel({ variant, root, replies, onClose, onSend, onUpload, attachmentDrafts, announce, drafts, onRetry, onDiscard, messageActions, onSeen, spaceTitle, mentionNames, mentionsSelf, notice, composerNotice, holdBottom = false }: ThreadPanelProps) {
   const timePlacement: 'inline' | 'below' = variant === 'compact' ? 'below' : 'inline';
   const locked = composerNotice !== undefined;
   const container = useRef<HTMLElement>(null);
@@ -93,9 +95,17 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, onUpload,
   const lastReply = lastServerSeq(replies);
   const reportSeen = () => {
     const el = container.current;
-    if (el !== null && lastReply !== undefined && scrolledToBottom(el)) onSeen?.(lastReply);
+    if (!holdBottom && el !== null && lastReply !== undefined && scrolledToBottom(el)) onSeen?.(lastReply);
   };
   useEffect(reportSeen);
+  // CMP-06과 같은 하단 고정(UI_STATES §2-7): 열기·스레드 전환 → 맨 아래(최근 답글), 이후 맨 아래일 때만 새 답글을 따라간다.
+  // 레이아웃 effect라 위 reportSeen(일반 effect)보다 먼저 맨 아래로 옮긴다 — 열자마자 마지막 답글이 보이면 읽음.
+  // 알림 탭으로 특정 답글에 들어온 동안(holdBottom)은 그 답글 위치가 우선 — 맨 아래 이동·읽음 보고를 하지 않는다.
+  const pinScroll = usePinBottom(container, root.id, holdBottom);
+  const onScroll = () => {
+    pinScroll();
+    reportSeen();
+  };
 
   useEffect(() => {
     // 작성기가 없으면(G-52) 닫기 버튼으로 — medium 오버레이에서 포커스가 inert 본문에 남지 않게.
@@ -163,7 +173,7 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, onUpload,
       aria-label="스레드"
       {...variantProps(variant)}
       onKeyDown={onKeyDown}
-      onScroll={reportSeen}
+      onScroll={onScroll}
     >
       {/* 시안 01·06: 「스레드」 + 「채널 · 답글 n」 보조 + 닫기(compact는 왼쪽 「뒤로」). */}
       <div className="thread-header">

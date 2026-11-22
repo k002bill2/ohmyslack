@@ -5,7 +5,7 @@ export function lastServerSeq(messages: readonly { readonly seq?: number; readon
   return max;
 }
 
-/** 맨 아래로 보는 여유(px) — CMP-06 하단 고정(`layout/pin-bottom` PIN_THRESHOLD_PX)과 같은 값. */
+/** 맨 아래로 보는 여유(px) — CMP-06 하단 고정(`conversation/pin-bottom` PIN_THRESHOLD_PX)과 같은 값. */
 const SEEN_THRESHOLD_PX = 24;
 
 /** 스크롤 상자가 맨 아래(마지막 항목이 보임)인가. */

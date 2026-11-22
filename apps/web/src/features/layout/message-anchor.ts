@@ -91,16 +91,116 @@ export interface MessageAnchorInput {
   readonly threadOpen: boolean;
 }
 
-/** 강조 타이머·안내 상태. 반환값은 보일 안내 문구(없으면 null). */
+/** 직접 스크롤 후보 입력(스크롤바 드래그 = pointerdown, agy r2 #4) — 실제 판정은 `isUserScrollInput`. */
+const USER_SCROLL = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+/** 누르기가 이 안에서 시작되면 스크롤 의도가 아니다(작성기·버튼·링크·메뉴, agy r3 #1). */
+const INTERACTIVE = '.composer, textarea, input, select, button, a, [role="button"], [role="menu"], [role="menuitem"]';
+/** 키 입력이 이 안이면 글 입력이다 — 스크롤 키(Space·방향키)도 커서·문자 입력에 쓰인다. */
+const EDITABLE = 'textarea, input, [contenteditable]:not([contenteditable="false"])';
+const SCROLL_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
+/**
+ * 이 입력이 스크롤 영역(`scope`)의 위치를 직접 바꾸려는 것인가 — 맞으면 강조·hold를 끝내고 사용자 위치를 따른다.
+ * 휠은 항상, 누르기(pointerdown·touchstart)는 영역 자체(스크롤바·빈 영역)나 상호작용 요소 밖일 때,
+ * 키는 스크롤 키이면서 편집 가능 요소 밖일 때만. 스레드 패널 안 작성기 입력은 스크롤 의도가 아니다(agy r3 #1).
+ */
+export function isUserScrollInput(event: Event, scope: HTMLElement): boolean {
+  if (event.type === 'wheel') return true;
+  const target = event.target instanceof Element ? event.target : null;
+  if (event.type === 'keydown') {
+    return SCROLL_KEYS.has((event as KeyboardEvent).key) && (target?.closest(EDITABLE) ?? null) === null;
+  }
+  if (target === scope || target === null) return true;
+  return target.closest(INTERACTIVE) === null;
+}
+
+/**
+ * sticky 작성기가 스크롤 영역 안에 있으면(스레드 패널) 그 높이만큼 scroll-padding-bottom을 둬 가운데·끝 정렬이
+ * 작성기 뒤로 가지 않게 한다(QA D-1). 작성기가 바깥에 있으면(본문 목록) 비운다. 값은 실측 높이 — 고정 px가 아니다.
+ */
+function padForComposer(scope: HTMLElement): void {
+  const composer = scope.querySelector<HTMLElement>(':scope > .composer');
+  scope.style.scrollPaddingBottom = composer === null ? '' : `${composer.offsetHeight}px`;
+}
+
+/**
+ * 강조 동안 내용·상자 크기가 바뀌면(이미지 첨부 레이아웃·배너 등, QA D-1) 대상으로 다시 맞춘다 — 부드러운 스크롤 목적지가
+ * 옛 최대 스크롤에 클램프된 채 끝나지 않게. 사용자가 직접 스크롤하면 그만두고 `onUserScroll`(강조 종료)을 부른다.
+ * 반환값은 관찰 해제.
+ */
+function watchReveal(scope: HTMLElement, again: () => void, onUserScroll: () => void): () => void {
+  let size = `${scope.scrollHeight}x${scope.clientHeight}`;
+  const ro =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => {
+          const next = `${scope.scrollHeight}x${scope.clientHeight}`;
+          if (next === size) return;
+          size = next;
+          again();
+        });
+  const stop = () => {
+    ro?.disconnect();
+    for (const type of USER_SCROLL) scope.removeEventListener(type, user);
+  };
+  const user = (event: Event) => {
+    if (!isUserScrollInput(event, scope)) return;
+    stop();
+    onUserScroll();
+  };
+  ro?.observe(scope);
+  for (const child of Array.from(scope.children)) ro?.observe(child);
+  for (const type of USER_SCROLL) scope.addEventListener(type, user, { passive: true });
+  return stop;
+}
+
+/** 강조를 건 자리 — 대화를 옮기거나 그 스레드를 닫거나 바꾸면 강조를 끝낸다. 본문 대상은 `threadRootId`가 null. */
+interface RevealPlace {
+  readonly conversationId: string;
+  readonly threadRootId: string | null;
+}
+
+interface Highlight {
+  readonly el: HTMLElement;
+  readonly scope: HTMLElement | null;
+  readonly place: RevealPlace;
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly unwatch: () => void;
+}
+
+/** 강조 하나를 끝낸다: 타이머·크기 관찰 해제, 강조 표시와 작성기 높이 여백 제거. */
+function endHighlight(h: Highlight): void {
+  clearTimeout(h.timer);
+  h.unwatch();
+  h.el.removeAttribute('data-highlighted');
+  // 작성기 높이로 둔 값은 강조 동안만 — 남기면 작성기 높이가 바뀌거나 다른 스레드에서도 옛 값이 남는다(agy r2 #5).
+  if (h.scope !== null) h.scope.style.scrollPaddingBottom = '';
+}
+
+/**
+ * 강조 타이머·안내 상태. `revealing`은 강조 중인 스레드 대상의 원문 id — 강조가 끝날 때(3초·직접 스크롤·다른 reveal·
+ * 이동) null로 바꿔 렌더를 일으킨다. 그 렌더에서 하단 고정·읽음 보고가 그때 위치로 다시 정해진다(agy r2 #2).
+ */
 function useAnchorFeedback() {
   const [notice, setNotice] = useState<AnchorNotice | null>(null);
-  const highlight = useRef<{ el: HTMLElement; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const [revealing, setRevealing] = useState<string | null>(null);
+  const highlight = useRef<Highlight | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearHighlight = () => {
     if (highlight.current === null) return;
-    clearTimeout(highlight.current.timer);
-    highlight.current.el.removeAttribute('data-highlighted');
+    endHighlight(highlight.current);
     highlight.current = null;
+    setRevealing(null);
+  };
+  /**
+   * 강조를 건 대화를 떠났거나 그 스레드가 더 이상 열려 있지 않으면 끝낸다 — 원문 삭제·채널 나가기처럼 스레드 id는 그대로인 채
+   * 패널만 내려가도(`threadOpen` false) 떨어진 요소에 강조·관찰·hold를 남기지 않는다(agy r3 #3).
+   */
+  const releaseIfMoved = (conversationId: string | null, threadRootId: string | null, threadOpen: boolean) => {
+    const place = highlight.current?.place;
+    if (place === undefined) return;
+    const threadGone = place.threadRootId !== null && (!threadOpen || place.threadRootId !== threadRootId);
+    if (place.conversationId !== conversationId || threadGone) clearHighlight();
   };
   useEffect(
     () => () => {
@@ -109,19 +209,38 @@ function useAnchorFeedback() {
     },
     [],
   );
-  const reveal = (el: HTMLElement) => {
+  const reveal = (el: HTMLElement, scope: HTMLElement | null, place: RevealPlace) => {
     clearHighlight();
-    el.scrollIntoView?.({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    const scroll = () => {
+      if (scope !== null) padForComposer(scope);
+      el.scrollIntoView?.({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    };
+    scroll();
     el.setAttribute('data-highlighted', 'true');
-    highlight.current = { el, timer: setTimeout(clearHighlight, ANCHOR_HIGHLIGHT_MS) };
+    const unwatch = scope === null ? () => undefined : watchReveal(scope, scroll, clearHighlight);
+    highlight.current = { el, scope, place, timer: setTimeout(clearHighlight, ANCHOR_HIGHLIGHT_MS), unwatch };
+    // 앵커 상태를 지우는 같은 effect·타이머 안에서 정한다 — 한 렌더라도 hold가 비면 t=0 해제가 되살아난다.
+    setRevealing(place.threadRootId);
   };
   const missing = (scope: HTMLElement | null, inThread: boolean) => {
+    // 대상 없음 → 맨 아래: 남은 강조(hold)도 즉시 끝내 고정·읽음을 정상 재개한다.
+    clearHighlight();
     if (scope !== null) scope.scrollTop = scope.scrollHeight;
     setNotice({ text: MESSAGE_ANCHOR_COPY.notFound, inThread });
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(null), ANCHOR_NOTICE_MS);
   };
-  return { notice, reveal, missing };
+  return { notice, revealing, reveal, missing, releaseIfMoved };
+}
+
+/** `useMessageAnchor` 결과: 보일 안내와, 아직 처리 중인 스레드 앵커의 원문 id(없으면 null). */
+export interface MessageAnchorState {
+  readonly notice: AnchorNotice | null;
+  /**
+   * 이 스레드 패널은 앵커 처리와 대상 강조가 끝날 때까지 맨 아래 이동·읽음 보고를 멈춘다(FR-SYNC-03 실제 열람, 교차 검토 P2,
+   * agy r2 #2). 직접 스크롤하면 강조와 함께 바로 풀린다.
+   */
+  readonly pendingThreadRoot: string | null;
 }
 
 /** 알림 탭 대상 메시지로 스크롤·강조. 못 찾으면 맨 아래 + 짧은 안내(이전 이력 불러오기 API가 없어 대체 동작). */
@@ -134,13 +253,17 @@ export function useMessageAnchor({
   historyReady,
   repliesReady,
   threadOpen,
-}: MessageAnchorInput): AnchorNotice | null {
+}: MessageAnchorInput): MessageAnchorState {
   const [anchor, setAnchor] = useState<Anchor | null>(() => readAnchor(history));
-  const { notice, reveal, missing } = useAnchorFeedback();
+  const { notice, revealing, reveal, missing, releaseIfMoved } = useAnchorFeedback();
   const waitStart = useRef<{ readonly anchor: Anchor; readonly at: number } | null>(null);
 
   // SW `client.navigate`가 같은 문서의 해시만 바꾸면 `popstate`로 온다.
   useEffect(() => history?.listen(() => setAnchor(readAnchor(history))), [history]);
+
+  // 대화 이동·스레드 닫기/전환·패널 내려감: 남은 강조·크기 관찰·hold를 끝낸다(아래 앵커 effect보다 먼저 — 새 reveal을 지우지 않게).
+  // releaseIfMoved는 매 렌더 새 함수지만 ref·setState만 쓴다.
+  useEffect(() => releaseIfMoved(conversationId, threadRootId, threadOpen), [conversationId, threadRootId, threadOpen]);
 
   useEffect(() => {
     if (anchor === null) return;
@@ -153,24 +276,33 @@ export function useMessageAnchor({
       setAnchor(null);
       stripHash(history);
     };
-    const scope = scopeOf(shell.current, anchor);
-    const target = scope?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.messageId)}"]`) ?? null;
-    if (target !== null) {
-      reveal(target);
+    const find = () => {
+      const scope = scopeOf(shell.current, anchor);
+      return { scope, target: scope?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.messageId)}"]`) ?? null };
+    };
+    const waitReplies = anchor.inThread && !repliesReady;
+    const now = find();
+    // 스레드 대상은 답글 조회가 끝난 뒤에 맞춘다 — 그 전에 맞추면 뒤이어 그려지는 답글에 밀린다(QA D-1).
+    const place: RevealPlace = { conversationId: anchor.conversationId, threadRootId: anchor.inThread ? anchor.threadRootId : null };
+    if (now.target !== null && !waitReplies) {
+      reveal(now.target, now.scope, place);
       finish();
       return;
     }
     if (waitStart.current?.anchor !== anchor) waitStart.current = { anchor, at: Date.now() };
     const timer = setTimeout(
       () => {
-        missing(scopeOf(shell.current, anchor), anchor.inThread);
+        // 조회가 끝나지 않은 채 상한에 닿아도 이미 그려진 대상이면 그것을 보인다.
+        const late = find();
+        if (late.target !== null) reveal(late.target, late.scope, place);
+        else missing(late.scope, anchor.inThread);
         finish();
       },
-      waitDelay(waitStart.current.at, anchor.inThread && !repliesReady),
+      waitDelay(waitStart.current.at, waitReplies),
     );
     return () => clearTimeout(timer);
     // reveal·missing은 매 렌더 새 함수지만 ref·setState만 쓴다 — 데이터 변화에만 다시 찾는다.
   }, [anchor, conversationId, threadRootId, messages, historyReady, repliesReady, threadOpen, history, shell]);
 
-  return notice;
+  return { notice, pendingThreadRoot: anchor?.inThread === true ? anchor.threadRootId : revealing };
 }

@@ -33,6 +33,7 @@ export {
 export { canModify, failureView, type FailureView } from './MessageItemRules.js';
 export { ThreadSummary, type ThreadSummaryProps } from './MessageItemThreadSummary.js';
 export { lastServerSeq, scrolledToBottom } from './seen.js';
+export { isAtBottom, PIN_THRESHOLD_PX, usePinBottom } from './pin-bottom.js';
 export { useMessageRoving } from './message-keys.js';
 export { MessageMenu, type MessageMenuItem, type MessageMenuProps } from './MessageMenu.js';
 export type { AttachmentDraftStore, UploadFn } from './attachments/composer-upload.js';
