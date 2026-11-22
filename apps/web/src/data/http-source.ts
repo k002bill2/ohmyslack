@@ -212,6 +212,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   let readFailures = 0;
   /** 오래된 목록 때문에 보류한 스레드 위치 — 목록 재조회 뒤 다시 평가한다(Codex r1 P2-1). */
   let deferredThreadReads: ReadonlyMap<string, { readonly conversationId: string; readonly rootId: string; readonly seq: number }> = new Map();
+  /** 화면이 마지막으로 연 스레드 원문 id(닫으면 null) — 410 재초기화 뒤 그 답글을 다시 조회한다. */
+  let openRoot: string | null = null;
   /** 생성·참여·DM 직후 호출자가 `open(id)`할 대화 — 배경 구독에서 빼 이중 구독을 막는다. */
   let opening: string | null = null;
   const isVisible = () => (deps.lifecycle?.doc.visibilityState ?? 'visible') === 'visible';
@@ -789,6 +791,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const snapshotProcedure = async (): Promise<number> => {
     // snapshot이 정본: 만료 기간의 수정·삭제가 이전 applied change_id에 막혀 무시되지 않도록 fold를 새로 쌓는다(Codex r1 P1).
     fold = emptyFold;
+    // 답글 로드 완료·보류 위치도 옛 fold 기준이다 — 비우고, 열린 스레드는 snapshot 뒤 다시 끝까지 조회한다(agy r2 #3).
+    repliesLoaded = new Set();
+    deferredThreadReads = new Map();
     let first: number | null = null;
     for (const c of await loadList()) {
       if (deleted.has(c.id)) continue;
@@ -807,7 +812,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         confirmOwn(m);
       }
     }
-    return catchUp(first ?? 0);
+    const through = await catchUp(first ?? 0);
+    if (openRoot !== null && !ended) void loadReplies(openRoot);
+    return through;
   };
 
   const loadMembers = async () => {
@@ -943,11 +950,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   function markRead(conversationId: string, rootId: string | null, seq: number, defer = true): void {
     if (ended || conversationId !== current || !isVisible()) return;
     const key = readKey(conversationId, rootId);
-    // 답글 이력 로드가 끝나기 전 위치는 보류한다 — 로드 완료 뒤 다시 평가한다(표시 안 된 중간 답글 보호).
-    if (rootId !== null && !repliesLoaded.has(rootId)) {
-      if (seq > (deferredThreadReads.get(key)?.seq ?? 0)) deferredThreadReads = new Map(deferredThreadReads).set(key, { conversationId, rootId, seq });
-      return;
-    }
+    // 답글 이력 로드가 끝나기 전 위치는 버린다(표시 안 된 중간 답글 보호, PRD §7-7). 보류했다 되살리면 그새 닫거나 위로
+    // 올렸어도 저장된다(agy r2 #3) — 로드 완료 emit 뒤 열려 있는 화면이 그때 위치로 다시 보고한다(ThreadPanel reportSeen).
+    if (rootId !== null && !repliesLoaded.has(rootId)) return;
     if (rootId !== null) {
       const c = summaries.find((x) => x.id === conversationId);
       if (c?.unread_threads.some((t) => t.root_message_id === rootId) !== true) {
@@ -1263,7 +1268,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     },
     markRead,
     openThread(rootId) {
-      if (ended || rootId === null) return;
+      if (ended) return;
+      openRoot = rootId;
+      if (rootId === null) return;
       void loadReplies(rootId);
     },
     start() {

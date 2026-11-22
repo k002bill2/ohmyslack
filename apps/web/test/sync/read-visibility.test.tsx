@@ -43,14 +43,14 @@ function manualTimers() {
 function world(opts: { unread?: number; threads?: unknown[]; gate?: (input: string) => Promise<void> | undefined } = {}) {
   const timers = manualTimers();
   const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
-  let server: FakeServer | undefined;
+  const late: { server?: FakeServer } = {};
   const gated: FetchLike = (input, init) => {
     const wait = opts.gate?.(input);
-    const go = () => server!.fetch(input, init);
+    const go = () => late.server!.fetch(input, init);
     return wait === undefined ? go() : wait.then(go);
   };
   const ctx = setup({ setTimer: timers.setTimer, clearTimer: timers.clearTimer, lifecycle: { doc, win: new EventTarget() }, fetch: gated });
-  server = ctx.server;
+  late.server = ctx.server;
   const puts: unknown[] = [];
   ctx.server.on('GET /api/conversations', () => ({
     status: 200,
@@ -211,6 +211,43 @@ describe('FR-SYNC-03 화면 판정(AppShell)', () => {
       fireEvent.click(summaryButton!);
     });
     expect(calls.some(([c, r, s]) => c === CONV && r === U(101) && s === 3)).toBe(true);
+  });
+});
+
+describe('FR-SYNC-03 답글 조회 완료 뒤 다시 보고(agy r2 #3)', () => {
+  it('답글 조회가 끝나 스냅샷이 바뀌면 열린 스레드는 그때 위치(맨 아래 = 마지막 답글)를 다시 보고한다 — 조회 전 보고를 버려도 손실 없음', async () => {
+    const base = createMemoryDataSource({
+      spaces: [{ id: CONV, kind: 'channel', name: 'general', unreadCount: 2, mentionCount: 0, unreadThreadCount: 1, unreadThreadRoots: [U(101)] }],
+      messages: [
+        { id: U(101), conversationId: CONV, author: 'B', createdAt: '2026-11-08T00:00:00Z', body: 'm1', replyCount: 1, seq: 1 },
+        { id: U(103), conversationId: CONV, rootId: U(101), author: 'B', createdAt: '2026-11-08T00:00:00Z', body: 'r1', replyCount: 0, seq: 3 },
+      ],
+      connection: 'connected',
+    });
+    let snap = { ...base.getSnapshot(), loadedReplies: [] as readonly string[] };
+    const listeners = new Set<() => void>();
+    const calls: [string, string | null, number][] = [];
+    const ds: DataSource = {
+      ...base,
+      markRead: (c, r, s) => calls.push([c, r, s]),
+      getSnapshot: () => snap,
+      subscribe: (l) => (listeners.add(l), () => listeners.delete(l)),
+    };
+    render(<AppShell dataSource={ds} />);
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('navigation', { name: '공간' })).getByRole('button', { name: /general/ }));
+    });
+    await act(async () => {
+      fireEvent.click(document.querySelector<HTMLElement>(`[data-thread-summary-for="${U(101)}"]`)!);
+    });
+    const threadReads = () => calls.filter(([c, r, s]) => c === CONV && r === U(101) && s === 3).length;
+    const before = threadReads();
+    // 조회 완료: 데이터 소스가 loadedReplies를 바꿔 emit한다.
+    await act(async () => {
+      snap = { ...snap, loadedReplies: [U(101)] };
+      listeners.forEach((l) => l());
+    });
+    expect(threadReads()).toBeGreaterThan(before);
   });
 });
 
@@ -398,8 +435,8 @@ describe('FR-SYNC-03 읽음 저장(L43b, Codex r2 P2)', () => {
   it('410 snapshot 재초기화는 답글 로드 완료·보류 위치를 비우고, 열린 스레드 답글을 다시 조회한다(agy r2 #3)', async () => {
     const ROOT = U(101);
     let release = () => {};
-    let reloading: Promise<void> | undefined;
-    const w = world({ threads: [], gate: (input) => (input.includes('/replies') ? reloading : undefined) });
+    const gate: { reloading?: Promise<void> } = {};
+    const w = world({ threads: [], gate: (input) => (input.includes('/replies') ? gate.reloading : undefined) });
     w.ds.open?.(CONV);
     expect(await w.ds.resume()).toBe(true);
     await openLoadedThread(w, ROOT);
@@ -415,10 +452,9 @@ describe('FR-SYNC-03 읽음 저장(L43b, Codex r2 P2)', () => {
         ? { status: 200, body: { changes: [], through_cursor: 0, scanned_through: 0, has_more: false, next_cursor: 0 } }
         : { status: 410 },
     );
-    reloading = new Promise<void>((r) => (release = r));
+    gate.reloading = new Promise<void>((r) => (release = r));
     expect(await w.ds.resume()).toBe(true);
     await settle();
-    expect(w.server.log.filter((l) => l.startsWith(`GET /api/messages/${ROOT}/replies`))).toHaveLength(2);
     expect(w.ds.getSnapshot().loadedReplies).not.toContain(ROOT);
     w.ds.markRead?.(CONV, ROOT, 6); // 재조회 진행 중 보고 → 버린다
     w.timers.run(READ_FLUSH_MS);
@@ -426,6 +462,8 @@ describe('FR-SYNC-03 읽음 저장(L43b, Codex r2 P2)', () => {
     expect(putCount(w.server.log)).toBe(0);
     release();
     await settle();
+    // 열린 스레드 답글을 snapshot 뒤 다시 끝까지 조회했다(게이트가 풀린 뒤 서버에 도착).
+    expect(w.server.log.filter((l) => l.startsWith(`GET /api/messages/${ROOT}/replies`))).toHaveLength(2);
     expect(w.ds.getSnapshot().loadedReplies).toContain(ROOT);
     w.timers.run(READ_FLUSH_MS);
     await settle();
