@@ -97,7 +97,10 @@ describe('FR-MSG-01 세부 사례', () => {
   it.each(XSS_PAYLOADS)('XSS 페이로드(%s)는 텍스트로만 표시되고 실행되지 않는다', (_name, payload) => {
     const root = renderBody(payload);
     assertInert(root);
-    expect(root.textContent?.replace(/\n/g, '')).toBe(payload.replace(/```/g, '').replace(/\n/g, ''));
+    // 코드 블록 「복사」 버튼 라벨은 본문 텍스트가 아니라 비교에서 뺀다(버튼은 pre 밖 래퍼에 있다).
+    const text = root.cloneNode(true) as HTMLElement;
+    text.querySelectorAll('.msg-code-copy').forEach((b) => b.remove());
+    expect(text.textContent?.replace(/\n/g, '')).toBe(payload.replace(/```/g, '').replace(/\n/g, ''));
   });
 
   it('http·https 외 스킴은 링크로 만들지 않는다', () => {
