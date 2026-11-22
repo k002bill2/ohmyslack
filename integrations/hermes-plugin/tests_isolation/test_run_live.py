@@ -109,6 +109,84 @@ def test_run_live_xtrace_env_does_not_trace_secret_assignments():
     assert SECRET_MARK not in out and SECRET_MARK not in err
     assert "LIVE_BOT_TOKEN=" not in err and "write_secret" not in err and "OHMYSLACK_BOT_TOKEN" not in err, err
     assert "venv interpreter missing" in err, err
+    # Issue #58-1 양성 대조: SHELLOPTS 가 무시되는 환경이면 위 단언은 수정 전 코드도 통과한다. xtrace 가 실제로 켜진 채
+    # 시작했다는 증거로, 래퍼 맨 앞 정리 구문(66–72행: `builtin unset -f -- …`·`builtin unset BASH_XTRACEFD`·
+    # `builtin set +x +o xtrace`)의 trace 줄(bash 3.2 기본 PS4 `+ `, env -i 라 PS4 불변)이 있어야 하고, xtrace 를
+    # 끄는 줄 뒤에는 trace 줄이 0줄이어야 한다.
+    trace = _trace_lines(err)
+    assert trace, err
+    assert any(k in trace[0] for k in XTRACE_PRELUDE), err
+    off = [i for i, line in enumerate(trace) if "set +x" in line]
+    assert off, err
+    assert trace[off[0] + 1:] == [], err
+    # 대조군: SHELLOPTS 없는 valid env 에는 trace 줄이 0줄이다.
+    assert _trace_lines(_read(f"{VALID}.err")) == []
+
+
+# 래퍼 맨 앞 정리 구문(isolated-pytest.sh 66–72행)에 실제로 있는 문자열 — 첫 trace 줄은 이 중 하나를 담는다.
+XTRACE_PRELUDE = ("builtin unset", "unset -f", "BASH_XTRACEFD", "set +x")
+
+
+def _trace_lines(err: str) -> list[str]:
+    """xtrace 줄(PS4 `+ `, 중첩이면 `++ `)만. 래퍼의 die 사유는 `isolated-pytest:` 로 시작한다."""
+    return [line for line in err.splitlines() if re.match(r"\++ ", line)]
+
+
+XTRACE_OFF = "builtin set +x +o xtrace"
+# xtrace 를 다시 켜는 구문: `set -x`·`set -xv`·`set -euxo …` 류(짧은 옵션 묶음에 x), `-o xtrace`(set·shopt -o),
+# `shopt … xtrace`, SHELLOPTS·BASH_XTRACEFD 대입.
+XTRACE_ON = (
+    re.compile(r"\bset\s+(?:[^;&|()\s]+\s+)*?-[A-Za-z]*x[A-Za-z]*(?=[\s;&|)]|$)"),
+    re.compile(r"-o\s*xtrace\b"),
+    re.compile(r"\bshopt\b[^;&|\n]*\bxtrace\b"),
+    re.compile(r"\bSHELLOPTS\+?="),
+    re.compile(r"\bBASH_XTRACEFD\+?="),
+)
+# 허용: run_live_selftest 가 `env -i` 자식 bash(가짜 P 래퍼 복사본)에 넘기는 env 배열 원소 — 이 셸의 대입이 아니다.
+XTRACE_SELFTEST_ENV = "envs+=(SHELLOPTS=xtrace)"
+
+
+def _code_lines(text: str) -> list[str]:
+    """주석 제거한 bash 줄(줄 번호 유지). `#` 는 줄 맨 앞이나 공백 뒤에서만 주석(`${#a[@]}`·`$#` 는 남김)."""
+    return [re.sub(r"(^|\s)#.*$", "", line) for line in text.splitlines()]
+
+
+def _xtrace_on_hits(lines: list[str]) -> list[str]:
+    return [line for line in lines if any(p.search(line.replace(XTRACE_SELFTEST_ENV, "")) for p in XTRACE_ON)]
+
+
+def test_wrapper_never_reenables_xtrace_before_write_secret():
+    """Issue #58-2 정적 근거: 래퍼 원문에서 xtrace 끄기 줄(`builtin set +x +o xtrace`)이 정확히 1줄이고, 그 뒤(그리고
+    그 뒤 eval 로 적재되는 scripts/_iso_fs.sh)에 xtrace 를 다시 켜는 구문이 없으며, check_live_env·write_secret 의
+    정의·호출이 모두 그 줄 뒤에 있다.
+
+    위 xtrace_env 양성 대조(xtrace 가 켜진 채 시작해 끄는 줄 뒤 trace 0줄) + 이 정적 단언이 write_secret 인자 비노출의
+    근거다. 자기시험은 EXIT 6(require_sandbox)에서 멈춰 write_secret 에 닿지 않는다 — 런타임 실측은 실제 sandbox·.venv
+    가 필요한 live 경로(`--run-live`, 사람 실행)의 몫이다."""
+    with open(WRAPPER, encoding="utf-8") as fh:
+        lines = _code_lines(fh.read())
+    off = [i for i, line in enumerate(lines) if line.strip().startswith(XTRACE_OFF)]
+    assert len(off) == 1, off
+    off_i = off[0]
+    after = lines[off_i + 1:]
+    assert _xtrace_on_hits(after) == []
+    assert sum(line.count(XTRACE_SELFTEST_ENV) for line in after) == 1  # 허용 원소가 실제로 그 한 곳뿐(대조군)
+    assert not re.search(r"\bset\s+-[A-Za-z]*x", "\n".join(lines[:off_i]))  # 끄기 전에 켜는 줄도 없음
+    with open(os.path.join(SCRIPTS, "_iso_fs.sh"), encoding="utf-8") as fh:
+        assert _xtrace_on_hits(_code_lines(fh.read())) == []
+    assert any(re.match(r"eval \"\$ISOFS_SNAP\"", line) for line in after)  # _iso_fs.sh 적재도 끄는 줄 뒤
+    for pattern in (r"^write_secret\(\) \{", r"^\s*write_secret \"", r"^check_live_env\(\) \{", r"\bcheck_live_env\s*$",
+                    r"^\s*LIVE_BOT_TOKEN="):
+        hits = [i for i, line in enumerate(lines) if re.search(pattern, line)]
+        assert hits, pattern
+        assert min(hits) > off_i, (pattern, hits, off_i)
+    # 정규식 자체의 양성 대조: 켜는 구문은 잡고, 래퍼에 실제로 있는 무해한 set 은 잡지 않는다.
+    for bad in ("set -x", "  set -xv", "set -euxo pipefail", "set -o xtrace", "shopt -s -o xtrace", "SHELLOPTS=xtrace",
+                "export BASH_XTRACEFD=3", "( set -C; set -x )"):
+        assert _xtrace_on_hits([bad]), bad
+    for ok in ("set -euo pipefail", "( set -C; printf '%s' \"$x\" > \"$ISO/snapshot-pytest.sb\" )", "set -- .",
+               "set -- \"$label\"", "builtin set +x +o xtrace", "[ \"$c\" != xtrace_env ] || envs+=(SHELLOPTS=xtrace)"):
+        assert not _xtrace_on_hits([ok]), ok
 
 
 @pytest.mark.parametrize("case", sorted(HASH_MISMATCH))
@@ -149,6 +227,9 @@ def test_live_e2e_uses_wrapper_not_direct_pytest():
     assert "-m pytest" not in text
     assert "OHMYSLACK_LIVE_OWNER_SEND" not in text
     assert len(re.findall(r'isolated-pytest\.sh" --run-live\s*$', text, re.M)) == 1
+    # Issue #58-3: 래퍼 인터프리터는 호출자 PATH 의 `bash` 가 아니라 /bin/bash(래퍼의 PATH 고정 이전 단계).
+    assert re.search(r'^\s*/bin/bash "\$PLUGIN/scripts/isolated-pytest\.sh" --run-live\s*$', text, re.M)
+    assert not re.search(r'(^|[\s;&|(])bash "\$PLUGIN/scripts/isolated-pytest\.sh"', text, re.M)
     assert not re.search(r"^\s*export\s+OHMYSLACK_", text, re.M)
 
 
