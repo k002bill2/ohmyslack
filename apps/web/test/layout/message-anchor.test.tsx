@@ -587,6 +587,8 @@ describe('스레드 앵커 hold는 대상 강조가 끝날 때까지(agy r2 #2)'
     const history = createMemoryHistory(`/c/${C1}?thread=${M1}#message-${REPLIES[3]}`);
     history.push(`/c/${C1}?thread=${M1}`);
     const view = render(<AppShell dataSource={ds} history={history} />);
+    /** 이 스레드 위치 보고만(본문 위치 보고는 별개). */
+    const threadReads = () => markRead.mock.calls.filter(([, root]) => root === M1);
     const panel = view.container.querySelector<HTMLElement>('.thread-panel')!;
     const max = panel.scrollHeight - VIEW;
     expect(panel.scrollTop).toBe(max);
@@ -596,7 +598,7 @@ describe('스레드 앵커 hold는 대상 강조가 끝날 때까지(agy r2 #2)'
     const target = item(panel, REPLIES[3]!)!;
     expect(target.getAttribute('data-highlighted')).toBe('true');
     // t=0: 아직 맨 아래(스크롤 시작 전)여도 강조 동안은 보고하지 않는다.
-    expect(markRead).not.toHaveBeenCalled();
+    expect(threadReads()).toEqual([]);
     // 부드러운 스크롤이 대상 가운데에 도착.
     act(() => {
       panel.scrollTop = centerOf(panel, target);
@@ -605,7 +607,7 @@ describe('스레드 앵커 hold는 대상 강조가 끝날 때까지(agy r2 #2)'
     act(() => vi.advanceTimersByTime(ANCHOR_HIGHLIGHT_MS));
     expect(target.hasAttribute('data-highlighted')).toBe(false);
     expect(panel.scrollTop).toBe(centerOf(panel, target));
-    expect(markRead).not.toHaveBeenCalled();
+    expect(threadReads()).toEqual([]);
   });
 
   it('(b) 강조 중 내용이 늘어난 뒤 강조가 끝나도 맨 아래로 끌려가지 않는다(스크롤 이벤트 없이 위치만 남은 경우)', () => {

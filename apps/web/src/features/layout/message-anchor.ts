@@ -91,8 +91,8 @@ export interface MessageAnchorInput {
   readonly threadOpen: boolean;
 }
 
-/** 직접 스크롤로 보는 입력 — 이 뒤에는 대상 위치를 다시 맞추지 않는다(사용자 위치 우선). */
-const USER_SCROLL = ['wheel', 'touchstart', 'keydown'] as const;
+/** 직접 스크롤로 보는 입력(스크롤바 드래그 = pointerdown, agy r2 #4) — 이 뒤에는 대상 위치를 다시 맞추지 않는다(사용자 위치 우선). */
+const USER_SCROLL = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
 
 /**
  * sticky 작성기가 스크롤 영역 안에 있으면(스레드 패널) 그 높이만큼 scroll-padding-bottom을 둬 가운데·끝 정렬이
@@ -105,38 +105,77 @@ function padForComposer(scope: HTMLElement): void {
 
 /**
  * 강조 동안 내용·상자 크기가 바뀌면(이미지 첨부 레이아웃·배너 등, QA D-1) 대상으로 다시 맞춘다 — 부드러운 스크롤 목적지가
- * 옛 최대 스크롤에 클램프된 채 끝나지 않게. 사용자가 직접 스크롤하면 그만둔다. 반환값은 관찰 해제.
+ * 옛 최대 스크롤에 클램프된 채 끝나지 않게. 사용자가 직접 스크롤하면 그만두고 `onUserScroll`(강조 종료)을 부른다.
+ * 반환값은 관찰 해제.
  */
-function watchReveal(scope: HTMLElement, again: () => void): () => void {
-  if (typeof ResizeObserver === 'undefined') return () => undefined;
+function watchReveal(scope: HTMLElement, again: () => void, onUserScroll: () => void): () => void {
   let size = `${scope.scrollHeight}x${scope.clientHeight}`;
-  const ro = new ResizeObserver(() => {
-    const next = `${scope.scrollHeight}x${scope.clientHeight}`;
-    if (next === size) return;
-    size = next;
-    again();
-  });
+  const ro =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => {
+          const next = `${scope.scrollHeight}x${scope.clientHeight}`;
+          if (next === size) return;
+          size = next;
+          again();
+        });
   const stop = () => {
-    ro.disconnect();
-    for (const type of USER_SCROLL) scope.removeEventListener(type, stop);
+    ro?.disconnect();
+    for (const type of USER_SCROLL) scope.removeEventListener(type, user);
   };
-  ro.observe(scope);
-  for (const child of Array.from(scope.children)) ro.observe(child);
-  for (const type of USER_SCROLL) scope.addEventListener(type, stop, { passive: true });
+  const user = () => {
+    stop();
+    onUserScroll();
+  };
+  ro?.observe(scope);
+  for (const child of Array.from(scope.children)) ro?.observe(child);
+  for (const type of USER_SCROLL) scope.addEventListener(type, user, { passive: true });
   return stop;
 }
 
-/** 강조 타이머·안내 상태. 반환값은 보일 안내 문구(없으면 null). */
+/** 강조를 건 자리 — 대화를 옮기거나 그 스레드를 닫거나 바꾸면 강조를 끝낸다. 본문 대상은 `threadRootId`가 null. */
+interface RevealPlace {
+  readonly conversationId: string;
+  readonly threadRootId: string | null;
+}
+
+interface Highlight {
+  readonly el: HTMLElement;
+  readonly scope: HTMLElement | null;
+  readonly place: RevealPlace;
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly unwatch: () => void;
+}
+
+/** 강조 하나를 끝낸다: 타이머·크기 관찰 해제, 강조 표시와 작성기 높이 여백 제거. */
+function endHighlight(h: Highlight): void {
+  clearTimeout(h.timer);
+  h.unwatch();
+  h.el.removeAttribute('data-highlighted');
+  // 작성기 높이로 둔 값은 강조 동안만 — 남기면 작성기 높이가 바뀌거나 다른 스레드에서도 옛 값이 남는다(agy r2 #5).
+  if (h.scope !== null) h.scope.style.scrollPaddingBottom = '';
+}
+
+/**
+ * 강조 타이머·안내 상태. `revealing`은 강조 중인 스레드 대상의 원문 id — 강조가 끝날 때(3초·직접 스크롤·다른 reveal·
+ * 이동) null로 바꿔 렌더를 일으킨다. 그 렌더에서 하단 고정·읽음 보고가 그때 위치로 다시 정해진다(agy r2 #2).
+ */
 function useAnchorFeedback() {
   const [notice, setNotice] = useState<AnchorNotice | null>(null);
-  const highlight = useRef<{ el: HTMLElement; timer: ReturnType<typeof setTimeout>; unwatch: () => void } | null>(null);
+  const [revealing, setRevealing] = useState<string | null>(null);
+  const highlight = useRef<Highlight | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearHighlight = () => {
     if (highlight.current === null) return;
-    clearTimeout(highlight.current.timer);
-    highlight.current.unwatch();
-    highlight.current.el.removeAttribute('data-highlighted');
+    endHighlight(highlight.current);
     highlight.current = null;
+    setRevealing(null);
+  };
+  /** 강조를 건 대화를 떠났거나 그 스레드가 더 이상 열려 있지 않으면 끝낸다. */
+  const releaseIfMoved = (conversationId: string | null, threadRootId: string | null) => {
+    const place = highlight.current?.place;
+    if (place === undefined) return;
+    if (place.conversationId !== conversationId || (place.threadRootId !== null && place.threadRootId !== threadRootId)) clearHighlight();
   };
   useEffect(
     () => () => {
@@ -145,7 +184,7 @@ function useAnchorFeedback() {
     },
     [],
   );
-  const reveal = (el: HTMLElement, scope: HTMLElement | null) => {
+  const reveal = (el: HTMLElement, scope: HTMLElement | null, place: RevealPlace) => {
     clearHighlight();
     const scroll = () => {
       if (scope !== null) padForComposer(scope);
@@ -153,21 +192,29 @@ function useAnchorFeedback() {
     };
     scroll();
     el.setAttribute('data-highlighted', 'true');
-    highlight.current = { el, timer: setTimeout(clearHighlight, ANCHOR_HIGHLIGHT_MS), unwatch: scope === null ? () => undefined : watchReveal(scope, scroll) };
+    const unwatch = scope === null ? () => undefined : watchReveal(scope, scroll, clearHighlight);
+    highlight.current = { el, scope, place, timer: setTimeout(clearHighlight, ANCHOR_HIGHLIGHT_MS), unwatch };
+    // 앵커 상태를 지우는 같은 effect·타이머 안에서 정한다 — 한 렌더라도 hold가 비면 t=0 해제가 되살아난다.
+    setRevealing(place.threadRootId);
   };
   const missing = (scope: HTMLElement | null, inThread: boolean) => {
+    // 대상 없음 → 맨 아래: 남은 강조(hold)도 즉시 끝내 고정·읽음을 정상 재개한다.
+    clearHighlight();
     if (scope !== null) scope.scrollTop = scope.scrollHeight;
     setNotice({ text: MESSAGE_ANCHOR_COPY.notFound, inThread });
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(null), ANCHOR_NOTICE_MS);
   };
-  return { notice, reveal, missing };
+  return { notice, revealing, reveal, missing, releaseIfMoved };
 }
 
 /** `useMessageAnchor` 결과: 보일 안내와, 아직 처리 중인 스레드 앵커의 원문 id(없으면 null). */
 export interface MessageAnchorState {
   readonly notice: AnchorNotice | null;
-  /** 이 스레드 패널은 앵커 처리가 끝날 때까지 맨 아래 이동·읽음 보고를 멈춘다(FR-SYNC-03 실제 열람, 교차 검토 P2). */
+  /**
+   * 이 스레드 패널은 앵커 처리와 대상 강조가 끝날 때까지 맨 아래 이동·읽음 보고를 멈춘다(FR-SYNC-03 실제 열람, 교차 검토 P2,
+   * agy r2 #2). 직접 스크롤하면 강조와 함께 바로 풀린다.
+   */
   readonly pendingThreadRoot: string | null;
 }
 
@@ -183,11 +230,15 @@ export function useMessageAnchor({
   threadOpen,
 }: MessageAnchorInput): MessageAnchorState {
   const [anchor, setAnchor] = useState<Anchor | null>(() => readAnchor(history));
-  const { notice, reveal, missing } = useAnchorFeedback();
+  const { notice, revealing, reveal, missing, releaseIfMoved } = useAnchorFeedback();
   const waitStart = useRef<{ readonly anchor: Anchor; readonly at: number } | null>(null);
 
   // SW `client.navigate`가 같은 문서의 해시만 바꾸면 `popstate`로 온다.
   useEffect(() => history?.listen(() => setAnchor(readAnchor(history))), [history]);
+
+  // 대화 이동·스레드 닫기/전환: 남은 강조·크기 관찰·hold를 끝낸다(아래 앵커 effect보다 먼저 — 새 reveal을 지우지 않게).
+  // releaseIfMoved는 매 렌더 새 함수지만 ref·setState만 쓴다.
+  useEffect(() => releaseIfMoved(conversationId, threadRootId), [conversationId, threadRootId]);
 
   useEffect(() => {
     if (anchor === null) return;
@@ -207,8 +258,9 @@ export function useMessageAnchor({
     const waitReplies = anchor.inThread && !repliesReady;
     const now = find();
     // 스레드 대상은 답글 조회가 끝난 뒤에 맞춘다 — 그 전에 맞추면 뒤이어 그려지는 답글에 밀린다(QA D-1).
+    const place: RevealPlace = { conversationId: anchor.conversationId, threadRootId: anchor.inThread ? anchor.threadRootId : null };
     if (now.target !== null && !waitReplies) {
-      reveal(now.target, now.scope);
+      reveal(now.target, now.scope, place);
       finish();
       return;
     }
@@ -217,7 +269,7 @@ export function useMessageAnchor({
       () => {
         // 조회가 끝나지 않은 채 상한에 닿아도 이미 그려진 대상이면 그것을 보인다.
         const late = find();
-        if (late.target !== null) reveal(late.target, late.scope);
+        if (late.target !== null) reveal(late.target, late.scope, place);
         else missing(late.scope, anchor.inThread);
         finish();
       },
@@ -227,5 +279,5 @@ export function useMessageAnchor({
     // reveal·missing은 매 렌더 새 함수지만 ref·setState만 쓴다 — 데이터 변화에만 다시 찾는다.
   }, [anchor, conversationId, threadRootId, messages, historyReady, repliesReady, threadOpen, history, shell]);
 
-  return { notice, pendingThreadRoot: anchor?.inThread === true ? anchor.threadRootId : null };
+  return { notice, pendingThreadRoot: anchor?.inThread === true ? anchor.threadRootId : revealing };
 }
