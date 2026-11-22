@@ -179,7 +179,7 @@ describe('버튼 이벤트가 메시지 항목 동작을 일으키지 않는다'
 
   it('sheet(compact): 버튼 길게 누르기·클릭이 액션 시트를 열지 않는다', async () => {
     vi.useFakeTimers();
-    const { button } = renderItem('sheet');
+    const { li, button } = renderItem('sheet');
     fireEvent.pointerDown(button, { button: 0, isPrimary: true, clientX: 5, clientY: 5 });
     act(() => vi.advanceTimersByTime(2000));
     fireEvent.pointerUp(button);
@@ -187,5 +187,9 @@ describe('버튼 이벤트가 메시지 항목 동작을 일으키지 않는다'
     await flush();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(writeText).toHaveBeenCalledTimes(1);
+    // 대조군: 같은 누르기를 본문(.msg-body)에 하면 시트가 열린다 — 위 부정 단언이 거저 통과하지 않음을 보인다.
+    fireEvent.pointerDown(li.querySelector('.msg-body') as HTMLElement, { button: 0, isPrimary: true, clientX: 5, clientY: 5 });
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.getByRole('dialog')).not.toBeNull();
   });
 });
