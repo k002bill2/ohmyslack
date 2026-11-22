@@ -39,7 +39,7 @@ afterEach(() => {
 const msg = (id: string, seq: number): MessageItemData & { seq: number } => ({ id, seq, author: '홍길동', createdAt: T0, body: `본문 ${id}` });
 const replies = (n: number, prefix = 'r') => Array.from({ length: n }, (_, i) => msg(`${prefix}${i}`, i + 2));
 
-function panel(variant: ThreadVariant, root: MessageItemData, rs: readonly MessageItemData[], onSeen?: (seq: number) => void) {
+function panel(variant: ThreadVariant, root: MessageItemData, rs: readonly MessageItemData[], onSeen?: (seq: number) => void, holdBottom = false) {
   return (
     <ThreadPanel
       variant={variant}
@@ -48,6 +48,7 @@ function panel(variant: ThreadVariant, root: MessageItemData, rs: readonly Messa
       onClose={() => {}}
       onSend={() => {}}
       announce={() => {}}
+      holdBottom={holdBottom}
       {...(onSeen === undefined ? {} : { onSeen })}
     />
   );
@@ -73,6 +74,17 @@ describe('스레드 열기 → 최근 답글(맨 아래)', () => {
     expect(scroller().scrollTop).toBe(0);
     view.rerender(panel('wide', msg('m2', 50), replies(12, 'q')));
     expect(scroller().scrollTop).toBe(1300 - VIEW);
+  });
+
+  it('앵커 대기(holdBottom) 중 다른 스레드로 바꾸면(같은 렌더에서 hold 해제) 새 스레드는 맨 아래·마지막 seq 읽음 — agy r2 #1', () => {
+    const seen = vi.fn();
+    const view = render(panel('wide', msg('m1', 1), replies(10), seen, true));
+    // 앵커 처리 중: 맨 위 그대로, 읽음 보고 없음.
+    expect(scroller().scrollTop).toBe(0);
+    expect(seen).not.toHaveBeenCalled();
+    view.rerender(panel('wide', msg('m2', 50), replies(12, 'q'), seen, false));
+    expect(scroller().scrollTop).toBe(1300 - VIEW);
+    expect(seen).toHaveBeenCalledWith(13);
   });
 
   it('맨 아래면 새 답글을 따라가고, 위로 올려 읽는 중이면 위치를 유지한다', () => {
@@ -167,6 +179,32 @@ describe('스레드 내용 높이가 늦게 늘면(이미지 첨부) 맨 아래�
     extra = 320;
     resized(repliesList());
     expect(scroller().scrollTop).toBe(100);
+  });
+
+  it('직계 자식이 그대로인 재렌더는 자식 목록을 복사·비교하지 않는다(개수·첫·끝 자식 빠른 경로) — agy r2 #6', () => {
+    const root = msg('m1', 1);
+    const view = render(panel('wide', root, replies(10)));
+    const el = scroller();
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, 'children')!;
+    let reads = 0;
+    Object.defineProperty(el, 'children', {
+      configurable: true,
+      get(this: Element) {
+        reads += 1;
+        return desc.get!.call(this);
+      },
+    });
+    try {
+      view.rerender(panel('wide', root, replies(10), () => {}));
+      expect(reads).toBe(0);
+      // 대조: 직계 자식 집합이 바뀌면(작성기 → 안내 등) 그때만 다시 본다 — 새 자식도 관찰한다.
+      el.appendChild(document.createElement('div'));
+      view.rerender(panel('wide', root, replies(10)));
+      expect(reads).toBeGreaterThan(0);
+      expect(observers.some((o) => o.targets.has(el.lastElementChild!))).toBe(true);
+    } finally {
+      delete (el as unknown as Record<string, unknown>).children;
+    }
   });
 
   it('답글 0건으로 열렸다가 답글 목록이 생기면 새 목록을 관찰한다', () => {
