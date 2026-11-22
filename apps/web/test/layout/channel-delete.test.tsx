@@ -27,7 +27,7 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await act(flush);
 };
 
-function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'network'; onlyGeneral?: boolean; gate?: Promise<void>; three?: boolean; wsFirst?: boolean; snapshot404?: boolean; online?: { value: boolean } } = {}) {
+function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'network'; onlyGeneral?: boolean; gate?: Promise<void>; three?: boolean; wsFirst?: boolean; snapshot404?: boolean; online?: { value: boolean }; joinOk?: boolean } = {}) {
   window.history.replaceState(null, '', '/');
   const server = new FakeServer();
   const state = { deleted: false, left: false, gone: new Set<string>() };
@@ -77,13 +77,18 @@ function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'net
   }
   server.on('PUT /api/read-state', () => ({ status: 204 }));
   if (opts.snapshot404 === true) {
-    server.on('GET /api/sync/snapshot', (url) =>
-      url.searchParams.get('conversation_id') === CONV
-        ? { status: 404, body: { error: { code: 'not_found', message: 'x' } } }
-        : { status: 200, body: { snapshot_cursor: 0, conversation_id: CONV2, messages: [], has_more: false, next_before_seq: null } },
-    );
+    // 목록 직후 CONV 접근을 잃는다(삭제 또는 다른 기기에서 나감) — 이후 목록에서도 빠진다.
+    server.on('GET /api/sync/snapshot', (url) => {
+      if (url.searchParams.get('conversation_id') !== CONV) return { status: 200, body: { snapshot_cursor: 0, conversation_id: CONV2, messages: [], has_more: false, next_before_seq: null } };
+      state.left = true;
+      return { status: 404, body: { error: { code: 'not_found', message: 'x' } } };
+    });
   }
-  server.on(`POST /api/conversations/${CONV}/join`, () => ({ status: 404, body: { error: { code: 'not_found', message: 'x' } } }));
+  server.on(`POST /api/conversations/${CONV}/join`, () => {
+    if (opts.joinOk !== true) return { status: 404, body: { error: { code: 'not_found', message: 'x' } } };
+    state.left = false;
+    return { status: 200, body: { id: CONV } };
+  });
   server.on(`POST /api/conversations/${CONV}/messages`, () => ({ status: 404, body: { error: { code: 'not_found', message: 'x' } } }));
   const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
   const win = new EventTarget();
@@ -436,7 +441,7 @@ describe('FR-CONV-06 재연결·오프라인 정합 (fix3)', () => {
     expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
   });
 
-  it('재연결 구독 not_found(오프라인 중 삭제) → 삭제 알림·읽음 대기열 정리', async () => {
+  it('재연결 구독 not_found(오프라인 중 삭제 — 미확정) → 읽음 대기열 정리, 초안 폐기 알림 없음(fix4)', async () => {
     installViewport(1280);
     setCoarsePointer(false);
     const { server, state, timers, ref } = world();
@@ -455,7 +460,7 @@ describe('FR-CONV-06 재연결·오프라인 정합 (fix3)', () => {
       server.socket.push({ type: 'error', code: 'not_found', retryable: false, conversation_id: CONV });
     });
     await settle();
-    expect(seen).toEqual([CONV]);
+    expect(seen).toEqual([]);
     const at = server.log.length;
     await act(async () => {
       timers.splice(0).forEach((fn) => fn());
@@ -618,5 +623,65 @@ describe('FR-CONV-06 초안 폐기 (fix2)', () => {
     expect(drafts.get('m1')).toBe('');
     expect(drafts.get('m2')).toBe('');
     expect(drafts.get('c2')).toBe('dev 초안');
+  });
+});
+
+describe('FR-CONV-06 미확정 접근 상실은 초안·큐를 남긴다 (fix4, Aside r3)', () => {
+  it('다른 기기에서 나간 현재 채널: 재연결 not_found → 초안 알림·오프라인 큐 유지, 재참여 성공 → 목록·열기 복귀', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const online = { value: false };
+    const { server, state, ref } = world({ online, joinOk: true });
+    await settle();
+    await openSpace('general');
+    const seen: string[] = [];
+    ref.source?.onConversationDeleted?.((id) => seen.push(id));
+    act(() => {
+      ref.source?.send({ conversationId: CONV }, '오프라인 메시지');
+    });
+    await settle();
+    const queued = () => ref.source?.getSnapshot().messages.some((m) => m.conversationId === CONV && m.pending !== undefined) ?? false;
+    expect(queued()).toBe(true);
+    server.autoAck = false;
+    state.left = true;
+    await act(async () => {
+      server.socket.serverClose(1008);
+    });
+    await settle();
+    await act(async () => {
+      server.socket.push({ type: 'error', code: 'not_found', retryable: false, conversation_id: CONV });
+    });
+    await settle();
+    expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
+    expect(seen).toEqual([]);
+    expect(queued()).toBe(true);
+    server.autoAck = true;
+    let res: ActionResult<unknown> | undefined;
+    await act(async () => {
+      res = await ref.source?.joinChannel?.(CONV);
+    });
+    await settle();
+    expect(res?.ok).toBe(true);
+    expect(within(nav()).getByRole('button', { name: 'general' })).toBeTruthy();
+    act(() => ref.source?.open(CONV));
+    await settle();
+    expect(ref.source?.getSnapshot().spaces.some((sp) => sp.id === CONV)).toBe(true);
+    expect(queued()).toBe(true);
+  });
+
+  it('snapshot 404(삭제 아님) → connected 복귀, 목록 재등장 시 그 채널이 다시 보인다', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const { server, state, ref } = world({ snapshot404: true });
+    await settle();
+    expect(ref.source?.getSnapshot().connection).toBe('connected');
+    expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
+    // 다른 기기에서 다시 참여해 서버 목록에 돌아온다 — read.updated가 목록 재조회를 일으킨다.
+    state.left = false;
+    await act(async () => {
+      server.socket.push({ type: 'read.updated', conversation_id: CONV2, root_id: null, last_read_seq: 1 });
+    });
+    await settle();
+    expect(within(nav()).getByRole('button', { name: 'general' })).toBeTruthy();
   });
 });

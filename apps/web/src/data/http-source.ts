@@ -513,20 +513,29 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     });
 
   /**
-   * 채널 삭제(FR-CONV-06, 본인 동작 성공·`conversation.deleted` 프레임 공용): 목록·나간 채널·배경 구독·확인 대기에서 뺀다.
-   * 현재 대화였으면 구독 ACK 대기를 끝내고 current를 비운다 — 화면은 목록에 없는 대화(MissingConversation)로 바뀐다.
+   * 채널 삭제 확정(FR-CONV-06 — WS `conversation.deleted`·본인 `deleteChannel` 204·`joinChannel` 404만):
+   * `deleted` 등록 + 접근 정리(`releaseConversation`) + 초안 폐기 알림·오프라인 전송 큐 폐기·접힌 본문 정리.
+   * 현재 대화였으면 화면은 목록에 없는 대화(MissingConversation)로 바뀐다.
    */
   const forgetConversation = (conversationId: string) => {
     deleted = new Set(deleted).add(conversationId);
-    purgeConversation(conversationId);
+    if (leftChannels.has(conversationId)) leftChannels = new Map([...leftChannels].filter(([id]) => id !== conversationId));
+    releaseConversation(conversationId);
+    deletedListeners.forEach((l) => l(conversationId));
+    // 오프라인 큐의 메시지가 online 복귀 때 삭제된 대화로 POST되지 않게 버리고, 접힌 본문도 지운다(agy r2).
+    sendController.discardConversation(conversationId);
+    if ([...fold.messages.values()].some((m) => m.conversationId === conversationId)) {
+      fold = { applied: fold.applied, messages: new Map([...fold.messages].filter(([, m]) => m.conversationId !== conversationId)) };
+    }
+    emit();
   };
 
   /**
-   * 대화 정리 공용 helper — `forgetConversation`(삭제 확정)과 재연결 정합의 not_found(release·join 404)가 함께 탄다.
-   * 나간 채널·배경 구독·ACK 대기·읽음 대기열·보류 스레드 읽음·전송 대기·접힌 메시지를 비우고 초안 폐기를 알린다.
+   * 접근 상실·미확정(재연결 구독 not_found·snapshot 404 — 삭제와 다른 기기 나가기를 구분할 수 없다, Aside r3):
+   * 구독·배경 구독·ACK·current·읽음 대기열·보류 스레드 읽음을 비우고 목록에서 내린다.
+   * 초안·오프라인 전송 큐·`deleted`는 건드리지 않는다 — 다시 참여해 목록에 돌아오면 그대로 이어진다.
    */
-  const purgeConversation = (conversationId: string) => {
-    if (leftChannels.has(conversationId)) leftChannels = new Map([...leftChannels].filter(([id]) => id !== conversationId));
+  const releaseConversation = (conversationId: string) => {
     if (background.has(conversationId)) {
       background = new Set([...background].filter((b) => b !== conversationId));
       if (realtime.isOpen()) realtime.send({ type: 'conversation.unsubscribe', conversation_id: conversationId });
@@ -538,7 +547,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       acks.delete(conversationId);
       current = null;
     }
-    summaries = listed(summaries);
+    summaries = listed(summaries).filter((c) => c.id !== conversationId);
     if ([...readQueue.values()].some((r) => r.conversationId === conversationId)) {
       readQueue = new Map([...readQueue].filter(([, r]) => r.conversationId !== conversationId));
     }
@@ -546,12 +555,6 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       deferredThreadReads = new Map([...deferredThreadReads].filter(([, r]) => r.conversationId !== conversationId));
     }
     spaces = spaces.filter((sp) => sp.id !== conversationId);
-    deletedListeners.forEach((l) => l(conversationId));
-    // 오프라인 큐의 메시지가 online 복귀 때 삭제된 대화로 POST되지 않게 버리고, 접힌 본문도 지운다(agy r2).
-    sendController.discardConversation(conversationId);
-    if ([...fold.messages.values()].some((m) => m.conversationId === conversationId)) {
-      fold = { applied: fold.applied, messages: new Map([...fold.messages].filter(([, m]) => m.conversationId !== conversationId)) };
-    }
     emit();
   };
 
@@ -761,9 +764,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const release = async (conversationId: string) => {
     if (current === conversationId) current = null;
     const list = await loadList();
-    // 확정 신호(not_found) + 다시 읽은 목록에도 없음 → 오프라인 중 삭제·접근 상실: 초안·읽음 대기열 등을 정리한다(agy r2).
-    // `deleted`에는 넣지 않는다 — 다른 기기에서 다시 참여하면 목록이 되살린다.
-    if (!ended && !list.some((c) => c.id === conversationId) && !leftChannels.has(conversationId)) purgeConversation(conversationId);
+    // not_found + 다시 읽은 목록에도 없음 → 오프라인 중 삭제 또는 다른 기기에서 나감(구분 불가): 접근 정리만 한다(Aside r3).
+    // 초안·전송 큐·`deleted`는 남긴다 — 다시 참여하면 목록이 되살린다.
+    if (!ended && !list.some((c) => c.id === conversationId) && !leftChannels.has(conversationId)) releaseConversation(conversationId);
     if (!ended) emit();
   };
 
@@ -793,9 +796,9 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       try {
         snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
       } catch (e) {
-        // 목록 뒤 순회 중 삭제된 대화(404)는 그 대화만 정리하고 계속한다 — 복귀 절차가 「최신 상태 확인 중」에 멈추지 않게(agy r2).
+        // 목록 뒤 순회 중 접근을 잃은 대화(404 — 삭제 또는 다른 기기에서 나감)는 접근 정리만 하고 계속한다(agy r2, Aside r3).
         if (!(e instanceof HttpStatusError) || e.status !== 404) throw e;
-        forgetConversation(c.id);
+        releaseConversation(c.id);
         continue;
       }
       first ??= snap.snapshot_cursor;
@@ -1095,13 +1098,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         try {
           ref = await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`);
         } catch (e) {
-          // 나가 있는 동안 삭제된 채널(404): 「다시 참여」가 남지 않게 정리하고 실패를 돌려준다(agy r2).
+          // 나가 있는 동안 삭제된 채널(404 — 서버 join 404는 없는 ID·삭제·DM뿐): 확정 삭제로 정리하고 실패를 돌려준다(agy r2).
           if (e instanceof HttpStatusError && e.status === 404) forgetConversation(conversationId);
           throw e;
         }
         const next = new Map(leftChannels);
         next.delete(conversationId);
         leftChannels = next;
+        // 재참여 성공 = 살아 있는 채널: 삭제 기억이 남아 있어도 목록·열기를 막지 않게 지운다(방어, Aside r3).
+        if (deleted.has(conversationId)) deleted = new Set([...deleted].filter((d) => d !== conversationId));
         return refreshThen(ref.id);
       }),
     leaveChannel: (conversationId) =>
