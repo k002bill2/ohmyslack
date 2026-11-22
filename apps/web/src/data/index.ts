@@ -248,6 +248,8 @@ export function createMemoryDataSource(seed: Snapshot): MemoryDataSource {
 export interface MembershipApi {
   /** `DELETE /api/conversations/:id/membership`(204). 성공하면 목록에 「나간 채널」로 남긴다. */
   leaveChannel?(conversationId: string): Promise<ActionResult<null>>;
+  /** FR-CONV-06 owner 채널 삭제(`DELETE /api/conversations/{id}`). 성공하면 목록·배경 구독에서 바로 뺀다. */
+  deleteChannel?(conversationId: string): Promise<ActionResult<null>>;
   /** `GET /api/conversations/:id/members`. */
   listConversationMembers?(
     conversationId: string,

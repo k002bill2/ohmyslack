@@ -128,6 +128,7 @@ export const DIALOG_TITLES = {
   startDm: 'DM 시작',
   createInvite: '초대 링크 만들기',
   leaveChannel: '채널 나가기',
+  deleteChannel: '채널 삭제',
   deactivateMember: '멤버 비활성화',
   deleteMessage: '메시지 삭제',
   shortcuts: '키보드 단축키',
@@ -140,6 +141,13 @@ export const LEAVE_CHANNEL_COPY = {
   title: DIALOG_TITLES.leaveChannel,
   body: '나가면 이 채널의 새 메시지를 받지 않습니다. 다시 참여하면 이력을 볼 수 있습니다.',
   confirm: '나가기',
+} as const;
+
+/** 채널 삭제 확인 Dialog(FR-CONV-06, COPY_GAPS G-23b): owner 전용, 나가기 Dialog와 같은 CMP-18 패턴. */
+export const DELETE_CHANNEL_COPY = {
+  title: DIALOG_TITLES.deleteChannel,
+  body: (name: string) => `#${name} 채널을 삭제하면 모든 멤버가 이 채널과 메시지를 더 이상 볼 수 없습니다. 앱에서 되돌릴 수 없습니다.`,
+  confirm: '삭제',
 } as const;
 
 export const DELETE_MESSAGE_COPY = {
@@ -269,6 +277,7 @@ export const HEADER_MENU_COPY = {
   /** G-74: Jarvis DM 헤더 더보기 → 알림 설정 Dialog(본문 위 안내 배너 대체). */
   notifications: '알림 설정…',
   leave: '채널 나가기…',
+  deleteChannel: '채널 삭제…',
 } as const;
 
 /**

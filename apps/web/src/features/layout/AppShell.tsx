@@ -21,7 +21,7 @@ import { useMessageAnchor } from './message-anchor.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
-import { HeaderMenu } from './HeaderMenu.js';
+import { HeaderMenu, type HeaderDelete } from './HeaderMenu.js';
 import { MissingConversation } from './MissingConversation.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 import { useFocusAfterLeave } from './focus-after-leave.js';
@@ -165,6 +165,8 @@ function ConversationPane(props: {
   readonly onShortcuts?: () => void;
   /** Jarvis DM 헤더 더보기 「알림 설정…」(G-74, 모든 구간). */
   readonly onNotifications?: () => void;
+  /** FR-CONV-06 owner 채널 삭제(헤더 더보기 「채널 삭제…」). */
+  readonly deletion?: HeaderDelete;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
@@ -220,6 +222,7 @@ function ConversationPane(props: {
           {...(props.onNotifications === undefined ? {} : { onNotifications: props.onNotifications })}
           {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
           {...(onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave } : {})}
+          {...(props.deletion === undefined ? {} : { deletion: props.deletion })}
           bots={botMenu.items}
         />
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
@@ -336,6 +339,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const routed = useRef(false);
   const [announcement, setAnnouncement] = useState('');
   const shell = useRef<HTMLDivElement>(null);
+  const focusAfterDelete = useRef(false);
   const prevThread = useRef<string | null>(null);
   const focusComposer = useRef(false);
   /** 같은 공간을 다시 골라도(전환기) 작성기 포커스 효과가 돌게 하는 카운터(F4). */
@@ -440,6 +444,18 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     focusComposer.current = false;
     if (prefersNoAutoKeyboard()) shell.current?.querySelector<HTMLElement>('.conversation-title')?.focus({ preventScroll: true });
     else shell.current?.querySelector<HTMLElement>('[data-composer="main"] textarea')?.focus();
+  }, [state.conversationId, focusTick]);
+
+  // 채널 삭제 성공 뒤(FR-CONV-06): 다음 대화의 제목(비텍스트) → 없으면 사이드바 선택 항목·사이드바. 작성기는 터치 여부와 무관하게 건너뛴다.
+  useEffect(() => {
+    if (!focusAfterDelete.current) return;
+    focusAfterDelete.current = false;
+    const root = shell.current;
+    const target =
+      root?.querySelector<HTMLElement>('.conversation-title') ??
+      root?.querySelector<HTMLElement>('nav [aria-current="page"]') ??
+      root?.querySelector<HTMLElement>('nav a, nav button');
+    target?.focus({ preventScroll: true });
   }, [state.conversationId, focusTick]);
 
   useGlobalShortcuts(bp !== 'compact', {
@@ -567,6 +583,29 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
             ? {}
             : { mentions: { candidates: mentionCandidates, ...(snap.account === undefined ? {} : { selfId: snap.account.id }) } }),
         };
+  // FR-CONV-06: owner·채널(나간 채널 포함)만 「채널 삭제…」. 성공 → 초안 폐기 → 사이드바 다음 채널(없으면 이전, 없으면 빈 상태).
+  const deletion: HeaderDelete | undefined =
+    space === undefined || space.kind !== 'channel' || snap.account?.role !== 'owner' || dataSource.deleteChannel === undefined
+      ? undefined
+      : {
+          channelName: space.name,
+          onDelete: async () => {
+            const id = space.id;
+            const channels = snap.spaces.filter((s) => s.kind === 'channel');
+            const at = channels.findIndex((s) => s.id === id);
+            const next = channels[at + 1] ?? (at > 0 ? channels[at - 1] : undefined);
+            const res = (await dataSource.deleteChannel?.(id)) ?? ({ ok: false, status: 403 } as const);
+            if (!res.ok) return res;
+            drafts.delete(id);
+            attachmentDrafts.discard(id);
+            focusAfterDelete.current = true;
+            bumpFocus();
+            if (state.conversationId === id) {
+              dispatch(next === undefined ? { type: 'route', conversationId: null } : { type: 'select-space', conversationId: next.id });
+            }
+            return res;
+          },
+        };
   const sidebar = (
     <Sidebar
       spaces={snap.spaces}
@@ -664,6 +703,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(space.bot === true && pushEnv !== null && dataSource.push ? { onNotifications: () => setOverlay('notifications') } : {})}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
+      {...(deletion === undefined ? {} : { deletion })}
     />
   );
   // QA §4-2: 목록이 확정됐는데(로딩·catch-up 아님) 주소의 대화가 없으면 빈 화면 대신 안내(나간 채널 새로고침·삭제·오타).

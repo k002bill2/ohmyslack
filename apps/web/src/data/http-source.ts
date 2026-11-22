@@ -180,8 +180,11 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     if ([...leftChannels.keys()].some((id) => ids.has(id))) {
       leftChannels = new Map([...leftChannels].filter(([id]) => !ids.has(id)));
     }
-    return [...list, ...leftChannels.values()];
+    const all = [...list, ...leftChannels.values()];
+    return deleted.size === 0 ? all : all.filter((sp) => !deleted.has(sp.id));
   };
+  /** 이번 세션에 삭제된 채널(FR-CONV-06). 삭제 전에 시작된 목록 응답이 늦게 와도 되살리지 않는다. */
+  let deleted: ReadonlySet<string> = new Set();
   let detach = () => undefined as void;
   const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const clearTimer = deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
@@ -504,8 +507,30 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       }
     });
 
+  /**
+   * 채널 삭제(FR-CONV-06, 본인 동작 성공·`conversation.deleted` 프레임 공용): 목록·나간 채널·배경 구독·확인 대기에서 뺀다.
+   * 현재 대화였으면 구독 ACK 대기를 끝내고 current를 비운다 — 화면은 목록에 없는 대화(MissingConversation)로 바뀐다.
+   */
+  const forgetConversation = (conversationId: string) => {
+    deleted = new Set(deleted).add(conversationId);
+    if (leftChannels.has(conversationId)) leftChannels = new Map([...leftChannels].filter(([id]) => id !== conversationId));
+    if (background.has(conversationId)) background = new Set([...background].filter((b) => b !== conversationId));
+    if (unlisted.has(conversationId)) unlisted = new Map([...unlisted].filter(([id]) => id !== conversationId));
+    if (current === conversationId) {
+      acks.get(conversationId)?.reject(new Error('deleted'));
+      acks.delete(conversationId);
+      current = null;
+    }
+    spaces = spaces.filter((sp) => sp.id !== conversationId);
+    emit();
+  };
+
   const onFrame = (frame: WsServerFrame) => {
     if (ended) return;
+    if (frame.type === 'conversation.deleted') {
+      forgetConversation(frame.conversation_id);
+      return;
+    }
     if (onBackgroundFrame(frame)) return;
     switch (frame.type) {
       case 'conversation.subscribed':
@@ -1044,6 +1069,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         spaces = withLeft(spaces.filter((sp) => sp.id !== conversationId));
         emit();
         await refreshThen(conversationId, false);
+        return null;
+      }),
+    deleteChannel: (conversationId) =>
+      attempt(async () => {
+        await api.del<undefined>(`/api/conversations/${encodeURIComponent(conversationId)}`);
+        if (current === conversationId) realtime.send({ type: 'conversation.unsubscribe', conversation_id: conversationId });
+        forgetConversation(conversationId);
         return null;
       }),
     listConversationMembers: (conversationId) =>
