@@ -191,7 +191,8 @@ async function rootIsValid(client: pg.PoolClient, conversationId: string, rootId
 }
 
 async function sendIn(client: pg.PoolClient, msg: NewMessage): Promise<TxOutcome<SendResult>> {
-  const locked = await client.query('SELECT id FROM conversations WHERE id = $1 FOR UPDATE', [msg.conversationId]);
+  // 삭제된 채널(FR-CONV-06)은 없는 대화와 같다: 가드 통과 뒤 삭제가 먼저 commit돼도 잠금 재확인에서 거부한다.
+  const locked = await client.query('SELECT id FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [msg.conversationId]);
   if ((locked.rowCount ?? 0) === 0) return { commit: false, value: { kind: 'not_member' } };
   const existing = await client.query<{ id: string }>(
     'SELECT id FROM messages WHERE conversation_id = $1 AND author_id = $2 AND client_message_id = $3',

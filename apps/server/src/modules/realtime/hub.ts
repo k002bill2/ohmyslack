@@ -282,6 +282,16 @@ export function createHub(deps: HubDeps): Hub {
       membershipFrame(conversationId, userId, 'left');
     }),
     deps.conversationEvents.onMembershipStarted((conversationId, userId) => membershipFrame(conversationId, userId, 'joined')),
+    deps.conversationEvents.onConversationDeleted((conversationId, memberIds) => {
+      const members = new Set(memberIds);
+      for (const conn of conns) {
+        if (!members.has(conn.userId)) continue;
+        endSubscription(conn, conversationId);
+        // 봇 허브는 membership.changed left(아래), 사람 허브는 conversation.deleted(FR-CONV-06).
+        if (deps.botScope === undefined) enqueue(conn, async () => send(conn, { type: 'conversation.deleted', conversation_id: conversationId }));
+      }
+      for (const userId of members) membershipFrame(conversationId, userId, 'left');
+    }),
   ];
 
   /**

@@ -47,6 +47,8 @@ export const wsServerFrameSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('sync.required') }),
   /** 봇 연결 전용: 그 봇의 대화 멤버십 변화(BOT_CHANNEL_SPEC §4-3). 사람 연결에는 보내지 않는다. */
   z.object({ type: z.literal('membership.changed'), conversation_id: z.uuid(), state: z.enum(['joined', 'left']) }),
+  /** 사람 연결 전용: owner가 채널을 삭제했다(FR-CONV-06). 그 채널 멤버였던 사용자의 모든 연결에 보낸다. */
+  z.object({ type: z.literal('conversation.deleted'), conversation_id: z.uuid() }),
   z.object({ type: z.literal('error'), code: wsErrorCodeSchema, retryable: z.boolean(), conversation_id: z.uuid().optional() }),
 ]);
 

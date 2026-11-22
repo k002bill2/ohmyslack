@@ -78,6 +78,7 @@ async function setup() {
     openDm: unused,
     addBot: unused,
     removeBot: unused,
+    deleteChannel: unused,
   };
   const messagesStore: MessagesStore = {
     locate: unused,

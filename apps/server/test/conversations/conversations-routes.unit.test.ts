@@ -73,6 +73,9 @@ function memoryConversations(auth: MemoryAuthStore): Fixture {
       async removeBot() {
         return false;
       },
+      async deleteChannel() {
+        return undefined;
+      },
     },
   };
   return fx;
