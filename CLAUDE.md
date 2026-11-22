@@ -58,4 +58,5 @@ pnpm 모노레포 3패키지:
 - 서버는 `127.0.0.1`에만 바인드(`bind.ts`가 그 외 거부). Tailscale Funnel 금지. Redis·브로커·마이크로서비스 도입 금지.
 - `.env` 값(운영 `DATABASE_URL`)을 읽거나 출력·기록하지 않는다. 운영 DB에서 테스트·마이그레이션 실험 금지. 운영 계정 작업은 사람이 `docs/runbooks/`대로 직접 한다.
 - 브라우저 확인은 ego-browser로만. Playwright·Puppeteer 설치 금지.
+- 브라우저 지원 기준은 Baseline Widely available(루트 `.mwgrc`, Vite 기본 target과 동일). 그보다 새 기능은 경량 폴백을 쓰고 폴리필 패키지·새 의존성은 추가하지 않는다. Origin Trial·단일 엔진 기능 금지. 웹 UI 작업은 `modern-web-guidance` 스킬(`mwg search/retrieve`)을 참고하되 이 문서가 우선한다.
 - 수동 QA(`qa/manual/QA-*.md`)는 실제 실행 없이 PASS 표시 금지.
