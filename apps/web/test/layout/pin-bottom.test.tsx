@@ -15,7 +15,9 @@ const descriptors = ['scrollHeight', 'clientHeight', 'scrollTop'].map(
 );
 // W-11d: 목록에 CMP-10 날짜 구분선(li)이 들어가므로 높이·개수는 메시지 항목(.msg-item)만 센다.
 const items = (el: Element) => el.querySelectorAll(':scope > .msg-item');
-const height = (el: Element) => (el.classList.contains('message-list') ? items(el).length * ITEM : 0);
+/** 늦게 레이아웃되는 내용(이미지 첨부 등)이 더한 높이(px) — fix3 테스트만 바꾼다. */
+let extra = 0;
+const height = (el: Element) => (el.classList.contains('message-list') ? items(el).length * ITEM + extra : 0);
 
 beforeEach(() => {
   Object.defineProperty(Element.prototype, 'scrollHeight', { configurable: true, get(this: Element) { return height(this); } });
@@ -29,6 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   VIEW = 300;
+  extra = 0;
   vi.unstubAllGlobals();
   for (const [k, d] of descriptors) {
     if (d === undefined) delete (Element.prototype as unknown as Record<string, unknown>)[k];
@@ -100,5 +103,59 @@ describe('CMP-06 하단 고정(UI_STATES §2-4)', () => {
     VIEW = 150;
     act(() => callbacks.forEach((cb) => cb()));
     expect(list.scrollTop).toBe(100);
+  });
+});
+
+/** fix3(fix2 REPORT R-1): 목록 끝 이미지 메시지가 늦게 레이아웃되면 목록 상자 크기는 그대로다 — 직계 자식(li)도 관찰한다. */
+describe('본문 목록 내용 높이가 늦게 늘면(이미지 첨부) 맨 아래일 때만 따라간다', () => {
+  const observers: { cb: () => void; targets: Set<Element> }[] = [];
+  beforeEach(() => {
+    observers.length = 0;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        readonly targets = new Set<Element>();
+        constructor(readonly cb: () => void) {
+          observers.push(this);
+        }
+        observe(el: Element) { this.targets.add(el); }
+        unobserve(el: Element) { this.targets.delete(el); }
+        disconnect() { this.targets.clear(); }
+      },
+    );
+  });
+  const resized = (el: Element) => {
+    for (const o of [...observers]) if (o.targets.has(el)) o.cb();
+  };
+  const last = (list: HTMLElement) => {
+    const el = list.querySelector(':scope > .msg-item:last-of-type');
+    if (el === null) throw new Error('마지막 메시지 없음');
+    return el;
+  };
+
+  it('맨 아래로 진입한 뒤 마지막 메시지가 320px 늘면 다시 맨 아래', async () => {
+    const { list } = await openGeneral();
+    expect(list.scrollTop).toBe(1000 - VIEW);
+    extra = 320;
+    resized(last(list));
+    expect(list.scrollTop).toBe(1000 + 320 - VIEW);
+  });
+
+  it('대조: 위로 올려 읽는 중이면 마지막 메시지가 늘어도 위치를 유지한다', async () => {
+    const { list } = await openGeneral();
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
+    extra = 320;
+    resized(last(list));
+    expect(list.scrollTop).toBe(100);
+  });
+
+  it('새 메시지가 추가되면 그 항목도 관찰한다', async () => {
+    const { ds, list } = await openGeneral();
+    act(() => ds.send({ conversationId: 'c1' }, '새 메시지'));
+    expect(list.scrollTop).toBe(1100 - VIEW);
+    extra = 320;
+    resized(last(list));
+    expect(list.scrollTop).toBe(1100 + 320 - VIEW);
   });
 });

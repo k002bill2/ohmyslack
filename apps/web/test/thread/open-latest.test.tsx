@@ -13,7 +13,9 @@ const descriptors = ['scrollHeight', 'clientHeight', 'scrollTop'].map(
   (k) => [k, Object.getOwnPropertyDescriptor(Element.prototype, k)] as const,
 );
 const isPanel = (el: Element) => el.classList.contains('thread-panel');
-const height = (el: Element) => (isPanel(el) ? el.querySelectorAll('.msg-item').length * ITEM : 0);
+/** 늦게 레이아웃되는 내용(이미지 첨부 등)이 더한 높이(px) — fix3 테스트만 바꾼다. */
+let extra = 0;
+const height = (el: Element) => (isPanel(el) ? el.querySelectorAll('.msg-item').length * ITEM + extra : 0);
 
 beforeEach(() => {
   Object.defineProperty(Element.prototype, 'scrollHeight', { configurable: true, get(this: Element) { return height(this); } });
@@ -26,6 +28,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  extra = 0;
+  vi.unstubAllGlobals();
   for (const [k, d] of descriptors) {
     if (d === undefined) delete (Element.prototype as unknown as Record<string, unknown>)[k];
     else Object.defineProperty(Element.prototype, k, d);
@@ -114,5 +118,64 @@ describe('스레드 열기 → 최근 답글(맨 아래)', () => {
     const seen = vi.fn();
     render(panel('wide', msg('m2', 1), replies(10), seen));
     expect(seen).toHaveBeenCalledWith(11);
+  });
+});
+
+/**
+ * fix3(fix2 REPORT R-1): 맨 아래로 연 뒤 끝 근처 이미지 첨부가 늦게 레이아웃되면(+320px) 스크롤 상자 크기는 그대로라
+ * 상자만 관찰하던 ResizeObserver가 안 불려 맨 아래에서 밀려났다. 상자의 직계 자식(답글 목록)도 관찰해야 한다.
+ */
+describe('스레드 내용 높이가 늦게 늘면(이미지 첨부) 맨 아래일 때만 따라간다', () => {
+  const observers: { cb: () => void; targets: Set<Element> }[] = [];
+  beforeEach(() => {
+    observers.length = 0;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        readonly targets = new Set<Element>();
+        constructor(readonly cb: () => void) {
+          observers.push(this);
+        }
+        observe(el: Element) { this.targets.add(el); }
+        unobserve(el: Element) { this.targets.delete(el); }
+        disconnect() { this.targets.clear(); }
+      },
+    );
+  });
+  /** 실제 ResizeObserver처럼 크기가 바뀐 요소를 관찰 중인 관찰자에만 알린다. */
+  const resized = (el: Element) => {
+    for (const o of [...observers]) if (o.targets.has(el)) o.cb();
+  };
+  const repliesList = () => {
+    const el = scroller().querySelector(':scope > .thread-replies');
+    if (el === null) throw new Error('답글 목록 없음');
+    return el;
+  };
+
+  it('맨 아래로 열린 뒤 답글 목록이 320px 늘면 다시 맨 아래', () => {
+    render(panel('wide', msg('m1', 1), replies(10)));
+    expect(scroller().scrollTop).toBe(1100 - VIEW);
+    extra = 320;
+    resized(repliesList());
+    expect(scroller().scrollTop).toBe(1100 + 320 - VIEW);
+  });
+
+  it('대조: 위로 올려 읽는 중이면 답글 목록이 늘어도 위치를 유지한다', () => {
+    render(panel('wide', msg('m1', 1), replies(10)));
+    scroller().scrollTop = 100;
+    fireEvent.scroll(scroller());
+    extra = 320;
+    resized(repliesList());
+    expect(scroller().scrollTop).toBe(100);
+  });
+
+  it('답글 0건으로 열렸다가 답글 목록이 생기면 새 목록을 관찰한다', () => {
+    const root = msg('m1', 1);
+    const view = render(panel('wide', root, []));
+    view.rerender(panel('wide', root, replies(10)));
+    expect(scroller().scrollTop).toBe(1100 - VIEW);
+    extra = 320;
+    resized(repliesList());
+    expect(scroller().scrollTop).toBe(1100 + 320 - VIEW);
   });
 });
