@@ -23,6 +23,9 @@ from conftest import BOT_ID, CHANNEL_ID, DM_ID, TOKEN
 
 MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" * 64
 LONG_TEXT = "가" * 9000  # 어댑터 내부 청크 3개(4000 code point 단위)
+# 대소문자 정규화 검증용 대화 id(소문자 표준형 `…000000abcdef`). conftest `DM_ID`(UUID int=100 → `…000000000064`)는
+# 숫자뿐이라 `.upper()`가 원문과 같아 대문자 대상 테스트에 쓸 수 없다.
+LETTER_ID = str(uuid.UUID(int=0xABCDEF))
 
 
 @pytest.fixture(autouse=True)
@@ -84,7 +87,8 @@ def _handle_send(target: str, message: str) -> dict:
 def test_parser_accepts_conversation_uuid_as_canonical_lowercase():
     from ohmyslack import parse_send_target
     assert parse_send_target(DM_ID) == (DM_ID, None)
-    assert parse_send_target(DM_ID.upper()) == (DM_ID, None)  # `/me` 정확 일치 판정 때문에 소문자 표준형
+    assert LETTER_ID.upper() != LETTER_ID  # hex 문자가 있어 대문자 입력이 실제로 다르다
+    assert parse_send_target(LETTER_ID.upper()) == (LETTER_ID, None)  # `/me` 정확 일치 판정 때문에 소문자 표준형
     assert parse_send_target(f"  {DM_ID}\t") == (DM_ID, None)
 
 
@@ -121,7 +125,7 @@ def test_platform_kwargs_leave_strict_parser_and_validator_unset():
 def test_tool_target_resolves_conversation_uuid():
     from gateway.outbound.send import _resolve_tool_target
     assert _resolve_tool_target(f"ohmyslack:{DM_ID}") == ("ohmyslack", DM_ID, None, None)
-    assert _resolve_tool_target(f"ohmyslack:{DM_ID.upper()}") == ("ohmyslack", DM_ID, None, None)
+    assert _resolve_tool_target(f"ohmyslack:{LETTER_ID.upper()}") == ("ohmyslack", LETTER_ID, None, None)
 
 
 @pytest.mark.parametrize("ref", [f"{DM_ID}:{DM_ID}", "general"])
@@ -163,12 +167,13 @@ def test_handle_send_explicit_dm_target_without_home_channel(thread_server, tmp_
 def test_handle_send_uppercase_target_posts_to_canonical_dm(thread_server, monkeypatch):
     _bot_env(monkeypatch, thread_server.base)
     _no_gateway_runner(monkeypatch)
+    thread_server.conversations = [{"id": LETTER_ID, "kind": "dm"}]  # sender는 `/me` kind로만 판정(adapter.py:1189-1192)
     calls = _spy(monkeypatch)
-    out = _handle_send(f"ohmyslack:{DM_ID.upper()}", "아침 브리핑")
+    out = _handle_send(f"ohmyslack:{LETTER_ID.upper()}", "아침 브리핑")
     assert out.get("success") is True, out
-    assert len(calls) == 1 and calls[0][0] == DM_ID
+    assert len(calls) == 1 and calls[0][0] == LETTER_ID
     posts = _ok_posts(thread_server)
-    assert len(posts) == 1 and posts[0]["conversation_id"] == DM_ID  # 게시 경로의 대화 id = 소문자 표준형
+    assert len(posts) == 1 and posts[0]["conversation_id"] == LETTER_ID  # 게시 경로의 대화 id = 소문자 표준형
 
 
 # 6 채널 대상(받는 쪽 규칙은 기존 그대로: DM 또는 OHMYSLACK_POST_CHANNELS) ------------------------------------
@@ -202,17 +207,16 @@ async def test_live_adapter_uppercase_target_posts_to_canonical_dm(server, make_
     """라이브 어댑터 경로(QA P3-3 b, test_standalone_entrypoint.py #9 패턴). 어댑터 `_kinds`는 `/me` id와 정확 일치
     (adapter.py:721-736)이므로 대문자 대상은 파서의 소문자 표준형이 있어야 게시된다.
 
-    conftest `DM_ID`(UUID int=100 → `…000000000064`)는 숫자뿐이라 `.upper()`가 원문과 같다 — 대문자 경로를 실제로 타도록
-    hex 문자가 든 지역 DM id를 `/me`에 둔다."""
+    conftest `DM_ID`는 숫자뿐이라 `.upper()`가 원문과 같다 — 대문자 경로를 실제로 타도록 hex 문자가 든 모듈 상수
+    `LETTER_ID`를 `/me`에 둔다."""
     import gateway.outbound.send as smt
     import gateway.outbound.senders as senders
     from gateway.config import Platform, PlatformConfig
     from gateway.outbound.send import _resolve_tool_target
-    letter_dm = str(uuid.UUID(int=0xABCDEF))  # 소문자 표준형 `…000000abcdef`
-    assert letter_dm.upper() != letter_dm
-    server.conversations = [{"id": letter_dm, "kind": "dm"}]
-    platform_name, chat_id, thread_id, error = _resolve_tool_target(f"ohmyslack:{letter_dm.upper()}")
-    assert (platform_name, chat_id, thread_id, error) == ("ohmyslack", letter_dm, None, None)
+    assert LETTER_ID.upper() != LETTER_ID
+    server.conversations = [{"id": LETTER_ID, "kind": "dm"}]
+    platform_name, chat_id, thread_id, error = _resolve_tool_target(f"ohmyslack:{LETTER_ID.upper()}")
+    assert (platform_name, chat_id, thread_id, error) == ("ohmyslack", LETTER_ID, None, None)
     adapter = make_adapter()
     assert await adapter.connect()
     for mod in (smt, senders):  # autouse `_outside_gateway`의 (None, None)을 이 테스트 안에서 덮어쓴다
@@ -221,9 +225,9 @@ async def test_live_adapter_uppercase_target_posts_to_canonical_dm(server, make_
     out = await smt._send_to_platform(Platform("ohmyslack"), cfg, chat_id, "아침 브리핑")
     assert out.get("success") is True, out
     posts = _ok_posts(server)
-    assert len(posts) == 1 and posts[0]["conversation_id"] == letter_dm
+    assert len(posts) == 1 and posts[0]["conversation_id"] == LETTER_ID
     # 대조: 정규화 없이 대문자 원문을 그대로 넘기면 어댑터가 「모르는 대화」로 거부한다(probe49e.txt:55-59 → `error`).
-    raw = await smt._send_to_platform(Platform("ohmyslack"), cfg, letter_dm.upper(), "아침 브리핑")
+    raw = await smt._send_to_platform(Platform("ohmyslack"), cfg, LETTER_ID.upper(), "아침 브리핑")
     assert raw.get("success") is not True and raw.get("error"), raw
     assert len(_ok_posts(server)) == 1  # 대조 호출은 게시 0
 
