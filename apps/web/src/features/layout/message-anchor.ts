@@ -91,8 +91,28 @@ export interface MessageAnchorInput {
   readonly threadOpen: boolean;
 }
 
-/** 직접 스크롤로 보는 입력(스크롤바 드래그 = pointerdown, agy r2 #4) — 이 뒤에는 대상 위치를 다시 맞추지 않는다(사용자 위치 우선). */
+/** 직접 스크롤 후보 입력(스크롤바 드래그 = pointerdown, agy r2 #4) — 실제 판정은 `isUserScrollInput`. */
 const USER_SCROLL = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+/** 누르기가 이 안에서 시작되면 스크롤 의도가 아니다(작성기·버튼·링크·메뉴, agy r3 #1). */
+const INTERACTIVE = '.composer, textarea, input, select, button, a, [role="button"], [role="menu"], [role="menuitem"]';
+/** 키 입력이 이 안이면 글 입력이다 — 스크롤 키(Space·방향키)도 커서·문자 입력에 쓰인다. */
+const EDITABLE = 'textarea, input, [contenteditable]:not([contenteditable="false"])';
+const SCROLL_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
+/**
+ * 이 입력이 스크롤 영역(`scope`)의 위치를 직접 바꾸려는 것인가 — 맞으면 강조·hold를 끝내고 사용자 위치를 따른다.
+ * 휠은 항상, 누르기(pointerdown·touchstart)는 영역 자체(스크롤바·빈 영역)나 상호작용 요소 밖일 때,
+ * 키는 스크롤 키이면서 편집 가능 요소 밖일 때만. 스레드 패널 안 작성기 입력은 스크롤 의도가 아니다(agy r3 #1).
+ */
+export function isUserScrollInput(event: Event, scope: HTMLElement): boolean {
+  if (event.type === 'wheel') return true;
+  const target = event.target instanceof Element ? event.target : null;
+  if (event.type === 'keydown') {
+    return SCROLL_KEYS.has((event as KeyboardEvent).key) && (target?.closest(EDITABLE) ?? null) === null;
+  }
+  if (target === scope || target === null) return true;
+  return target.closest(INTERACTIVE) === null;
+}
 
 /**
  * sticky 작성기가 스크롤 영역 안에 있으면(스레드 패널) 그 높이만큼 scroll-padding-bottom을 둬 가운데·끝 정렬이
@@ -123,7 +143,8 @@ function watchReveal(scope: HTMLElement, again: () => void, onUserScroll: () => 
     ro?.disconnect();
     for (const type of USER_SCROLL) scope.removeEventListener(type, user);
   };
-  const user = () => {
+  const user = (event: Event) => {
+    if (!isUserScrollInput(event, scope)) return;
     stop();
     onUserScroll();
   };
@@ -171,11 +192,15 @@ function useAnchorFeedback() {
     highlight.current = null;
     setRevealing(null);
   };
-  /** 강조를 건 대화를 떠났거나 그 스레드가 더 이상 열려 있지 않으면 끝낸다. */
-  const releaseIfMoved = (conversationId: string | null, threadRootId: string | null) => {
+  /**
+   * 강조를 건 대화를 떠났거나 그 스레드가 더 이상 열려 있지 않으면 끝낸다 — 원문 삭제·채널 나가기처럼 스레드 id는 그대로인 채
+   * 패널만 내려가도(`threadOpen` false) 떨어진 요소에 강조·관찰·hold를 남기지 않는다(agy r3 #3).
+   */
+  const releaseIfMoved = (conversationId: string | null, threadRootId: string | null, threadOpen: boolean) => {
     const place = highlight.current?.place;
     if (place === undefined) return;
-    if (place.conversationId !== conversationId || (place.threadRootId !== null && place.threadRootId !== threadRootId)) clearHighlight();
+    const threadGone = place.threadRootId !== null && (!threadOpen || place.threadRootId !== threadRootId);
+    if (place.conversationId !== conversationId || threadGone) clearHighlight();
   };
   useEffect(
     () => () => {
@@ -236,9 +261,9 @@ export function useMessageAnchor({
   // SW `client.navigate`가 같은 문서의 해시만 바꾸면 `popstate`로 온다.
   useEffect(() => history?.listen(() => setAnchor(readAnchor(history))), [history]);
 
-  // 대화 이동·스레드 닫기/전환: 남은 강조·크기 관찰·hold를 끝낸다(아래 앵커 effect보다 먼저 — 새 reveal을 지우지 않게).
+  // 대화 이동·스레드 닫기/전환·패널 내려감: 남은 강조·크기 관찰·hold를 끝낸다(아래 앵커 effect보다 먼저 — 새 reveal을 지우지 않게).
   // releaseIfMoved는 매 렌더 새 함수지만 ref·setState만 쓴다.
-  useEffect(() => releaseIfMoved(conversationId, threadRootId), [conversationId, threadRootId]);
+  useEffect(() => releaseIfMoved(conversationId, threadRootId, threadOpen), [conversationId, threadRootId, threadOpen]);
 
   useEffect(() => {
     if (anchor === null) return;
