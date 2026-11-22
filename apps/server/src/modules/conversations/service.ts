@@ -87,17 +87,20 @@ export function createConversationsService(deps: ConversationsServiceDeps): Conv
     },
     async addBot(conversationId, botUserId) {
       const result = await store.addBot(conversationId, botUserId, now());
-      if (result === 'invalid_target') throw notFound();
+      if (result === 'invalid_target' || result === 'deleted') throw notFound();
       if (result === 'added') events.membershipStarted(conversationId, botUserId);
       return result === 'added';
     },
     async deleteChannel(userId, conversationId) {
       const members = await store.deleteChannel(conversationId, userId, now());
       if (members === undefined) throw notFound();
-      events.conversationDeleted(conversationId, members.map((m) => m.userId));
+      // owner가 이미 나간 채널이어도 owner의 다른 연결이 conversation.deleted를 받게 한다(중복 제거).
+      events.conversationDeleted(conversationId, [...new Set([...members.map((m) => m.userId), userId])]);
     },
     async removeBot(conversationId, botUserId) {
-      if (await store.removeBot(conversationId, botUserId, now())) events.membershipEnded(conversationId, botUserId);
+      const result = await store.removeBot(conversationId, botUserId, now());
+      if (result === 'deleted') throw notFound();
+      if (result === 'ended') events.membershipEnded(conversationId, botUserId);
     },
     async createChannel(creatorId, rawName) {
       const { name, nameNorm } = normalizeChannelName(rawName);
@@ -114,12 +117,14 @@ export function createConversationsService(deps: ConversationsServiceDeps): Conv
       return { id: result.id };
     },
     async join(userId, conversationId) {
-      await store.join(conversationId, userId, now());
+      if ((await store.join(conversationId, userId, now())) === 'deleted') throw notFound();
     },
     async leave(userId, conversationId, access) {
       // DM 나가기는 TRD §3에 없다(공개 채널 참여·나가기만): 입력 오류로 거부한다.
       if (access.kind !== 'channel') throw new HttpError(400, 'invalid_request');
-      if (await store.leave(conversationId, userId, now())) events.membershipEnded(conversationId, userId);
+      const result = await store.leave(conversationId, userId, now());
+      if (result === 'deleted') throw notFound();
+      if (result === 'ended') events.membershipEnded(conversationId, userId);
     },
   };
 }

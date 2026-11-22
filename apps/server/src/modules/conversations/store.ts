@@ -12,7 +12,11 @@ export interface AccessRow {
 }
 
 /** 봇 채널 추가 결과: 새로 추가·이미 활성 멤버·대상 오류(활성 `kind='bot'`·같은 워크스페이스가 아님). */
-export type AddBotResult = 'added' | 'exists' | 'invalid_target';
+export type AddBotResult = 'added' | 'exists' | 'invalid_target' | 'deleted';
+/** 참여 결과: deleted = 삭제됐거나 없는 대화(가드 통과 후 삭제 커밋 경쟁 포함). */
+export type JoinResult = 'added' | 'exists' | 'deleted';
+/** 멤버십 종료 결과: ended = 바뀐 행 있음, none = 활성 멤버십 없음, deleted = 삭제됐거나 없는 대화. */
+export type MembershipEndResult = 'ended' | 'none' | 'deleted';
 
 export interface NewChannel {
   readonly id: string;
@@ -84,19 +88,20 @@ export interface ConversationsStore {
   addBot(conversationId: string, botUserId: string, at: Date): Promise<AddBotResult>;
   /**
    * 공개 채널 소프트 삭제(FR-CONV-06): `deleted_at`·`deleted_by` 기록 + 그 시점 활성 멤버 반환(한 트랜잭션).
-   * 없는 ID·DM·이미 삭제된 채널이면 undefined(변경 0). 메시지·첨부·멤버 행은 바꾸지 않는다.
+   * 같은 트랜잭션에서 활성 멤버십 전원(사람·봇)에 left_at=삭제 시각을 기록한다(fix1 구조 수정).
+   * 없는 ID·DM·이미 삭제된 채널이면 undefined(변경 0). 메시지·첨부 행은 바꾸지 않는다.
    */
   deleteChannel(conversationId: string, deletedBy: string, at: Date): Promise<readonly DeletedMember[] | undefined>;
-  /** 활성 **봇** 멤버십에만 left_at을 기록한다(사람 대상은 바뀌지 않음). 바뀐 행이 없으면 false. */
-  removeBot(conversationId: string, botUserId: string, at: Date): Promise<boolean>;
+  /** 활성 **봇** 멤버십에만 left_at을 기록한다(사람 대상은 바뀌지 않음). 대화 행을 FOR SHARE로 잠가 삭제와 직렬화한다. */
+  removeBot(conversationId: string, botUserId: string, at: Date): Promise<MembershipEndResult>;
   /** 채널 생성 + 생성자 멤버십·read state(한 트랜잭션). 같은 workspace의 같은 name_norm은 name_taken. */
   createChannel(channel: NewChannel): Promise<CreateChannelResult>;
   /** 요청자에게 활성 멤버십이 없는 같은 workspace 공개 채널(id 오름차순 cursor). */
   discover(userId: string, after: string | undefined, limit: number): Promise<readonly ChannelListing[]>;
   /** 참여·재참여: joined_seq=last_seq, read cursor 초기화. 이미 활성 멤버면 바꾸지 않는다. */
-  join(conversationId: string, userId: string, at: Date): Promise<void>;
-  /** 활성 멤버십에 left_at을 기록한다. 바뀐 행이 없으면 false. */
-  leave(conversationId: string, userId: string, at: Date): Promise<boolean>;
+  join(conversationId: string, userId: string, at: Date): Promise<JoinResult>;
+  /** 활성 멤버십에 left_at을 기록한다. 대화 행을 FOR SHARE로 잠가 삭제와 직렬화한다. */
+  leave(conversationId: string, userId: string, at: Date): Promise<MembershipEndResult>;
   listMembers(conversationId: string): Promise<readonly MemberRow[]>;
   /** 활성 멤버십 대화(id 오름차순 cursor, 최대 limit행). */
   listForUser(userId: string, after: string | undefined, limit: number): Promise<readonly ConversationRow[]>;

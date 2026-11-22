@@ -253,6 +253,9 @@ async function lockOwn(client: pg.PoolClient, id: string, actorId: string): Prom
   );
   const row = res.rows[0];
   if (row === undefined || row.deleted_at !== null) return 'not_found';
+  // 삭제(UPDATE conversations)와 충돌하는 FOR SHARE: 가드 통과 후 삭제 커밋 경쟁이면 0행 → not_found(FR-CONV-06).
+  const live = await client.query('SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [row.conversation_id]);
+  if ((live.rowCount ?? 0) === 0) return 'not_found';
   if (!(await isActiveMember(client, row.conversation_id, actorId))) return 'not_found';
   if (row.author_id !== actorId) return 'forbidden';
   return { conversationId: row.conversation_id, threadRootId: row.thread_root_id };
