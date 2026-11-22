@@ -91,14 +91,50 @@ export interface MessageAnchorInput {
   readonly threadOpen: boolean;
 }
 
+/** 직접 스크롤로 보는 입력 — 이 뒤에는 대상 위치를 다시 맞추지 않는다(사용자 위치 우선). */
+const USER_SCROLL = ['wheel', 'touchstart', 'keydown'] as const;
+
+/**
+ * sticky 작성기가 스크롤 영역 안에 있으면(스레드 패널) 그 높이만큼 scroll-padding-bottom을 둬 가운데·끝 정렬이
+ * 작성기 뒤로 가지 않게 한다(QA D-1). 작성기가 바깥에 있으면(본문 목록) 비운다. 값은 실측 높이 — 고정 px가 아니다.
+ */
+function padForComposer(scope: HTMLElement): void {
+  const composer = scope.querySelector<HTMLElement>(':scope > .composer');
+  scope.style.scrollPaddingBottom = composer === null ? '' : `${composer.offsetHeight}px`;
+}
+
+/**
+ * 강조 동안 내용·상자 크기가 바뀌면(이미지 첨부 레이아웃·배너 등, QA D-1) 대상으로 다시 맞춘다 — 부드러운 스크롤 목적지가
+ * 옛 최대 스크롤에 클램프된 채 끝나지 않게. 사용자가 직접 스크롤하면 그만둔다. 반환값은 관찰 해제.
+ */
+function watchReveal(scope: HTMLElement, again: () => void): () => void {
+  if (typeof ResizeObserver === 'undefined') return () => undefined;
+  let size = `${scope.scrollHeight}x${scope.clientHeight}`;
+  const ro = new ResizeObserver(() => {
+    const next = `${scope.scrollHeight}x${scope.clientHeight}`;
+    if (next === size) return;
+    size = next;
+    again();
+  });
+  const stop = () => {
+    ro.disconnect();
+    for (const type of USER_SCROLL) scope.removeEventListener(type, stop);
+  };
+  ro.observe(scope);
+  for (const child of Array.from(scope.children)) ro.observe(child);
+  for (const type of USER_SCROLL) scope.addEventListener(type, stop, { passive: true });
+  return stop;
+}
+
 /** 강조 타이머·안내 상태. 반환값은 보일 안내 문구(없으면 null). */
 function useAnchorFeedback() {
   const [notice, setNotice] = useState<AnchorNotice | null>(null);
-  const highlight = useRef<{ el: HTMLElement; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const highlight = useRef<{ el: HTMLElement; timer: ReturnType<typeof setTimeout>; unwatch: () => void } | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearHighlight = () => {
     if (highlight.current === null) return;
     clearTimeout(highlight.current.timer);
+    highlight.current.unwatch();
     highlight.current.el.removeAttribute('data-highlighted');
     highlight.current = null;
   };
@@ -109,11 +145,15 @@ function useAnchorFeedback() {
     },
     [],
   );
-  const reveal = (el: HTMLElement) => {
+  const reveal = (el: HTMLElement, scope: HTMLElement | null) => {
     clearHighlight();
-    el.scrollIntoView?.({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    const scroll = () => {
+      if (scope !== null) padForComposer(scope);
+      el.scrollIntoView?.({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    };
+    scroll();
     el.setAttribute('data-highlighted', 'true');
-    highlight.current = { el, timer: setTimeout(clearHighlight, ANCHOR_HIGHLIGHT_MS) };
+    highlight.current = { el, timer: setTimeout(clearHighlight, ANCHOR_HIGHLIGHT_MS), unwatch: scope === null ? () => undefined : watchReveal(scope, scroll) };
   };
   const missing = (scope: HTMLElement | null, inThread: boolean) => {
     if (scope !== null) scope.scrollTop = scope.scrollHeight;
@@ -160,20 +200,28 @@ export function useMessageAnchor({
       setAnchor(null);
       stripHash(history);
     };
-    const scope = scopeOf(shell.current, anchor);
-    const target = scope?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.messageId)}"]`) ?? null;
-    if (target !== null) {
-      reveal(target);
+    const find = () => {
+      const scope = scopeOf(shell.current, anchor);
+      return { scope, target: scope?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.messageId)}"]`) ?? null };
+    };
+    const waitReplies = anchor.inThread && !repliesReady;
+    const now = find();
+    // 스레드 대상은 답글 조회가 끝난 뒤에 맞춘다 — 그 전에 맞추면 뒤이어 그려지는 답글에 밀린다(QA D-1).
+    if (now.target !== null && !waitReplies) {
+      reveal(now.target, now.scope);
       finish();
       return;
     }
     if (waitStart.current?.anchor !== anchor) waitStart.current = { anchor, at: Date.now() };
     const timer = setTimeout(
       () => {
-        missing(scopeOf(shell.current, anchor), anchor.inThread);
+        // 조회가 끝나지 않은 채 상한에 닿아도 이미 그려진 대상이면 그것을 보인다.
+        const late = find();
+        if (late.target !== null) reveal(late.target, late.scope);
+        else missing(late.scope, anchor.inThread);
         finish();
       },
-      waitDelay(waitStart.current.at, anchor.inThread && !repliesReady),
+      waitDelay(waitStart.current.at, waitReplies),
     );
     return () => clearTimeout(timer);
     // reveal·missing은 매 렌더 새 함수지만 ref·setState만 쓴다 — 데이터 변화에만 다시 찾는다.
