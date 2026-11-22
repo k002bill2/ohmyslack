@@ -5,10 +5,15 @@
  * 참고 출처: 일반 관념.
  */
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LiveApp } from '../../src/LiveApp.js';
-import { createHttpDataSource } from '../../src/data/http-source.js';
-import { CANCEL_LABEL, DELETE_CHANNEL_COPY, ERROR_COPY, HEADER_MENU_COPY } from '../../src/ui/copy.js';
+import { createHttpDataSource, type HttpDataSource } from '../../src/data/http-source.js';
+import type { Account, ActionResult } from '../../src/data/index.js';
+import { createDraftStore } from '../../src/features/conversation/index.js';
+import { AppShell } from '../../src/features/layout/index.js';
+import { memory } from '../helpers/fixtures.js';
+import { CANCEL_LABEL, DELETE_CHANNEL_COPY, ERROR_COPY, HEADER_MENU_COPY, LEAVE_CHANNEL_COPY } from '../../src/ui/copy.js';
 import { installViewport, setCoarsePointer } from '../helpers/viewport.js';
 import { CONV, FakeServer, ME, MemoryStorage, PEER, U, flush, summary } from '../sync/fake-server.js';
 
@@ -21,10 +26,12 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await act(flush);
 };
 
-function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'network' } = {}) {
+function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'network'; onlyGeneral?: boolean; gate?: Promise<void> } = {}) {
   window.history.replaceState(null, '', '/');
   const server = new FakeServer();
-  const state = { deleted: false };
+  const state = { deleted: false, left: false };
+  const timers: (() => void)[] = [];
+  const ref: { source: HttpDataSource | null } = { source: null };
   server.on('GET /api/me', () => ({
     status: 200,
     body: { user: { id: ME, email: 'a@x', display_name: 'A', role: opts.role ?? 'owner' }, csrf_token: 'csrf-1' },
@@ -33,8 +40,8 @@ function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'net
     status: 200,
     body: {
       conversations: [
-        ...(state.deleted ? [] : [summary()]),
-        summary({ id: CONV2, name: 'random' }),
+        ...(state.deleted || state.left ? [] : [summary()]),
+        ...(opts.onlyGeneral === true ? [] : [summary({ id: CONV2, name: 'random' })]),
         summary({ id: DM, kind: 'dm', name: null, peer_user_id: PEER }),
       ],
       next_cursor: null,
@@ -54,25 +61,38 @@ function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'net
     state.deleted = true;
     return { status: 204 };
   });
+  server.on(`DELETE /api/conversations/${CONV}/membership`, () => {
+    state.left = true;
+    return { status: 204 };
+  });
+  server.on('PUT /api/read-state', () => ({ status: 204 }));
   const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  const gate = opts.gate;
+  const fetch: typeof server.fetch = (input, init) =>
+    gate !== undefined && init?.method === 'DELETE' && input.endsWith(`/api/conversations/${CONV}`) ? gate.then(() => server.fetch(input, init)) : server.fetch(input, init);
   render(
     <LiveApp
-      fetch={server.fetch}
-      createSource={(deps) =>
-        createHttpDataSource({
+      fetch={fetch}
+      createSource={(deps) => {
+        const source = createHttpDataSource({
           ...deps,
           wsUrl: 'wss://oms.test/api/ws',
           createSocket: server.createSocket,
           storage: new MemoryStorage(),
           isOnline: () => true,
-          setTimer: () => undefined,
+          setTimer: (fn) => {
+            timers.push(fn);
+            return undefined;
+          },
           clearTimer: () => undefined,
           lifecycle: { doc, win: new EventTarget() },
-        })
-      }
+        });
+        ref.source = source;
+        return source;
+      }}
     />,
   );
-  return { server, state };
+  return { server, state, timers, ref };
 }
 
 async function openSpace(name: string) {
@@ -259,5 +279,190 @@ describe('FR-CONV-06 WS conversation.deleted', () => {
     expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
     const resub = sock.sent.slice(before).filter((f) => (f as { type: string; conversation_id: string }).type === 'conversation.subscribe' && (f as { conversation_id: string }).conversation_id === CONV);
     expect(resub).toHaveLength(0);
+  });
+});
+
+const confirmDelete = () => {
+  fireEvent.click(screen.getByRole('menuitem', { name: HEADER_MENU_COPY.deleteChannel }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: DELETE_CHANNEL_COPY.confirm }));
+};
+
+describe('FR-CONV-06 삭제 후 이동·포커스·전환 (fix2)', () => {
+  it('마지막 채널 삭제: 이동 대상 없음, 포커스는 BODY가 아니라 사이드바 항목', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    world({ onlyGeneral: true });
+    await settle();
+    await openSpace('general');
+    openMenu();
+    confirmDelete();
+    await settle();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
+    expect(window.location.pathname).toBe('/');
+    expect(document.activeElement).not.toBe(document.body);
+    expect(nav().contains(document.activeElement)).toBe(true);
+  });
+
+  it('나간 채널(owner) 삭제: 목록·나간 채널 영역에서 제거', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const { server } = world();
+    await settle();
+    await openSpace('general');
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: HEADER_MENU_COPY.leave }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: LEAVE_CHANNEL_COPY.confirm }));
+    await settle();
+    expect(within(nav()).getByRole('button', { name: 'general' })).toBeTruthy();
+    openMenu();
+    confirmDelete();
+    await settle();
+    expect(deletes(server)).toBe(1);
+    expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
+    expect(screen.queryByText(/general/)).toBeNull();
+  });
+
+  it('실패 표시된 삭제 Dialog에서 다른 채널로 전환 → Dialog 닫힘·실패 문구 없음', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    world({ deleteReply: 403 });
+    await settle();
+    await openSpace('general');
+    openMenu();
+    confirmDelete();
+    await settle();
+    expect(within(screen.getByRole('dialog')).getByRole('alert')).toBeTruthy();
+    await openSpace('random');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: HEADER_MENU_COPY.deleteChannel }));
+    expect(within(screen.getByRole('dialog')).queryByRole('alert')).toBeNull();
+  });
+
+  it('늦은 DELETE 응답 중 다른 대화로 이동 → 삭제 완료 후 사용자를 끌고 가지 않음', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    let release = () => undefined as void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    world({ gate });
+    await settle();
+    await openSpace('general');
+    openMenu();
+    confirmDelete();
+    await settle();
+    await openSpace('B');
+    expect(window.location.pathname).toBe(`/c/${DM}`);
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
+    expect(window.location.pathname).toBe(`/c/${DM}`);
+  });
+});
+
+describe('FR-CONV-06 DataSource 정리 (fix2)', () => {
+  it('삭제 후 그 대화의 읽음 대기열이 PUT /api/read-state로 나가지 않음', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const { server, timers, ref } = world();
+    await settle();
+    await openSpace('general');
+    act(() => ref.source?.markRead?.(CONV, null, 7));
+    await act(async () => {
+      server.socket.push({ type: 'conversation.deleted', conversation_id: CONV });
+    });
+    await settle();
+    const puts = server.log.length;
+    await act(async () => {
+      timers.splice(0).forEach((fn) => fn());
+    });
+    await settle();
+    expect(server.log.slice(puts).filter((l) => l.startsWith('PUT /api/read-state'))).toHaveLength(0);
+  });
+
+  it('배경 채널 삭제 → conversation.unsubscribe 전송', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const { server } = world();
+    await settle();
+    await openSpace('random');
+    const sock = server.socket;
+    const subscribed = sock.sent.some((f) => (f as { type: string; conversation_id?: string }).type === 'conversation.subscribe' && (f as { conversation_id?: string }).conversation_id === CONV);
+    await act(async () => {
+      sock.push({ type: 'conversation.deleted', conversation_id: CONV });
+    });
+    await settle();
+    const unsub = sock.sent.filter((f) => (f as { type: string; conversation_id?: string }).type === 'conversation.unsubscribe' && (f as { conversation_id?: string }).conversation_id === CONV);
+    expect(subscribed).toBe(true);
+    expect(unsub).toHaveLength(1);
+  });
+});
+
+function draftWorld() {
+  const listeners = new Set<(id: string) => void>();
+  const base = memory({ account: { id: 'me', email: 'a@x', displayName: '나', role: 'owner' } as Account });
+  const drafts = createDraftStore();
+  const source = {
+    ...base,
+    deleteChannel: (id: string): Promise<ActionResult<null>> => {
+      listeners.forEach((l) => l(id));
+      return Promise.resolve({ ok: true, value: null });
+    },
+    onConversationDeleted: (l: (id: string) => void) => {
+      listeners.add(l);
+      return () => {
+        listeners.delete(l);
+      };
+    },
+  };
+  render(<AppShell dataSource={source} drafts={drafts} />);
+  return { drafts, wsDeleted: (id: string) => listeners.forEach((l) => l(id)) };
+}
+
+describe('FR-CONV-06 초안 폐기 (fix2)', () => {
+  it('본인 삭제: 메인·열린 스레드 초안 폐기, 다른 채널 초안 유지', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const user = userEvent.setup();
+    const { drafts } = draftWorld();
+    drafts.set('c2', 'dev 초안');
+    await user.click(screen.getByRole('button', { name: 'general' }));
+    await user.type(screen.getByRole('textbox', { name: '#general에 메시지 작성' }), '본문 초안');
+    const reply = document.querySelector<HTMLElement>('[data-reply-for="m1"]');
+    if (reply === null) throw new Error('답글 버튼 없음');
+    await user.click(reply);
+    await user.type(screen.getByRole('textbox', { name: '답글 작성' }), '스레드 초안');
+    drafts.set('m2', '다른 스레드 초안');
+    expect(drafts.get('c1')).toBe('본문 초안');
+    expect(drafts.get('m1')).toBe('스레드 초안');
+    openMenu();
+    confirmDelete();
+    await settle();
+    expect(drafts.get('c1')).toBe('');
+    expect(drafts.get('m1')).toBe('');
+    expect(drafts.get('m2')).toBe('');
+    expect(drafts.get('c2')).toBe('dev 초안');
+  });
+
+  it('WS 삭제(배경 채널): 그 대화의 메인·스레드 초안 폐기, 보는 채널 초안 유지', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const user = userEvent.setup();
+    const { drafts, wsDeleted } = draftWorld();
+    drafts.set('c1', '본문 초안');
+    drafts.set('m1', '스레드 초안');
+    drafts.set('m2', '스레드 초안2');
+    await user.click(screen.getByRole('button', { name: /^dev/ }));
+    await user.type(screen.getByRole('textbox', { name: '#dev에 메시지 작성' }), 'dev 초안');
+    act(() => wsDeleted('c1'));
+    expect(drafts.get('c1')).toBe('');
+    expect(drafts.get('m1')).toBe('');
+    expect(drafts.get('m2')).toBe('');
+    expect(drafts.get('c2')).toBe('dev 초안');
   });
 });
