@@ -243,7 +243,8 @@ class OhmySlackAdapter(BasePlatformAdapter):
 
     def __init__(self, config: PlatformConfig, *, session_factory: Callable[[], aiohttp.ClientSession] = new_session,
                  sleep=asyncio.sleep, clock: Callable[[], float] = time.time,
-                 rand: Callable[[], float] = random.random, cursor_path: Optional[Path] = None):
+                 rand: Callable[[], float] = random.random, cursor_path: Optional[Path] = None,
+                 window_clock: Callable[[], float] = time.monotonic):
         super().__init__(config, Platform(PLATFORM_NAME))
         extra = getattr(config, "extra", None) or {}
         self._token: str = (getattr(config, "token", None) or get_scoped_secret(TOKEN_ENV, "") or "").strip()
@@ -253,6 +254,9 @@ class OhmySlackAdapter(BasePlatformAdapter):
         except ValueError as exc:
             self._base_url, self._config_error = "", str(exc)
         self._session_factory, self._sleep, self._clock, self._rand = session_factory, sleep, clock, rand
+        # #57: 따라붙기 창(#52) 판정·기록 전용 단조 시계 — 벽시계 역행 시 오래된 기록이 창 안에 남지 않게.
+        # 백로그 15분·커서 saved_at·NOT_BOT_THREAD TTL 등 다른 시간 판정은 벽시계(`_clock`)를 그대로 쓴다.
+        self._window_clock = window_clock
         self._cursor = CursorStore(cursor_path or default_cursor_path())
         self._dedup = MessageDeduplicator(max_size=5000, ttl_seconds=7 * 24 * 3600)
         self._session: Optional[aiohttp.ClientSession] = None
@@ -743,7 +747,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
     def _recent_top_posts(self, chat_id: str) -> list[tuple[float, str, str]]:
         """창(`MEDIA_FOLLOW_WINDOW_SECONDS`) 안의 최상위 게시 기록. 창 밖 항목은 여기서 버린다."""
         cid = str(chat_id)
-        now = self._clock()
+        now = self._window_clock()  # #57 단조 시계(경계 60초 포함)
         kept = [e for e in self._top_posts.get(cid, ()) if now - e[0] <= MEDIA_FOLLOW_WINDOW_SECONDS]
         if kept:
             self._top_posts[cid] = kept
@@ -756,7 +760,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
         if self._kinds.get(str(chat_id)) != "channel":
             return
         kept = self._recent_top_posts(chat_id)
-        kept.append((self._clock(), first_id, kind))
+        kept.append((self._window_clock(), first_id, kind))
         self._top_posts[str(chat_id)] = kept
 
     def _media_follow_metadata(self, chat_id: str, caption: Optional[str], reply_to: Optional[str],
@@ -804,6 +808,7 @@ class OhmySlackAdapter(BasePlatformAdapter):
                 ids.append(str((res.get("message") or {}).get("id") or ""))
                 if i == 0 and root is None:
                     # #52: 첫 조각 id를 얻은 즉시(나머지 조각 await 전) 기록 → 후속 첨부가 이 본문 스레드를 찾는다.
+                    # 부분 게시(#57 O-5): 뒤 조각이 실패해도 기록은 남는다 → 뒤 첨부는 게시된 첫 조각 스레드에 붙는다(의도).
                     self._record_top_post(chat_id, ids[0], top_kind)
         except BotAuthError:
             return SendResult(success=False, error="ohmyslack: unauthorized", error_kind="forbidden")
