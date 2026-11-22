@@ -147,7 +147,7 @@ Endpoint는 same-origin `/api/ws`입니다. handshake에서 cookie session, 정�
 | `read.updated` | server→client: `conversation_id`, `thread_root_id?`, `last_read_seq`, `updated_at`; null root은 본문 읽음 |
 | `sync.required` | server→client: REST catch-up 수행 지시 |
 | `membership.changed` | server→client: `conversation_id`, `state: 'joined' \| 'left'`. 영향받는 봇의 모든 연결에만 보냄(대화 구독자 팬아웃 아님, P1 FR FR-BOT-09). `left`는 기존 멤버십 종료 처리(`error not_found` + 구독 삭제) 뒤에 보냄 |
-| `conversation.deleted` | server→client: `conversation_id`. owner가 채널을 삭제했을 때(P1 FR FR-CONV-06) 그 시점 활성 멤버였던 사람 사용자의 모든 연결에 보냄. 기존 구독 종료(`error not_found` + 구독 삭제) 뒤에 보냄. 봇 연결에는 대신 `membership.changed left` |
+| `conversation.deleted` | server→client: `conversation_id`. owner가 채널을 삭제했을 때(P1 FR FR-CONV-06) 그 채널에 멤버 행이 있었던 사람 사용자 전원(먼저 나간 사람 포함)과 삭제를 요청한 owner의 모든 연결에 보냄(중복 제거). 기존 구독 종료(`error not_found` + 구독 삭제) 뒤에 보냄. 봇은 삭제 시점 활성 봇의 연결에만 대신 `membership.changed left` |
 | `error` | 비민감 `code`, `retryable` |
 
 메시지 read/history 응답과 create/update 이벤트는 `mention_user_ids: uuid[]`를 제공하며, 본문 속 `@이름`은 표시용입니다. 멘션 집계는 ID 배열과 `message_mentions`를 기준으로 합니다. 답글 생성은 `root_reply_count`를 갱신해 이벤트 및 root 응답에 반영하며, 삭제된 답글은 이 수에서 제외합니다. 원문·답글 작성 및 수신 mention은 해당 root의 `thread_unread_targets`를 원자적으로 추가합니다. 읽은 메시지에 나중에 추가된 mention은 unread cursor를 후퇴시키지 않습니다. 수정은 같은 트랜잭션에서 mention 관계를 교체합니다.

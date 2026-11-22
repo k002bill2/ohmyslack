@@ -72,7 +72,7 @@ export interface MemberRow {
   readonly displayName: string;
 }
 
-/** 채널 삭제 시점의 활성 멤버(실시간 정리 대상). */
+/** 채널 삭제 통지 대상 — 그 채널에 멤버 행이 있었던 사람 전원(먼저 나간 사람 포함)·삭제 시점 활성 봇. 서비스가 삭제 요청 owner를 더해 사람에게 `conversation.deleted`, 봇에게 `membership.changed left`를 보낸다. */
 export interface DeletedMember {
   readonly userId: string;
   readonly kind: PeerKind;
