@@ -21,7 +21,7 @@ async function convRow(cid: string): Promise<unknown> {
 }
 
 describe('FR-CONV-06 채널 삭제 권한', () => {
-  it('일반 멤버 403(DB 변화 0), 비멤버 404, DM 400, 없는 ID 404, owner 비멤버도 204, 두 번째 삭제 404', async () => {
+  it('FR-CONV-06 채널 삭제 권한 일반 멤버 403(DB 변화 0), 비멤버 404, DM 400, 없는 ID 404, owner 비멤버도 204, 두 번째 삭제 404', async () => {
     const owner = await as(ctx.app, 'a');
     const b = await as(ctx.app, 'b');
     const c = await as(ctx.app, 'c');
