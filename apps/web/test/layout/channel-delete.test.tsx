@@ -21,15 +21,16 @@ afterEach(cleanup);
 
 const CONV2 = U(11);
 const DM = U(12);
+const CONV3 = U(13);
 const nav = () => screen.getByRole('navigation', { name: '공간' });
 const settle = async () => {
   for (let i = 0; i < 8; i += 1) await act(flush);
 };
 
-function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'network'; onlyGeneral?: boolean; gate?: Promise<void> } = {}) {
+function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'network'; onlyGeneral?: boolean; gate?: Promise<void>; three?: boolean; wsFirst?: boolean } = {}) {
   window.history.replaceState(null, '', '/');
   const server = new FakeServer();
-  const state = { deleted: false, left: false };
+  const state = { deleted: false, left: false, gone: new Set<string>() };
   const timers: (() => void)[] = [];
   const ref: { source: HttpDataSource | null } = { source: null };
   server.on('GET /api/me', () => ({
@@ -41,13 +42,14 @@ function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'net
     body: {
       conversations: [
         ...(state.deleted || state.left ? [] : [summary()]),
-        ...(opts.onlyGeneral === true ? [] : [summary({ id: CONV2, name: 'random' })]),
+        ...(opts.onlyGeneral === true || state.gone.has(CONV2) ? [] : [summary({ id: CONV2, name: 'random' })]),
+        ...(opts.three === true && !state.gone.has(CONV3) ? [summary({ id: CONV3, name: 'zeta' })] : []),
         summary({ id: DM, kind: 'dm', name: null, peer_user_id: PEER }),
       ],
       next_cursor: null,
     },
   }));
-  for (const id of [CONV, CONV2, DM]) {
+  for (const id of [CONV, CONV2, DM, CONV3]) {
     server.on(`GET /api/conversations/${id}/messages`, () => ({ status: 200, body: { messages: [], has_more: false } }));
     server.on(`GET /api/conversations/${id}/members`, () => ({
       status: 200,
@@ -65,6 +67,14 @@ function world(opts: { role?: 'owner' | 'member'; deleteReply?: 204 | 403 | 'net
     state.left = true;
     return { status: 204 };
   });
+  for (const id of [CONV2, CONV3]) {
+    server.on(`DELETE /api/conversations/${id}`, () => {
+      state.gone.add(id);
+      // wsFirst: 서버가 커밋 직후 WS conversation.deleted를 HTTP 204보다 먼저 보낸다.
+      if (opts.wsFirst === true) server.socket.push({ type: 'conversation.deleted', conversation_id: id });
+      return { status: 204 };
+    });
+  }
   server.on('PUT /api/read-state', () => ({ status: 204 }));
   const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
   const gate = opts.gate;
@@ -362,6 +372,26 @@ describe('FR-CONV-06 삭제 후 이동·포커스·전환 (fix2)', () => {
     await settle();
     expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
     expect(window.location.pathname).toBe(`/c/${DM}`);
+  });
+});
+
+describe('FR-CONV-06 삭제 후 다음 채널 (fix3)', () => {
+  it.each([
+    ['random', 'zeta', false],
+    ['zeta', 'random', false],
+    ['random', 'zeta', true],
+    ['zeta', 'random', true],
+  ])('3채널 [general, random, zeta]: %s 삭제 → %s (WS 먼저=%s)', async (target, expected, wsFirst) => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    world({ three: true, wsFirst });
+    await settle();
+    await openSpace(target);
+    openMenu();
+    confirmDelete();
+    await settle();
+    expect(within(nav()).queryByRole('button', { name: target })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: expected }));
   });
 });
 

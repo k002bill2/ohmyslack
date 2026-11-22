@@ -81,6 +81,18 @@ function messageLinkIn(conversationId: string, rootId: string | null): (id: stri
   return (id) => `${window.location.origin}${path}#message-${id}`;
 }
 
+/**
+ * 채널 삭제 후 이동 대상(UI_STATES: 다음 채널, 없으면 이전, 없으면 빈 상태). `order`는 삭제 요청 전 사이드바 채널 순서,
+ * `now`는 await 뒤 최신 목록 — 순서상 다음 → 이전 방향으로 **지금 남아 있는** 채널을 고른다.
+ */
+function nextChannelAfterDelete(order: readonly string[], id: string, now: readonly Space[]): Space | undefined {
+  const at = order.indexOf(id);
+  const alive = new Map(now.filter((s) => s.kind === 'channel' && s.id !== id).map((s) => [s.id, s] as const));
+  const pick = (ids: readonly string[]) => ids.map((x) => alive.get(x)).find((s) => s !== undefined);
+  if (at < 0) return pick(order) ?? [...alive.values()][0];
+  return pick(order.slice(at + 1)) ?? pick([...order.slice(0, at)].reverse());
+}
+
 function spaceTitle(space: Space): string {
   return space.kind === 'channel' ? `#${space.name}` : space.name;
 }
@@ -615,16 +627,15 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
           channelName: space.name,
           onDelete: async () => {
             const id = space.id;
+            // 이동 순서는 요청 **전** 사이드바 채널 순서로 잡는다 — await 중 WS 삭제·forgetConversation이 id를 먼저 지울 수 있다(agy r2).
+            const order = spacesRef.current.filter((s) => s.kind === 'channel').map((s) => s.id);
             const res = (await dataSource.deleteChannel?.(id)) ?? ({ ok: false, status: 403 } as const);
             if (!res.ok) return res;
             // 초안 폐기는 onConversationDeleted 알림이 한다(WS 경로와 같은 helper). 알림이 없는 구현이면 여기서 직접.
             if (dataSource.onConversationDeleted === undefined) discardConversationDrafts(id);
             // await 뒤에는 최신 선택·목록으로 판정한다 — 늦은 응답 중 다른 채널로 옮겼으면 이동하지 않는다(agy).
             if (selectedId.current === id) {
-              const channels = spacesRef.current.filter((s) => s.kind === 'channel');
-              const at = channels.findIndex((s) => s.id === id);
-              const rest = channels.filter((s) => s.id !== id);
-              const next = at < 0 ? rest[0] : (channels[at + 1] ?? (at > 0 ? channels[at - 1] : undefined));
+              const next = nextChannelAfterDelete(order, id, spacesRef.current);
               focusAfterDelete.current = true;
               bumpFocus();
               dispatch(next === undefined ? { type: 'route', conversationId: null } : { type: 'select-space', conversationId: next.id });
