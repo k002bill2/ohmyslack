@@ -91,6 +91,19 @@ describe('스레드 열기 → 최근 답글(맨 아래)', () => {
     scroller().querySelector('.thread-replies .msg-item')?.setAttribute('data-highlighted', 'true');
     view.rerender(panel('wide', root, replies(11)));
     expect(scroller().scrollTop).toBe(200);
+    // 대조(교차 검토 P3): 강조를 지우면 같은 높이 재렌더에서 다시 맨 아래로 — 위 유지가 강조 예외 덕임을 확인.
+    scroller().querySelector('[data-highlighted]')?.removeAttribute('data-highlighted');
+    view.rerender(panel('wide', root, replies(11)));
+    expect(scroller().scrollTop).toBe(max());
+  });
+
+  it('답글 0건으로 열렸다가 비동기로 도착하면 맨 아래(교차 검토 P3)', () => {
+    const root = msg('m1', 1);
+    const view = render(panel('wide', root, []));
+    expect(scroller().scrollTop).toBe(0);
+    view.rerender(panel('wide', root, replies(10)));
+    expect(max()).toBe(1100 - VIEW);
+    expect(scroller().scrollTop).toBe(max());
   });
 
   it('읽음: 답글 0건이면 onSeen 미호출, 답글 있으면 맨 아래로 열려 마지막 seq 알림', () => {
