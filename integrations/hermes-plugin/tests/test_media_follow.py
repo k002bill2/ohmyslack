@@ -1,6 +1,7 @@
 """#52 live 경로 후속 첨부: allowlist 채널에서 caption 없는 첨부가 창(60초) 안 유일한 최상위 본문 뒤에 오면
 그 본문 첫 조각 스레드에 붙는다. 모호·창 초과·caption·루트 지정·DM·allowlist 밖은 기존 동작.
-#57: 창 판정은 단조 시계(`_window_clock`) — 벽시계(`_clock`) 역행·전진에 영향받지 않는다."""
+#57: 창 판정은 단조 시계(`_window_clock`)와 벽시계(`_clock`) 경과가 둘 다 60초 안이어야 창 안이다.
+벽시계 역행(경과 음수)이면 단조 경과만 본다. 잠자기(단조 멈춤·벽시계 흐름)는 벽시계로 보정한다(#57 fix1)."""
 
 from __future__ import annotations
 
@@ -44,7 +45,8 @@ async def _connected(server, make_adapter, monkeypatch, *, allowlist: bool = Tru
     assert await adapter.connect()
     await wait_for(lambda: server.sockets)
     clock = FakeClock()
-    # make_adapter가 시계를 받지 않아 연결 뒤 주입. 창 판정은 단조 `_window_clock`만 쓴다(#57). 벽시계 `_clock`은 그대로.
+    # make_adapter가 시계를 받지 않아 연결 뒤 주입. 창 판정은 단조 `_window_clock`과 벽시계 `_clock`을 함께 본다
+    # (#57 fix1). 여기서는 벽시계 `_clock`(실제 time.time)은 그대로 — 테스트 동안 실제 경과는 60초보다 훨씬 작다.
     adapter._window_clock = clock
     return adapter, clock
 
@@ -201,16 +203,17 @@ async def test_top_level_attachment_is_recorded_as_media_and_not_followed(server
     assert [e[2] for e in adapter._top_posts[CHANNEL_ID]] == ["media", "media"]
 
 
-# 12 (#57 a) 창 판정은 단조 시계만 본다: 벽시계가 뒤로/앞으로 뛰어도 창 판정은 `_window_clock` 경과로 정한다.
+# 12 (#57 a) 벽시계가 뒤로 가면(경과 음수) 단조 경과만 본다: 역행해도 오래된 본문이 창 안에 남지 않고,
+# 단조 경과가 창 안이면 그대로 따라붙는다.
 @pytest.mark.parametrize("wall_jump, window_advance, follows", [
-    (-3600.0, 61.0, False),  # 벽시계 역행 + 단조 61초 → 창 밖(수정 전: now - t 음수로 창 안에 남아 따라붙음)
-    (3600.0, 1.0, True),  # 벽시계 전진 + 단조 1초 → 창 안
+    (-3600.0, 61.0, False),  # 벽시계 역행 + 단조 61초 → 창 밖(cc2aee4: now - t 음수로 창 안에 남아 따라붙음)
+    (-3600.0, 1.0, True),  # 벽시계 역행 + 단조 1초 → 단조만 보고 창 안
 ])
-async def test_window_uses_monotonic_clock_not_wall_clock(server, make_adapter, monkeypatch, tmp_path,
-                                                         wall_jump, window_advance, follows):
+async def test_window_wall_clock_regression_falls_back_to_monotonic(server, make_adapter, monkeypatch, tmp_path,
+                                                                    wall_jump, window_advance, follows):
     adapter, clock = await _connected(server, make_adapter, monkeypatch)
     wall = FakeClock()
-    adapter._clock = wall  # 벽시계(백로그·커서·TTL용) — 창 판정에는 쓰이지 않아야 한다
+    adapter._clock = wall  # 벽시계(백로그·커서·TTL + 창 판정 잠자기 보정)
     assert (await adapter.send(CHANNEL_ID, "아침 브리핑")).success is True
     wall.now += wall_jump
     clock.now += window_advance
@@ -223,7 +226,36 @@ async def test_window_uses_monotonic_clock_not_wall_clock(server, make_adapter, 
         assert len(_top_level(ok)) == 1
     else:
         assert len(_top_level(ok)) == 2
-        assert adapter._top_posts[CHANNEL_ID] == [(clock.now, ids[1], "media")]  # 기록 시각도 단조 시계
+        # 기록에는 단조·벽시계 시각을 함께 남긴다(#57 fix1)
+        assert adapter._top_posts[CHANNEL_ID] == [(clock.now, ids[1], "media", wall.now)]
+
+
+# 12b (#57 fix1, QA P3-1) 잠자기 모사: 단조 시계는 잠자기 동안 멈추고(1초만 전진) 벽시계는 흐른다.
+# 벽시계 경과가 60초를 넘으면 오래된 본문 스레드에 붙지 않고 최상위. 벽시계 경계 60초는 포함.
+@pytest.mark.parametrize("wall_advance, follows", [
+    (3600.0, False),  # 한 시간 잠자기 → 창 밖(123e9ac: 단조 1초만 보고 따라붙음 = 회귀)
+    (60.001, False),  # 벽시계 경계 바로 밖
+    (60.0, True),  # 벽시계 경계 포함
+])
+async def test_window_sleep_wall_clock_advance_keeps_top_level(server, make_adapter, monkeypatch, tmp_path,
+                                                               wall_advance, follows):
+    adapter, clock = await _connected(server, make_adapter, monkeypatch)
+    wall = FakeClock()
+    adapter._clock = wall
+    assert (await adapter.send(CHANNEL_ID, "아침 브리핑")).success is True
+    assert adapter._top_posts[CHANNEL_ID] == [(clock.now, _posted_ids(server)[0], "text", wall.now)]
+    clock.now += 1.0
+    wall.now += wall_advance
+    assert (await adapter.send_voice(CHANNEL_ID, _file(tmp_path, "b.mp3", MP3))).success is True
+    ok = _posts_ok(server)
+    ids = _posted_ids(server)
+    assert len(ok) == 2
+    if follows:
+        assert ok[1]["thread_root_id"] == ids[0] and len(_top_level(ok)) == 1
+    else:
+        assert len(_top_level(ok)) == 2
+        assert ok[1].get("thread_root_id") is None and ok[1].get("attachment_ids")
+        assert adapter._top_posts[CHANNEL_ID] == [(clock.now, ids[1], "media", wall.now)]
 
 
 # 13 (#57 b) 창 경계: 정확히 60초는 포함, 넘으면 제외.
