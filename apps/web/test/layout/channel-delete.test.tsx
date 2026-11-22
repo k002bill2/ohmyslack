@@ -8,7 +8,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, describe, expect, it } from 'vitest';
 import { LiveApp } from '../../src/LiveApp.js';
 import { createHttpDataSource } from '../../src/data/http-source.js';
-import { CANCEL_LABEL, DELETE_CHANNEL_COPY, HEADER_MENU_COPY } from '../../src/ui/copy.js';
+import { CANCEL_LABEL, DELETE_CHANNEL_COPY, ERROR_COPY, HEADER_MENU_COPY } from '../../src/ui/copy.js';
 import { installViewport, setCoarsePointer } from '../helpers/viewport.js';
 import { CONV, FakeServer, ME, MemoryStorage, PEER, U, flush, summary } from '../sync/fake-server.js';
 
@@ -89,7 +89,7 @@ function openMenu() {
 
 const deletes = (server: FakeServer) => server.log.filter((l) => l === `DELETE /api/conversations/${CONV}`).length;
 
-describe('「채널 삭제…」 메뉴 표시 조건', () => {
+describe('FR-CONV-06 「채널 삭제…」 메뉴 표시 조건', () => {
   it('owner·채널: 맨 아래 danger 항목', async () => {
     installViewport(1280);
     setCoarsePointer(false);
@@ -122,7 +122,7 @@ describe('「채널 삭제…」 메뉴 표시 조건', () => {
   });
 });
 
-describe('확인 Dialog', () => {
+describe('FR-CONV-06 확인 Dialog', () => {
   it.each([
     [1280, false],
     [390, true],
@@ -144,9 +144,7 @@ describe('확인 Dialog', () => {
     expect(deletes(server)).toBe(1);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(window.location.pathname).toBe(`/c/${CONV2}`);
-    const active = document.activeElement;
-    expect(active).not.toBe(document.body);
-    expect(active?.tagName).not.toBe('TEXTAREA');
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'random' }));
     if (width !== 390) expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
   });
 
@@ -184,7 +182,7 @@ describe('확인 Dialog', () => {
   });
 });
 
-describe('WS conversation.deleted', () => {
+describe('FR-CONV-06 WS conversation.deleted', () => {
   it('배경 채널: 목록에서 제거, 오류 배너 없음', async () => {
     installViewport(1280);
     setCoarsePointer(false);
@@ -214,7 +212,52 @@ describe('WS conversation.deleted', () => {
     await settle();
     expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
     expect(screen.queryByRole('button', { name: HEADER_MENU_COPY.more })).toBeNull();
-    expect(document.querySelector('.missing-conversation, [data-missing]') ?? screen.queryByText(/찾을 수 없/)).toBeTruthy();
+    expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('재연결(resume) 중 보던 채널 삭제 → 복귀 절차가 끝나 배경 구독까지 재개', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const { server } = world();
+    await settle();
+    await openSpace('general');
+    server.autoAck = false;
+    await act(async () => {
+      server.socket.serverClose(1008);
+    });
+    await settle();
+    const resumed = server.socket;
+    expect(resumed.sent.some((f) => (f as { type: string; conversation_id: string }).conversation_id === CONV)).toBe(true);
+    await act(async () => {
+      resumed.push({ type: 'conversation.deleted', conversation_id: CONV });
+    });
+    await settle();
+    const subs = resumed.sent.filter((f) => (f as { type: string }).type === 'conversation.subscribe') as { conversation_id: string }[];
+    expect(subs.some((f) => f.conversation_id === CONV2)).toBe(true);
+    expect(screen.getByText(ERROR_COPY.notFound)).toBeTruthy();
+  });
+
+  it('삭제 뒤 늦은 목록 응답(삭제 채널 포함)이 채널을 되살리지 않고 subscribe 재전송 0', async () => {
+    installViewport(1280);
+    setCoarsePointer(false);
+    const { server } = world();
+    await settle();
+    await openSpace('random');
+    const sock = server.socket;
+    await act(async () => {
+      sock.push({ type: 'conversation.deleted', conversation_id: CONV });
+    });
+    await settle();
+    const before = sock.sent.length;
+    // 서버 목록은 아직 CONV를 준다(state.deleted=false) — read.updated가 목록 재조회를 일으킨다.
+    await act(async () => {
+      sock.push({ type: 'read.updated', conversation_id: CONV2, root_id: null, last_read_seq: 1 });
+    });
+    await settle();
+    expect(server.log.filter((l) => l === 'GET /api/conversations').length).toBeGreaterThan(1);
+    expect(within(nav()).queryByRole('button', { name: 'general' })).toBeNull();
+    const resub = sock.sent.slice(before).filter((f) => (f as { type: string; conversation_id: string }).type === 'conversation.subscribe' && (f as { conversation_id: string }).conversation_id === CONV);
+    expect(resub).toHaveLength(0);
   });
 });
