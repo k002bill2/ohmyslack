@@ -99,11 +99,13 @@ LIVE_CSRF="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["
 # 5) 격리 래퍼 --run-live(sandbox 안 pytest -m live, 고정 인자). live env는 이 한 호출에만 붙인다(export 없음 —
 #    `이름=값 명령` 은 그 자식 env 일 뿐 argv 가 아니다). 래퍼가 값을 검증(위반 EXIT 64, 값 비공개)하고 비밀 3개를
 #    `.isolation/` 아래 0600 파일로 옮겨 sandbox 에는 경로만 넘긴다. owner 송신은 테스트 프로세스 안 HTTP 요청.
+#    인터프리터는 /bin/bash 고정(Issue #58-3): 래퍼의 PATH 고정(QA O-4)은 래퍼 안에서야 시작하므로, 호출자 PATH 의
+#    `bash` 선택은 그 이전 단계라 래퍼가 막을 수 없다(자기시험도 /bin/bash 로 부른다).
 set +e
 OHMYSLACK_LIVE_E2E=1 OHMYSLACK_BOT_URL="http://127.0.0.1:$BOT_PORT" OHMYSLACK_BOT_TOKEN="$BOT_TOKEN" \
   OHMYSLACK_LIVE_MAIN_URL="$MAIN_URL" OHMYSLACK_LIVE_ORIGIN="$MAIN_URL" \
   OHMYSLACK_LIVE_COOKIE="$LIVE_COOKIE" OHMYSLACK_LIVE_CSRF="$LIVE_CSRF" \
-  bash "$PLUGIN/scripts/isolated-pytest.sh" --run-live
+  /bin/bash "$PLUGIN/scripts/isolated-pytest.sh" --run-live
 RESULT=$?
 set -e
 [ "$RESULT" = 0 ] || tail -n 20 "$WORK/server.log" >&2
