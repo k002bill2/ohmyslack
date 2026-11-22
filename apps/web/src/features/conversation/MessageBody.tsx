@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { CODE_BLOCK_COPY, MESSAGE_MENU_COPY } from '../../ui/copy.js';
 import { COPY_NOTE_MS, writeClipboard } from './clipboard.js';
+import { CodeCopyIcon } from './code-copy-icons.js';
 import { parseBody, type Block, type Inline, type Line } from './render.js';
 import './message-format.css';
 
@@ -69,11 +70,12 @@ function ListView({ block }: { readonly block: Extract<Block, { kind: 'list' }> 
 /**
  * 코드 블록 + 「복사」 버튼. 버튼은 pre 밖·래퍼 안 — pre가 가로 스크롤되어도 오른쪽 위에 고정되고,
  * pre textContent에 버튼 글자가 섞이지 않는다. 원문(`text`)은 가공 없이 복사한다.
- * 결과는 버튼 글자(「복사됨」·「복사 실패」)로 보이고, 늘 렌더되는 role=status(보조기술 전용)는 글자만 바꾼다(포커스 이동 없음).
+ * 버튼은 아이콘 단독(copy → 성공 check / 실패 x)이고 접근 이름·툴팁은 상태와 무관하게 「코드 복사」.
+ * 결과 낭독은 늘 렌더되는 role=status(보조기술 전용)가 글자만 바꿔 맡는다(포커스 이동 없음).
  * `tick`은 클릭 결과마다 늘어 연속 성공에도 1600ms를 다시 센다.
  */
 type CopyNote = 'copied' | 'failed' | null;
-const BUTTON_TEXT = { copied: CODE_BLOCK_COPY.copied, failed: CODE_BLOCK_COPY.failed } as const;
+const BUTTON_ICON = { copied: 'check', failed: 'x' } as const;
 const STATUS_TEXT = { copied: CODE_BLOCK_COPY.copied, failed: MESSAGE_MENU_COPY.copyFailed } as const;
 
 function CodeBlockView({ text }: { readonly text: string }) {
@@ -92,8 +94,15 @@ function CodeBlockView({ text }: { readonly text: string }) {
       <pre className="msg-code">
         <code>{text}</code>
       </pre>
-      <button type="button" className="msg-code-copy" aria-label={CODE_BLOCK_COPY.label} onClick={copy}>
-        {note === null ? CODE_BLOCK_COPY.copy : BUTTON_TEXT[note]}
+      <button
+        type="button"
+        className="msg-code-copy"
+        aria-label={CODE_BLOCK_COPY.label}
+        title={CODE_BLOCK_COPY.label}
+        data-state={note ?? 'idle'}
+        onClick={copy}
+      >
+        <CodeCopyIcon name={note === null ? 'copy' : BUTTON_ICON[note]} />
       </button>
       <span className="msg-code-note" role="status">
         {note === null ? '' : STATUS_TEXT[note]}

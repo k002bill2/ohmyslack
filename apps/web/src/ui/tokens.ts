@@ -178,7 +178,7 @@ const LUCIDE_SOURCE = 'https://raw.githubusercontent.com/lucide-icons/lucide/mai
 const ICON_NAMES = [
   'hash', 'message-square', 'user', 'lock', 'at-sign', 'send', 'reply', 'corner-up-left',
   'x', 'chevron-left', 'clock', 'check', 'refresh-cw', 'wifi-off', 'pencil', 'trash',
-  'ellipsis', 'search', 'settings', 'log-out', 'plus', 'smartphone',
+  'ellipsis', 'search', 'settings', 'log-out', 'plus', 'smartphone', 'copy',
 ] as const;
 
 /** §3-2 그대로. */

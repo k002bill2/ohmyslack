@@ -9,9 +9,18 @@ function renderBody(body: string): HTMLElement {
   return render(<MessageBody body={body} />).container;
 }
 
-/** DOM에 스크립트·이벤트 핸들러 속성·위험 href가 하나도 없음을 단언한다. */
+/** 앱이 직접 그린 코드 복사 버튼 아이콘(Lucide copy/check/x) — 본문에서 온 요소가 아니다. 버튼 직속·이름 고정만 허용. */
+function isCodeCopyIcon(el: Element): boolean {
+  return el.matches('.msg-code-copy > svg') && ['copy', 'check', 'x'].includes(el.getAttribute('data-icon') ?? '');
+}
+
+/** DOM에 스크립트·이벤트 핸들러 속성·위험 href가 하나도 없음을 단언한다(복사 버튼 아이콘 svg와 그 안 도형만 예외). */
 function assertInert(root: HTMLElement): void {
-  expect(root.querySelectorAll('script, iframe, object, embed, img, svg, style, form, input, math').length).toBe(0);
+  expect(root.querySelectorAll('script, iframe, object, embed, img, style, form, input, math').length).toBe(0);
+  const svgs = [...root.querySelectorAll('svg')];
+  expect(svgs.filter((svg) => !isCodeCopyIcon(svg))).toEqual([]);
+  expect(svgs.length).toBe(root.querySelectorAll('.msg-code-copy').length);
+  for (const svg of svgs) for (const child of svg.querySelectorAll('*')) expect(['path', 'rect']).toContain(child.localName);
   for (const el of root.querySelectorAll('*')) {
     for (const attr of el.attributes) {
       expect(attr.name.startsWith('on')).toBe(false);
