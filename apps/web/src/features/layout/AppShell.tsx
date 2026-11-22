@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { formatRoute, parseRoute, parseThreadParam, withThread, type RouteHistory } from '../../app/route.js';
 import type { DataSource, Message, Space, UploadAttachmentOptions } from '../../data';
 import { createAttachmentDraftStore, type AttachmentDraftStore, type UploadFn } from '../conversation/attachments/composer-upload.js';
@@ -21,7 +21,7 @@ import { useMessageAnchor } from './message-anchor.js';
 import { isAtBottom, usePinBottom } from './pin-bottom.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { useGlobalShortcuts } from './shortcuts.js';
-import { HeaderMenu } from './HeaderMenu.js';
+import { HeaderMenu, type HeaderDelete } from './HeaderMenu.js';
 import { MissingConversation } from './MissingConversation.js';
 import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 import { useFocusAfterLeave } from './focus-after-leave.js';
@@ -79,6 +79,18 @@ type ItemActions = Pick<MessageItemProps, 'selfId' | 'onEdit' | 'onDelete' | 'on
 function messageLinkIn(conversationId: string, rootId: string | null): (id: string) => string {
   const path = withThread(formatRoute({ kind: 'conversation', conversationId }), rootId);
   return (id) => `${window.location.origin}${path}#message-${id}`;
+}
+
+/**
+ * 채널 삭제 후 이동 대상(UI_STATES: 다음 채널, 없으면 이전, 없으면 빈 상태). `order`는 삭제 요청 전 사이드바 채널 순서,
+ * `now`는 await 뒤 최신 목록 — 순서상 다음 → 이전 방향으로 **지금 남아 있는** 채널을 고른다.
+ */
+function nextChannelAfterDelete(order: readonly string[], id: string, now: readonly Space[]): Space | undefined {
+  const at = order.indexOf(id);
+  const alive = new Map(now.filter((s) => s.kind === 'channel' && s.id !== id).map((s) => [s.id, s] as const));
+  const pick = (ids: readonly string[]) => ids.map((x) => alive.get(x)).find((s) => s !== undefined);
+  if (at < 0) return pick(order) ?? [...alive.values()][0];
+  return pick(order.slice(at + 1)) ?? pick([...order.slice(0, at)].reverse());
 }
 
 function spaceTitle(space: Space): string {
@@ -165,6 +177,8 @@ function ConversationPane(props: {
   readonly onShortcuts?: () => void;
   /** Jarvis DM 헤더 더보기 「알림 설정…」(G-74, 모든 구간). */
   readonly onNotifications?: () => void;
+  /** FR-CONV-06 owner 채널 삭제(헤더 더보기 「채널 삭제…」). */
+  readonly deletion?: HeaderDelete;
 }) {
   const { space, roots, breakpoint, membership, onSeen } = props;
   const newSeq = useNewMessagesSeq(space.id, space.unreadCount, roots, props.holding, props.historyReady, props.itemActions?.selfId);
@@ -220,6 +234,7 @@ function ConversationPane(props: {
           {...(props.onNotifications === undefined ? {} : { onNotifications: props.onNotifications })}
           {...(props.onShortcuts === undefined ? {} : { onShortcuts: props.onShortcuts })}
           {...(onLeave !== undefined && space.kind === 'channel' && !left ? { onLeave } : {})}
+          {...(props.deletion === undefined ? {} : { deletion: props.deletion })}
           bots={botMenu.items}
         />
         {membership && left && <RejoinButton onRejoin={membership.onRejoin} />}
@@ -336,6 +351,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const routed = useRef(false);
   const [announcement, setAnnouncement] = useState('');
   const shell = useRef<HTMLDivElement>(null);
+  const focusAfterDelete = useRef(false);
   const prevThread = useRef<string | null>(null);
   const focusComposer = useRef(false);
   /** 같은 공간을 다시 골라도(전환기) 작성기 포커스 효과가 돌게 하는 카운터(F4). */
@@ -346,6 +362,14 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   const space = snap.spaces.find((s) => s.id === state.conversationId);
   /** 비동기 참여 완료 시점의 선택 대화(렌더 당시 값이 아니라 최신). */
   const selectedId = useRef(state.conversationId);
+  /** 최신 목록(await 뒤 판정용, 채널 삭제). */
+  const spacesRef = useRef(snap.spaces);
+  spacesRef.current = snap.spaces;
+  /** 최신 메시지·열린 스레드(삭제 알림 시점 판정용 — 그 대화의 스레드 초안 키 = root id). */
+  const messagesRef = useRef(snap.messages);
+  messagesRef.current = snap.messages;
+  const threadRef = useRef({ conversationId: state.conversationId, rootId: state.threadRootId });
+  threadRef.current = { conversationId: state.conversationId, rootId: state.threadRootId };
   useEffect(() => {
     selectedId.current = state.conversationId;
   }, [state.conversationId]);
@@ -442,6 +466,18 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     else shell.current?.querySelector<HTMLElement>('[data-composer="main"] textarea')?.focus();
   }, [state.conversationId, focusTick]);
 
+  // 채널 삭제 성공 뒤(FR-CONV-06): 다음 대화의 제목(비텍스트) → 없으면 사이드바 선택 항목·사이드바. 작성기는 터치 여부와 무관하게 건너뛴다.
+  useEffect(() => {
+    if (!focusAfterDelete.current) return;
+    focusAfterDelete.current = false;
+    const root = shell.current;
+    const target =
+      root?.querySelector<HTMLElement>('.conversation-title') ??
+      // 마지막 채널 삭제(이동 대상 없음): 사이드바의 첫 항목으로(BODY 금지).
+      root?.querySelector<HTMLElement>('nav button, nav a');
+    target?.focus({ preventScroll: true });
+  }, [state.conversationId, focusTick]);
+
   useGlobalShortcuts(bp !== 'compact', {
     onSwitcher: () => setOverlay('switcher'),
     onShortcuts: () => setOverlay('shortcuts'),
@@ -516,6 +552,21 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     if (threadRootId === null) return undefined;
     return () => attachmentDrafts.discard(threadRootId);
   }, [threadRootId, attachmentDrafts]);
+  // FR-CONV-06: 채널이 삭제되면(본인 동작·다른 기기 WS 공용) 그 대화의 메인·스레드 초안과 첨부 초안을 버린다.
+  // 스레드 초안 키는 root id뿐이라 대화별로 열거할 수 없다 — 받아 둔 그 대화의 메시지 id 전부 + 열린 스레드 root로 지운다.
+  const discardConversationDrafts = useCallback(
+    (conversationId: string) => {
+      const keys = new Set([conversationId, ...messagesRef.current.filter((m) => m.conversationId === conversationId).map((m) => m.id)]);
+      const open = threadRef.current;
+      if (open.conversationId === conversationId && open.rootId !== null) keys.add(open.rootId);
+      keys.forEach((key) => {
+        drafts.delete(key);
+        attachmentDrafts.discard(key);
+      });
+    },
+    [drafts, attachmentDrafts],
+  );
+  useEffect(() => dataSource.onConversationDeleted?.(discardConversationDrafts), [dataSource, discardConversationDrafts]);
   const mainLink = useMemo(() => (spaceId === undefined ? undefined : messageLinkIn(spaceId, null)), [spaceId]);
   const threadLink = useMemo(
     () => (spaceId === undefined || state.threadRootId === null ? undefined : messageLinkIn(spaceId, state.threadRootId)),
@@ -566,6 +617,31 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
           ...(mentionCandidates === undefined
             ? {}
             : { mentions: { candidates: mentionCandidates, ...(snap.account === undefined ? {} : { selfId: snap.account.id }) } }),
+        };
+  // FR-CONV-06: owner·채널(나간 채널 포함)만 「채널 삭제…」. 성공 → 초안 폐기 → 사이드바 다음 채널(없으면 이전, 없으면 빈 상태).
+  const deletion: HeaderDelete | undefined =
+    space === undefined || space.kind !== 'channel' || snap.account?.role !== 'owner' || dataSource.deleteChannel === undefined
+      ? undefined
+      : {
+          channelId: space.id,
+          channelName: space.name,
+          onDelete: async () => {
+            const id = space.id;
+            // 이동 순서는 요청 **전** 사이드바 채널 순서로 잡는다 — await 중 WS 삭제·forgetConversation이 id를 먼저 지울 수 있다(agy r2).
+            const order = spacesRef.current.filter((s) => s.kind === 'channel').map((s) => s.id);
+            const res = (await dataSource.deleteChannel?.(id)) ?? ({ ok: false, status: 403 } as const);
+            if (!res.ok) return res;
+            // 초안 폐기는 onConversationDeleted 알림이 한다(WS 경로와 같은 helper). 알림이 없는 구현이면 여기서 직접.
+            if (dataSource.onConversationDeleted === undefined) discardConversationDrafts(id);
+            // await 뒤에는 최신 선택·목록으로 판정한다 — 늦은 응답 중 다른 채널로 옮겼으면 이동하지 않는다(agy).
+            if (selectedId.current === id) {
+              const next = nextChannelAfterDelete(order, id, spacesRef.current);
+              focusAfterDelete.current = true;
+              bumpFocus();
+              dispatch(next === undefined ? { type: 'route', conversationId: null } : { type: 'select-space', conversationId: next.id });
+            }
+            return res;
+          },
         };
   const sidebar = (
     <Sidebar
@@ -664,6 +740,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(space.bot === true && pushEnv !== null && dataSource.push ? { onNotifications: () => setOverlay('notifications') } : {})}
       {...(mentionNames === undefined ? {} : { mentionNames })}
       {...(snap.account === undefined ? {} : { selfName: snap.account.displayName })}
+      {...(deletion === undefined ? {} : { deletion })}
     />
   );
   // QA §4-2: 목록이 확정됐는데(로딩·catch-up 아님) 주소의 대화가 없으면 빈 화면 대신 안내(나간 채널 새로고침·삭제·오타).

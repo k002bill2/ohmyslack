@@ -17,6 +17,7 @@ import { decodeFilenameHeader, finalizeFilename, parseFilename } from './filenam
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import type { OpsLogger } from '../ops/logger.js';
 import type { AttachmentMeta, AttachmentsStore, InTxCheck, RetentionResult } from './repo.js';
+import { lockLiveConversation } from './repo.js';
 
 /** 첨부 서비스(정본: TRD §6-1, DEV_DESIGN B10). 사람·봇 라우트가 같은 인스턴스를 쓴다(TRD §5-2 6항). */
 export interface AttachmentsServiceDeps {
@@ -53,6 +54,11 @@ export interface AttachmentsService {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const notFound = (): HttpError => new HttpError(404, 'not_found');
+
+/** 사람 업로드: 가드 통과 후 채널 삭제가 커밋됐으면 저장 tx 안에서 404(FR-CONV-06). */
+const liveConversationCheck: InTxCheck = async (client, conversationId) => {
+  if (!(await lockLiveConversation(client, conversationId))) throw notFound();
+};
 
 export function retentionMs(mime: string): number {
   if (isAttachmentFileMime(mime)) return ATTACHMENT_DOC_RETENTION_DAYS * DAY_MS;
@@ -151,7 +157,7 @@ export function createAttachmentsService(deps: AttachmentsServiceDeps): Attachme
         expiresAt: new Date(now + retentionMs(sniffed.mime)),
         bytes,
       };
-      return check === undefined ? store.insert(row) : store.insert(row, check);
+      return store.insert(row, check ?? liveConversationCheck);
     },
     async resolveAccess(userId, attachmentId, action) {
       const meta = await store.get(attachmentId);

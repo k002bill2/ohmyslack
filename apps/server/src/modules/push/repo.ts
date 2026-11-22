@@ -63,6 +63,7 @@ const TARGETS_SQL = `
     JOIN users u ON u.id = ps.user_id AND u.kind = 'human' AND u.status = 'active'
     JOIN sessions s ON s.id = ps.session_id AND s.revoked_at IS NULL AND s.expires_at > $5
     JOIN conversation_members cm ON cm.conversation_id = $1 AND cm.user_id = ps.user_id AND cm.left_at IS NULL
+    JOIN conversations cv ON cv.id = $1 AND cv.deleted_at IS NULL
     LEFT JOIN conversation_read_state crs ON crs.conversation_id = $1 AND crs.user_id = ps.user_id
     LEFT JOIN thread_read_state trs ON $2::uuid IS NOT NULL AND trs.root_message_id = $2::uuid AND trs.user_id = ps.user_id
    WHERE ($7::boolean OR ps.user_id = ANY($4::uuid[])) AND ps.user_id <> $8 AND ps.vapid_key_id = $6
@@ -109,7 +110,7 @@ export function createPgPushStore(pool: pg.Pool): PushStore {
                    SELECT 1 FROM conversation_members m JOIN users u ON u.id = m.user_id
                     WHERE m.conversation_id = c.id AND u.kind = 'bot')) AS bot_dm,
                 (SELECT r.author_id FROM messages r WHERE r.id = $2::uuid AND r.conversation_id = c.id) AS root_author_id
-           FROM conversations c WHERE c.id = $1`,
+           FROM conversations c WHERE c.id = $1 AND c.deleted_at IS NULL`,
         [conversationId, threadRootId],
       );
       const row = res.rows[0];

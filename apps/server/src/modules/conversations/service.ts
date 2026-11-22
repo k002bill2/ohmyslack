@@ -7,8 +7,10 @@ import type { AccessRow, ConversationsStore } from './store.js';
 /**
  * 대화 단위 동작. `join`만 비참여자에게 열려 있다(공개 채널 한정, DEV_DESIGN §2-4).
  * `manage_bots`: 존재 404 → 활성 멤버 404 → 워크스페이스 owner 403 → 채널 400(BOT_CHANNEL_SPEC §4-2).
+ * `delete`(FR-CONV-06): 존재(삭제 제외) 404 → owner면 채널 통과·DM 400(DM 비멤버는 404) →
+ * owner가 아니면 비멤버 404(존재 은폐)·멤버 403.
  */
-export type AccessAction = 'read' | 'write' | 'join' | 'leave' | 'manage_bots';
+export type AccessAction = 'read' | 'write' | 'join' | 'leave' | 'manage_bots' | 'delete';
 
 export interface ConversationsServiceDeps {
   readonly store: ConversationsStore;
@@ -28,6 +30,8 @@ export interface ConversationsService {
   join(userId: string, conversationId: string): Promise<void>;
   /** 봇 추가(대상 검증은 저장소 트랜잭션 안). 새로 추가면 true, 이미 멤버면 false. 대상 오류 404. */
   addBot(conversationId: string, botUserId: string): Promise<boolean>;
+  /** 공개 채널 소프트 삭제(접근 판정은 가드의 assertAccess 'delete'). 동시 삭제로 이미 사라졌으면 404. */
+  deleteChannel(userId: string, conversationId: string): Promise<void>;
   /** 봇 제거(멱등). 실제로 빠졌을 때만 membershipEnded를 발행한다. */
   removeBot(conversationId: string, botUserId: string): Promise<void>;
   readonly store: ConversationsStore;
@@ -50,6 +54,16 @@ export function dmPairKey(a: string, b: string): string {
 
 const notFound = (): HttpError => new HttpError(404, 'not_found');
 
+/** `delete` 판정(FR-CONV-06). owner는 멤버 여부와 무관하게 공개 채널을 지운다. DM 존재는 비멤버에게 숨긴다. */
+function assertDelete(row: AccessRow): AccessRow {
+  if (row.role === 'owner') {
+    if (row.kind === 'channel') return row;
+    throw row.activeMember ? new HttpError(400, 'invalid_request') : notFound();
+  }
+  if (!row.activeMember) throw notFound();
+  throw new HttpError(403, 'forbidden');
+}
+
 export function createConversationsService(deps: ConversationsServiceDeps): ConversationsService {
   const { store, events, clock } = deps;
   const now = (): Date => new Date(clock());
@@ -57,8 +71,9 @@ export function createConversationsService(deps: ConversationsServiceDeps): Conv
   return {
     store,
     async assertAccess(userId, conversationId, action) {
-      const row = await store.findAccess(conversationId, userId, action === 'manage_bots');
+      const row = await store.findAccess(conversationId, userId, action === 'manage_bots' || action === 'delete');
       if (row === undefined) throw notFound();
+      if (action === 'delete') return assertDelete(row);
       if (action === 'join') {
         if (row.kind !== 'channel') throw notFound();
         return row;
@@ -72,12 +87,20 @@ export function createConversationsService(deps: ConversationsServiceDeps): Conv
     },
     async addBot(conversationId, botUserId) {
       const result = await store.addBot(conversationId, botUserId, now());
-      if (result === 'invalid_target') throw notFound();
+      if (result === 'invalid_target' || result === 'deleted') throw notFound();
       if (result === 'added') events.membershipStarted(conversationId, botUserId);
       return result === 'added';
     },
+    async deleteChannel(userId, conversationId) {
+      const members = await store.deleteChannel(conversationId, userId, now());
+      if (members === undefined) throw notFound();
+      // owner가 이미 나간 채널이어도 owner의 다른 연결이 conversation.deleted를 받게 한다(중복 제거).
+      events.conversationDeleted(conversationId, [...new Set([...members.map((m) => m.userId), userId])]);
+    },
     async removeBot(conversationId, botUserId) {
-      if (await store.removeBot(conversationId, botUserId, now())) events.membershipEnded(conversationId, botUserId);
+      const result = await store.removeBot(conversationId, botUserId, now());
+      if (result === 'deleted') throw notFound();
+      if (result === 'ended') events.membershipEnded(conversationId, botUserId);
     },
     async createChannel(creatorId, rawName) {
       const { name, nameNorm } = normalizeChannelName(rawName);
@@ -94,12 +117,14 @@ export function createConversationsService(deps: ConversationsServiceDeps): Conv
       return { id: result.id };
     },
     async join(userId, conversationId) {
-      await store.join(conversationId, userId, now());
+      if ((await store.join(conversationId, userId, now())) === 'deleted') throw notFound();
     },
     async leave(userId, conversationId, access) {
       // DM 나가기는 TRD §3에 없다(공개 채널 참여·나가기만): 입력 오류로 거부한다.
       if (access.kind !== 'channel') throw new HttpError(400, 'invalid_request');
-      if (await store.leave(conversationId, userId, now())) events.membershipEnded(conversationId, userId);
+      const result = await store.leave(conversationId, userId, now());
+      if (result === 'deleted') throw notFound();
+      if (result === 'ended') events.membershipEnded(conversationId, userId);
     },
   };
 }

@@ -49,10 +49,16 @@ function memoryConversations(auth: MemoryAuthStore): Fixture {
           .map((c) => ({ id: c.id, name: c.name ?? '' }));
       },
       async join(id, userId) {
-        convs.get(id)?.members.add(userId);
+        const conv = convs.get(id);
+        if (conv === undefined) return 'deleted' as const;
+        if (conv.members.has(userId)) return 'exists' as const;
+        conv.members.add(userId);
+        return 'added' as const;
       },
       async leave(id, userId) {
-        return convs.get(id)?.members.delete(userId) ?? false;
+        const conv = convs.get(id);
+        if (conv === undefined) return 'deleted' as const;
+        return conv.members.delete(userId) ? ('ended' as const) : ('none' as const);
       },
       async listMembers(id) {
         return [...(convs.get(id)?.members ?? [])].map((u) => ({ id: u, displayName: auth.users.get(u)?.displayName ?? '' }));
@@ -71,7 +77,10 @@ function memoryConversations(auth: MemoryAuthStore): Fixture {
         return 'invalid_target' as const;
       },
       async removeBot() {
-        return false;
+        return 'none' as const;
+      },
+      async deleteChannel() {
+        return undefined;
       },
     },
   };

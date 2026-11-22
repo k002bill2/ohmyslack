@@ -53,11 +53,18 @@ describe('createPgConversationsStore: 접근·조회', () => {
     expect(fx.params[1]).toEqual(['u', 'c0', 3]);
   });
 
-  it('leave: 바뀐 행 유무로 true/false', async () => {
-    expect(await createPgConversationsStore(fakePool(() => ok()).pool).leave('c', 'u', at)).toBe(true);
-    expect(await createPgConversationsStore(fakePool(none).pool).leave('c', 'u', at)).toBe(false);
+  it('leave: 바뀐 행 있으면 ended, 0행이면 살아 있는 대화는 none·삭제/없음은 deleted', async () => {
+    const sqls: string[] = [];
+    const ended = fakePool((sql) => (sqls.push(sql), ok()));
+    expect(await createPgConversationsStore(ended.pool).leave('c', 'u', at)).toBe('ended');
+    // 대화 행을 잠그지 않는다(전송과 비직렬화): 멤버 갱신 문장이 deleted_at을 같이 확인한다.
+    expect(sqls.some((s) => /FOR (SHARE|UPDATE)/.test(s))).toBe(false);
+    expect(sqls.some((s) => s.startsWith('UPDATE conversation_members') && s.includes('c.deleted_at IS NULL'))).toBe(true);
+    expect(await createPgConversationsStore(fakePool(none).pool).leave('c', 'u', at)).toBe('deleted');
+    const liveOnly = fakePool((sql) => (sql.startsWith('SELECT 1 FROM conversations') ? ok() : none()));
+    expect(await createPgConversationsStore(liveOnly.pool).leave('c', 'u', at)).toBe('none');
     const noCount = fakePool(() => ({ rows: [], rowCount: null as unknown as number }));
-    expect(await createPgConversationsStore(noCount.pool).leave('c', 'u', at)).toBe(false);
+    expect(await createPgConversationsStore(noCount.pool).leave('c', 'u', at)).toBe('deleted');
   });
 
   it('listMembers·listForUser 매핑(bigint 문자열 → number)', async () => {
@@ -107,10 +114,10 @@ describe('createPgConversationsStore: 채널 생성·참여', () => {
     expect(fx.log).toEqual(['BEGIN', 'SELECT last_seq::text AS', 'INSERT INTO conversation_members', 'COMMIT']);
   });
 
-  it('join: 대화 행이 없으면 멤버 upsert 없이 COMMIT', async () => {
+  it('join: 대화 행이 없으면(삭제 경쟁 포함) 멤버 upsert 없이 ROLLBACK하고 deleted', async () => {
     const fx = fakePool((sql) => (sql.startsWith('SELECT last_seq') ? none() : base(sql)));
-    await createPgConversationsStore(fx.pool).join('c1', 'u1', at);
-    expect(fx.log).toEqual(['BEGIN', 'SELECT last_seq::text AS', 'COMMIT']);
+    expect(await createPgConversationsStore(fx.pool).join('c1', 'u1', at)).toBe('deleted');
+    expect(fx.log).toEqual(['BEGIN', 'SELECT last_seq::text AS', 'ROLLBACK']);
   });
 
   it('트랜잭션 중 오류는 ROLLBACK 후 다시 던지고 연결을 돌려준다', async () => {

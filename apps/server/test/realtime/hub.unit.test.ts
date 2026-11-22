@@ -140,6 +140,7 @@ function setup(clock: () => number = () => T0, botScope?: BotScope) {
     openDm: unused,
     addBot: unused,
     removeBot: unused,
+    deleteChannel: unused,
   };
   const syncStore: SyncStore = {
     async watermark() {
@@ -684,5 +685,41 @@ describe('봇 허브 botScope(BOT_CHANNEL_SPEC §4-3·§4-5)', () => {
     human.conversationEvents.membershipStarted(C1, ALICE);
     await flush(h.conn);
     expect(h.socket.sent).toEqual([]);
+  });
+});
+
+describe('FR-CONV-06 채널 삭제 이벤트', () => {
+  it('봇 허브는 구독을 끊고 membership.changed left, 사람 허브는 구독을 끊고 conversation.deleted를 멤버 연결에만 보낸다', async () => {
+    const bot = setup(() => T0, { visibleMessageIds: async (_u, ids) => new Set(ids) });
+    bot.join(C1, ALICE);
+    const b = bot.connect(ALICE);
+    bot.hub.subscribe(b.conn, C1, 0);
+    await flush(b.conn);
+    b.socket.sent.length = 0;
+    bot.conversationEvents.conversationDeleted(C1, [ALICE]);
+    await flush(b.conn);
+    expect(b.socket.sent).toEqual([
+      { type: 'error', code: 'not_found', retryable: false, conversation_id: C1 },
+      { type: 'membership.changed', conversation_id: C1, state: 'left' },
+    ]);
+
+    const human = setup();
+    human.join(C1, ALICE);
+    const h1 = human.connect(ALICE);
+    const h2 = human.connect(ALICE);
+    const other = human.connect(BOB);
+    human.hub.subscribe(h1.conn, C1, 0);
+    await flush(h1.conn);
+    h1.socket.sent.length = 0;
+    human.conversationEvents.conversationDeleted(C1, [ALICE]);
+    await flush(h1.conn);
+    await flush(h2.conn);
+    await flush(other.conn);
+    expect(h1.socket.sent).toEqual([
+      { type: 'error', code: 'not_found', retryable: false, conversation_id: C1 },
+      { type: 'conversation.deleted', conversation_id: C1 },
+    ]);
+    expect(h2.socket.sent).toEqual([{ type: 'conversation.deleted', conversation_id: C1 }]);
+    expect(other.socket.sent).toEqual([]);
   });
 });

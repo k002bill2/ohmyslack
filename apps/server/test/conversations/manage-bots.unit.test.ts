@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createConversationEvents } from '../../src/modules/conversations/events.js';
 import { createConversationsService } from '../../src/modules/conversations/service.js';
-import type { AccessRow, AddBotResult, ConversationsStore } from '../../src/modules/conversations/store.js';
+import type { AccessRow, AddBotResult, ConversationsStore, DeletedMember, MembershipEndResult } from '../../src/modules/conversations/store.js';
 
 /** manage_bots 판정 순서·봇 추가/제거 이벤트(BOT_CHANNEL_SPEC §4-2·§4-3) 단위. 실DB는 bot-channel-membership.int. */
 const unused = (): Promise<never> => Promise.reject(new Error('unused'));
 
-function service(row: AccessRow | undefined, add: AddBotResult = 'added', removed = true) {
+function service(row: AccessRow | undefined, add: AddBotResult = 'added', removed: MembershipEndResult = 'ended', deleted?: readonly DeletedMember[]) {
   const roles: boolean[] = [];
   const store: ConversationsStore = {
     async findAccess(_c, _u, withRole) {
@@ -15,6 +15,7 @@ function service(row: AccessRow | undefined, add: AddBotResult = 'added', remove
     },
     addBot: async () => add,
     removeBot: async () => removed,
+    deleteChannel: async () => deleted,
     createChannel: unused,
     discover: unused,
     join: unused,
@@ -27,6 +28,7 @@ function service(row: AccessRow | undefined, add: AddBotResult = 'added', remove
   const log: string[] = [];
   events.onMembershipStarted((c, u) => log.push(`joined:${c}:${u}`));
   events.onMembershipEnded((c, u) => log.push(`left:${c}:${u}`));
+  events.onConversationDeleted((c, ids) => log.push(`deleted:${c}:${ids.join(',')}`));
   return { svc: createConversationsService({ store, events, clock: () => 0 }), roles, log };
 }
 
@@ -52,7 +54,7 @@ describe('manage_bots 판정', () => {
     const added = service(undefined, 'added');
     expect(await added.svc.addBot('c', 'b')).toBe(true);
     expect(added.log).toEqual(['joined:c:b']);
-    const exists = service(undefined, 'exists', false);
+    const exists = service(undefined, 'exists', 'none');
     expect(await exists.svc.addBot('c', 'b')).toBe(false);
     await exists.svc.removeBot('c', 'b');
     expect(exists.log).toEqual([]);
@@ -60,5 +62,35 @@ describe('manage_bots 판정', () => {
     const removed = service(undefined);
     await removed.svc.removeBot('c', 'b');
     expect(removed.log).toEqual(['left:c:b']);
+  });
+});
+
+describe('FR-CONV-06 delete 판정·이벤트', () => {
+  it('owner는 멤버 여부와 무관하게 채널 통과, DM은 멤버면 400·비멤버면 404, 비owner는 멤버 403·비멤버 404, 없으면 404', async () => {
+    const del = (row: AccessRow | undefined) => status(service(row).svc.assertAccess('u', 'c', 'delete'));
+    expect(await del(undefined)).toBe(404);
+    expect(await del({ kind: 'channel', activeMember: false, role: 'owner' })).toBe('ok');
+    expect(await del({ kind: 'channel', activeMember: true, role: 'owner' })).toBe('ok');
+    expect(await del({ kind: 'dm', activeMember: true, role: 'owner' })).toBe(400);
+    expect(await del({ kind: 'dm', activeMember: false, role: 'owner' })).toBe(404);
+    expect(await del({ kind: 'channel', activeMember: true, role: 'member' })).toBe(403);
+    expect(await del({ kind: 'channel', activeMember: false, role: 'member' })).toBe(404);
+    expect(await del({ kind: 'dm', activeMember: true, role: 'member' })).toBe(403);
+    const withRole = service({ kind: 'channel', activeMember: false, role: 'owner' });
+    await withRole.svc.assertAccess('u', 'c', 'delete');
+    expect(withRole.roles).toEqual([true]);
+  });
+
+  it('삭제 성공 시 그 시점 활성 멤버로 conversationDeleted를 한 번 내고, 이미 사라졌으면 404·이벤트 0', async () => {
+    const ok = service(undefined, 'added', 'ended', [
+      { userId: 'h', kind: 'human' },
+      { userId: 'b', kind: 'bot' },
+    ]);
+    await ok.svc.deleteChannel('o', 'c');
+    // 삭제자(o)는 활성 멤버가 아니어도 대상에 포함된다(owner가 나간 채널, 중복 제거).
+    expect(ok.log).toEqual(['deleted:c:h,b,o']);
+    const gone = service(undefined, 'added', 'ended', undefined);
+    expect(await status(gone.svc.deleteChannel('o', 'c'))).toBe(404);
+    expect(gone.log).toEqual([]);
   });
 });

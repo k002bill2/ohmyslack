@@ -150,6 +150,12 @@ export function registerConversationRoutes(app: FastifyInstance, deps: Conversat
     return reply.code(204).send();
   });
 
+  // 채널 삭제(FR-CONV-06): 메인 리스너·사람 세션 전용. 봇 리스너에는 등록하지 않는다.
+  app.delete('/api/conversations/:id', { config: { access: 'conversation' }, preHandler: guarded('delete') }, async (request, reply) => {
+    await deps.conversations.deleteChannel(requireAuth(request).user.id, conversationId(request));
+    return reply.code(204).send();
+  });
+
   app.get(
     '/api/conversations/:id/members',
     { config: { access: 'conversation' }, preHandler: guarded('read') },

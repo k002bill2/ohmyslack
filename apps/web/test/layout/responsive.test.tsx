@@ -66,7 +66,9 @@ describe('FR-CLIENT-02 반응형', () => {
       expect(regions().nav).not.toBeNull();
       unmount();
     }
+  });
 
+  it('FR-CLIENT-02 medium 구간 경계 전후 폭에서 2단 사이드바와 오버레이 스레드 dialog로 렌더된다', async () => {
     for (const width of MEDIUM) {
       installViewport(width);
       const user = userEvent.setup();
@@ -82,28 +84,34 @@ describe('FR-CLIENT-02 반응형', () => {
       expect(shell(container).dataset.sidebar).toBe('expanded');
       unmount();
     }
+  });
 
-    for (const [widths, collapsedWhenOpen] of [[WIDE_NARROW, true], [WIDE_ROOMY, false]] as const) {
-      for (const width of widths) {
-        installViewport(width);
-        const user = userEvent.setup();
-        const { container, unmount } = render(<App dataSource={memory()} />);
-        const el = shell(container);
-        expect(el.dataset.layout).toBe('wide');
-        await openGeneralThread(user);
-        // 3단: 사이드바 + 본문 + 스레드 aside. 1120 미만이면 사이드바 72px 접힘(§5-2 필수).
-        const r = regions();
-        expect(r.nav).not.toBeNull();
-        expect(r.main?.hasAttribute('inert')).toBe(false);
-        expect(r.aside).not.toBeNull();
-        expect(r.dialog).toBeNull();
-        expect(el.dataset.sidebar).toBe(collapsedWhenOpen ? 'collapsed' : 'expanded');
-        await user.click(within(r.aside as HTMLElement).getByRole('button', { name: '닫기' }));
-        expect(el.dataset.sidebar).toBe('expanded');
-        unmount();
-      }
+  // 폭 구간별로 it를 나눠 병렬 커버리지 실행에서도 각 it가 5초 기본 제한 아래에 머문다(한 it 15폭 순회 시 실측 4.9–5.0s).
+  it.each([
+    ['wide-narrow(사이드바 접힘)', WIDE_NARROW, true],
+    ['wide-roomy(사이드바 펼침)', WIDE_ROOMY, false],
+  ] as const)('FR-CLIENT-02 %s 구간 폭에서 3단으로 렌더된다', async (_label, widths, collapsedWhenOpen) => {
+    for (const width of widths) {
+      installViewport(width);
+      const user = userEvent.setup();
+      const { container, unmount } = render(<App dataSource={memory()} />);
+      const el = shell(container);
+      expect(el.dataset.layout).toBe('wide');
+      await openGeneralThread(user);
+      // 3단: 사이드바 + 본문 + 스레드 aside. 1120 미만이면 사이드바 72px 접힘(§5-2 필수).
+      const r = regions();
+      expect(r.nav).not.toBeNull();
+      expect(r.main?.hasAttribute('inert')).toBe(false);
+      expect(r.aside).not.toBeNull();
+      expect(r.dialog).toBeNull();
+      expect(el.dataset.sidebar).toBe(collapsedWhenOpen ? 'collapsed' : 'expanded');
+      await user.click(within(r.aside as HTMLElement).getByRole('button', { name: '닫기' }));
+      expect(el.dataset.sidebar).toBe('expanded');
+      unmount();
     }
+  });
 
+  it('FR-CLIENT-02 스레드가 열린 채 폭이 구간을 넘으면 새 구간 표현으로 다시 그린다', async () => {
     // T5: 스레드가 열린 채 폭이 구간을 넘으면 같은 상태를 새 구간 표현으로 다시 그린다.
     installViewport(1280);
     const user = userEvent.setup();

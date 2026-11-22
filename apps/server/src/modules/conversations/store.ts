@@ -7,12 +7,16 @@ export type PeerKind = 'human' | 'bot';
 export interface AccessRow {
   readonly kind: ConversationKind;
   readonly activeMember: boolean;
-  /** 요청자의 워크스페이스 역할. `manage_bots` 판정 때만 읽는다(BOT_CHANNEL_SPEC §4-2). */
+  /** 요청자의 워크스페이스 역할. `manage_bots`·`delete` 판정 때만 읽는다(BOT_CHANNEL_SPEC §4-2, FR-CONV-06). */
   readonly role?: string;
 }
 
 /** 봇 채널 추가 결과: 새로 추가·이미 활성 멤버·대상 오류(활성 `kind='bot'`·같은 워크스페이스가 아님). */
-export type AddBotResult = 'added' | 'exists' | 'invalid_target';
+export type AddBotResult = 'added' | 'exists' | 'invalid_target' | 'deleted';
+/** 참여 결과: deleted = 삭제됐거나 없는 대화(가드 통과 후 삭제 커밋 경쟁 포함). */
+export type JoinResult = 'added' | 'exists' | 'deleted';
+/** 멤버십 종료 결과: ended = 바뀐 행 있음, none = 활성 멤버십 없음, deleted = 삭제됐거나 없는 대화. */
+export type MembershipEndResult = 'ended' | 'none' | 'deleted';
 
 export interface NewChannel {
   readonly id: string;
@@ -68,6 +72,12 @@ export interface MemberRow {
   readonly displayName: string;
 }
 
+/** 채널 삭제 통지 대상 — 그 채널에 멤버 행이 있었던 사람 전원(먼저 나간 사람 포함)·삭제 시점 활성 봇. 서비스가 삭제 요청 owner를 더해 사람에게 `conversation.deleted`, 봇에게 `membership.changed left`를 보낸다. */
+export interface DeletedMember {
+  readonly userId: string;
+  readonly kind: PeerKind;
+}
+
 export type CreateChannelResult = { readonly ok: true } | { readonly ok: false; readonly reason: 'name_taken' | 'no_workspace' };
 export type OpenDmResult = { readonly ok: true; readonly id: string } | { readonly ok: false };
 
@@ -76,16 +86,22 @@ export interface ConversationsStore {
   findAccess(conversationId: string, userId: string, withRole?: boolean): Promise<AccessRow | undefined>;
   /** 봇 멤버십 UPSERT(joinIn과 같은 규칙). 대상이 대화와 같은 워크스페이스의 활성 봇이 아니면 invalid_target(변경 0). */
   addBot(conversationId: string, botUserId: string, at: Date): Promise<AddBotResult>;
-  /** 활성 **봇** 멤버십에만 left_at을 기록한다(사람 대상은 바뀌지 않음). 바뀐 행이 없으면 false. */
-  removeBot(conversationId: string, botUserId: string, at: Date): Promise<boolean>;
+  /**
+   * 공개 채널 소프트 삭제(FR-CONV-06): `deleted_at`·`deleted_by` 기록 + 통지 대상 반환(한 트랜잭션) — 멤버 행이 있었던 사람 전원(먼저 나간 사람 포함)·삭제 시점 활성 봇.
+   * 같은 트랜잭션에서 활성 멤버십 전원(사람·봇)에 left_at=삭제 시각을 기록한다(fix1 구조 수정).
+   * 없는 ID·DM·이미 삭제된 채널이면 undefined(변경 0). 메시지·첨부 행은 바꾸지 않는다.
+   */
+  deleteChannel(conversationId: string, deletedBy: string, at: Date): Promise<readonly DeletedMember[] | undefined>;
+  /** 활성 **봇** 멤버십에만 left_at을 기록한다(사람 대상은 바뀌지 않음). 대화 행은 잠그지 않고 멤버 행 갱신으로 삭제와 직렬화한다(삭제됨·없음이면 deleted). */
+  removeBot(conversationId: string, botUserId: string, at: Date): Promise<MembershipEndResult>;
   /** 채널 생성 + 생성자 멤버십·read state(한 트랜잭션). 같은 workspace의 같은 name_norm은 name_taken. */
   createChannel(channel: NewChannel): Promise<CreateChannelResult>;
   /** 요청자에게 활성 멤버십이 없는 같은 workspace 공개 채널(id 오름차순 cursor). */
   discover(userId: string, after: string | undefined, limit: number): Promise<readonly ChannelListing[]>;
   /** 참여·재참여: joined_seq=last_seq, read cursor 초기화. 이미 활성 멤버면 바꾸지 않는다. */
-  join(conversationId: string, userId: string, at: Date): Promise<void>;
-  /** 활성 멤버십에 left_at을 기록한다. 바뀐 행이 없으면 false. */
-  leave(conversationId: string, userId: string, at: Date): Promise<boolean>;
+  join(conversationId: string, userId: string, at: Date): Promise<JoinResult>;
+  /** 활성 멤버십에 left_at을 기록한다. 대화 행은 잠그지 않고 멤버 행 갱신으로 삭제와 직렬화한다(삭제됨·없음이면 deleted). */
+  leave(conversationId: string, userId: string, at: Date): Promise<MembershipEndResult>;
   listMembers(conversationId: string): Promise<readonly MemberRow[]>;
   /** 활성 멤버십 대화(id 오름차순 cursor, 최대 limit행). */
   listForUser(userId: string, after: string | undefined, limit: number): Promise<readonly ConversationRow[]>;

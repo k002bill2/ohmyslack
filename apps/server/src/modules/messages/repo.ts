@@ -191,7 +191,8 @@ async function rootIsValid(client: pg.PoolClient, conversationId: string, rootId
 }
 
 async function sendIn(client: pg.PoolClient, msg: NewMessage): Promise<TxOutcome<SendResult>> {
-  const locked = await client.query('SELECT id FROM conversations WHERE id = $1 FOR UPDATE', [msg.conversationId]);
+  // 삭제된 채널(FR-CONV-06)은 없는 대화와 같다: 가드 통과 뒤 삭제가 먼저 commit돼도 잠금 재확인에서 거부한다.
+  const locked = await client.query('SELECT id FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [msg.conversationId]);
   if ((locked.rowCount ?? 0) === 0) return { commit: false, value: { kind: 'not_member' } };
   const existing = await client.query<{ id: string }>(
     'SELECT id FROM messages WHERE conversation_id = $1 AND author_id = $2 AND client_message_id = $3',
@@ -252,6 +253,10 @@ async function lockOwn(client: pg.PoolClient, id: string, actorId: string): Prom
   );
   const row = res.rows[0];
   if (row === undefined || row.deleted_at !== null) return 'not_found';
+  // 삭제(UPDATE conversations)와 충돌하는 FOR SHARE: 가드 통과 후 삭제 커밋 경쟁이면 0행 → not_found(FR-CONV-06).
+  // 전송과는 이미 recordChange의 sync_clock 행 갱신(전역 단일 행)으로 직렬화돼 있어 처리량 손실이 새로 생기지 않는다.
+  const live = await client.query('SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [row.conversation_id]);
+  if ((live.rowCount ?? 0) === 0) return 'not_found';
   if (!(await isActiveMember(client, row.conversation_id, actorId))) return 'not_found';
   if (row.author_id !== actorId) return 'forbidden';
   return { conversationId: row.conversation_id, threadRootId: row.thread_root_id };

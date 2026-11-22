@@ -157,6 +157,7 @@ describe('컴포넌트 미구현 항목의 문구 상수(정본 그대로)', () 
       startDm: 'DM 시작',
       createInvite: '초대 링크 만들기',
       leaveChannel: '채널 나가기',
+      deleteChannel: '채널 삭제',
       deactivateMember: '멤버 비활성화',
       deleteMessage: '메시지 삭제',
       shortcuts: '키보드 단축키',

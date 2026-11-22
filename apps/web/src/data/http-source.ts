@@ -121,6 +121,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const storage = deps.storage === undefined ? undefined : deps.storage;
   const isOnline = deps.isOnline ?? (() => navigator.onLine);
   const listeners = new Set<() => void>();
+  /** 채널 삭제 알림 구독자(FR-CONV-06) — 화면이 그 대화의 초안·첨부 초안을 버린다. */
+  const deletedListeners = new Set<(conversationId: string) => void>();
   let snapshot: Snapshot = Object.freeze({ spaces: [], messages: [], connection: 'catching-up' as ConnectionState, loadedHistory: null });
   let fold: FoldState = emptyFold;
   let spaces: readonly Space[] = [];
@@ -180,8 +182,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     if ([...leftChannels.keys()].some((id) => ids.has(id))) {
       leftChannels = new Map([...leftChannels].filter(([id]) => !ids.has(id)));
     }
-    return [...list, ...leftChannels.values()];
+    const all = [...list, ...leftChannels.values()];
+    return deleted.size === 0 ? all : all.filter((sp) => !deleted.has(sp.id));
   };
+  /** 이번 세션에 삭제된 채널(FR-CONV-06). 삭제 전에 시작된 목록 응답이 늦게 와도 되살리지 않는다. */
+  let deleted: ReadonlySet<string> = new Set();
+  /** 삭제 제외 목록 — `summaries`는 항상 이 필터를 거친다(목록·배경 구독·open 존재 판정의 단일 정본). */
+  const listed = (list: readonly Summary[]): readonly Summary[] => (deleted.size === 0 ? list : list.filter((c) => !deleted.has(c.id)));
   let detach = () => undefined as void;
   const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const clearTimer = deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
@@ -411,6 +418,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     loadedHistory = null;
     readFailures = 0;
     background = new Set();
+    deleted = new Set();
     if (readTimer !== null) clearTimer(readTimer);
     if (reloadTimer !== null) clearTimer(reloadTimer);
     readTimer = null;
@@ -504,8 +512,58 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       }
     });
 
+  /**
+   * 채널 삭제 확정(FR-CONV-06 — WS `conversation.deleted`·본인 `deleteChannel` 204·`joinChannel` 404만):
+   * `deleted` 등록 + 접근 정리(`releaseConversation`) + 초안 폐기 알림·오프라인 전송 큐 폐기·접힌 본문 정리.
+   * 현재 대화였으면 화면은 목록에 없는 대화(MissingConversation)로 바뀐다.
+   */
+  const forgetConversation = (conversationId: string) => {
+    deleted = new Set(deleted).add(conversationId);
+    if (leftChannels.has(conversationId)) leftChannels = new Map([...leftChannels].filter(([id]) => id !== conversationId));
+    releaseConversation(conversationId);
+    deletedListeners.forEach((l) => l(conversationId));
+    // 오프라인 큐의 메시지가 online 복귀 때 삭제된 대화로 POST되지 않게 버리고, 접힌 본문도 지운다(agy r2).
+    sendController.discardConversation(conversationId);
+    if ([...fold.messages.values()].some((m) => m.conversationId === conversationId)) {
+      fold = { applied: fold.applied, messages: new Map([...fold.messages].filter(([, m]) => m.conversationId !== conversationId)) };
+    }
+    emit();
+  };
+
+  /**
+   * 접근 상실·미확정(재연결 구독 not_found·snapshot 404 — 삭제와 다른 기기 나가기를 구분할 수 없다, Aside r3):
+   * 구독·배경 구독·ACK·current·읽음 대기열·보류 스레드 읽음을 비우고 목록에서 내린다.
+   * 초안·오프라인 전송 큐·`deleted`는 건드리지 않는다 — 다시 참여해 목록에 돌아오면 그대로 이어진다.
+   */
+  const releaseConversation = (conversationId: string) => {
+    if (background.has(conversationId)) {
+      background = new Set([...background].filter((b) => b !== conversationId));
+      if (realtime.isOpen()) realtime.send({ type: 'conversation.unsubscribe', conversation_id: conversationId });
+    }
+    if (unlisted.has(conversationId)) unlisted = new Map([...unlisted].filter(([id]) => id !== conversationId));
+    if (current === conversationId) {
+      // 재연결(runResume) 중이면 접근 거절과 같은 정상 경로(MissingConversation)로 끝나게 not_found로 거절한다(agy).
+      acks.get(conversationId)?.reject(new SubscribeRejected('not_found'));
+      acks.delete(conversationId);
+      current = null;
+    }
+    summaries = listed(summaries).filter((c) => c.id !== conversationId);
+    if ([...readQueue.values()].some((r) => r.conversationId === conversationId)) {
+      readQueue = new Map([...readQueue].filter(([, r]) => r.conversationId !== conversationId));
+    }
+    if ([...deferredThreadReads.values()].some((r) => r.conversationId === conversationId)) {
+      deferredThreadReads = new Map([...deferredThreadReads].filter(([, r]) => r.conversationId !== conversationId));
+    }
+    spaces = spaces.filter((sp) => sp.id !== conversationId);
+    emit();
+  };
+
   const onFrame = (frame: WsServerFrame) => {
     if (ended) return;
+    if (frame.type === 'conversation.deleted') {
+      forgetConversation(frame.conversation_id);
+      return;
+    }
     if (onBackgroundFrame(frame)) return;
     switch (frame.type) {
       case 'conversation.subscribed':
@@ -690,8 +748,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 더 늦게 시작된 성공 응답을 이미 반영했다 — 오래된 목록이 최신 목록·pending을 덮지 않게 버리고 반영된 목록을 돌려준다(PR 28 Codex r4 P2).
     if (startedAt < listApplied) return summaries;
     listApplied = startedAt;
-    summaries = all;
-    spaces = withLeft(all.map((c) => toSpace(c, names, reads, inactiveNames)));
+    summaries = listed(all);
+    spaces = withLeft(summaries.map((c) => toSpace(c, names, reads, inactiveNames)));
     listState = 'ready';
     // 성공한 목록이 진실 — 동작 성공 뒤에 시작된 조회면 그 id는 이제 「목록에 있음/없음」이 확정됐다.
     // 동작 성공 전에 시작된 조회(동작 전 상태)는 확정할 수 없으므로 남긴다.
@@ -699,13 +757,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     notePeers();
     syncBackground();
     retryDeferredThreadReads();
-    return all;
+    return summaries;
   };
 
   /** 거절된 대화를 현재 대화에서 내리고 목록을 다시 읽는다(접근 권한이 사라졌으면 목록에서도 빠진다). */
   const release = async (conversationId: string) => {
     if (current === conversationId) current = null;
-    await loadList();
+    const list = await loadList();
+    // not_found + 다시 읽은 목록에도 없음 → 오프라인 중 삭제 또는 다른 기기에서 나감(구분 불가): 접근 정리만 한다(Aside r3).
+    // 초안·전송 큐·`deleted`는 남긴다 — 다시 참여하면 목록이 되살린다.
+    if (!ended && !list.some((c) => c.id === conversationId) && !leftChannels.has(conversationId)) releaseConversation(conversationId);
     if (!ended) emit();
   };
 
@@ -730,7 +791,16 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     fold = emptyFold;
     let first: number | null = null;
     for (const c of await loadList()) {
-      const snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
+      if (deleted.has(c.id)) continue;
+      let snap: SnapshotResponse;
+      try {
+        snap = await api.get<SnapshotResponse>(`/api/sync/snapshot?conversation_id=${encodeURIComponent(c.id)}`);
+      } catch (e) {
+        // 목록 뒤 순회 중 접근을 잃은 대화(404 — 삭제 또는 다른 기기에서 나감)는 접근 정리만 하고 계속한다(agy r2, Aside r3).
+        if (!(e instanceof HttpStatusError) || e.status !== 404) throw e;
+        releaseConversation(c.id);
+        continue;
+      }
       first ??= snap.snapshot_cursor;
       for (const m of snap.messages) {
         fold = foldView(0, m);
@@ -778,6 +848,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 복귀 중 대화가 바뀌었으면 바뀐 대화를 다시 구독한다 — 현재 대화의 ACK 뒤에만 연결됨·checkpoint 전진(Codex r2 P2).
     for (let target = current; target !== null; target = current) {
       await waitOpen();
+      // 소켓을 기다리는 동안 삭제(forgetConversation)·전환됐으면 그 대화는 구독하지 않는다(agy r2).
+      if (current !== target) continue;
       try {
         await subscribe(target, watermark);
       } catch (e) {
@@ -1022,10 +1094,19 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       }),
     joinChannel: (conversationId) =>
       attempt(async () => {
-        const ref = await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`);
+        let ref: ConversationRef;
+        try {
+          ref = await api.post<ConversationRef>(`/api/conversations/${encodeURIComponent(conversationId)}/join`);
+        } catch (e) {
+          // 나가 있는 동안 삭제된 채널(404 — 서버 join 404는 없는 ID·삭제·DM뿐): 확정 삭제로 정리하고 실패를 돌려준다(agy r2).
+          if (e instanceof HttpStatusError && e.status === 404) forgetConversation(conversationId);
+          throw e;
+        }
         const next = new Map(leftChannels);
         next.delete(conversationId);
         leftChannels = next;
+        // 재참여 성공 = 살아 있는 채널: 삭제 기억이 남아 있어도 목록·열기를 막지 않게 지운다(방어, Aside r3).
+        if (deleted.has(conversationId)) deleted = new Set([...deleted].filter((d) => d !== conversationId));
         return refreshThen(ref.id);
       }),
     leaveChannel: (conversationId) =>
@@ -1044,6 +1125,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         spaces = withLeft(spaces.filter((sp) => sp.id !== conversationId));
         emit();
         await refreshThen(conversationId, false);
+        return null;
+      }),
+    deleteChannel: (conversationId) =>
+      attempt(async () => {
+        await api.del<undefined>(`/api/conversations/${encodeURIComponent(conversationId)}`);
+        if (current === conversationId) realtime.send({ type: 'conversation.unsubscribe', conversation_id: conversationId });
+        forgetConversation(conversationId);
         return null;
       }),
     listConversationMembers: (conversationId) =>
@@ -1104,6 +1192,12 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    onConversationDeleted(listener) {
+      deletedListeners.add(listener);
+      return () => {
+        deletedListeners.delete(listener);
+      };
+    },
     send(target, body, mentionUserIds, attachmentIds) {
       nextRoot = target.rootId;
       nextMentions = mentionUserIds;
@@ -1151,7 +1245,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       if (keep) background = new Set(background).add(prev);
       else if (prev !== null) realtime.send({ type: 'conversation.unsubscribe', conversation_id: prev });
       // 나간 채널은 구독·이력을 열지 않는다(구독은 서버가 거절한다) — 다시 참여 뒤 `open(id)`이 연다.
-      current = conversationId !== null && leftChannels.has(conversationId) ? null : conversationId;
+      current = conversationId !== null && (leftChannels.has(conversationId) || deleted.has(conversationId)) ? null : conversationId;
       // 대화 전환: 보류 스레드 위치와 재시도 백오프를 초기화한다(Codex r1 P2-1·3).
       deferredThreadReads = new Map();
       repliesLoaded = new Set();
