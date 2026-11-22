@@ -60,9 +60,17 @@ const BOT_TARGET_SQL = `SELECT 1 FROM users u
   JOIN conversations c ON c.workspace_id = wm.workspace_id
   WHERE u.id = $2 AND u.kind = 'bot' AND u.status = 'active' AND c.id = $1 AND c.deleted_at IS NULL`;
 
-/** 활성 봇 멤버만 나가게 한다(사람 멤버십은 이 경로로 바뀌지 않음). 호출자가 LIVE_CONVERSATION_LOCK_SQL로 먼저 잠근다. */
-const REMOVE_BOT_SQL = `UPDATE conversation_members m SET left_at = $3 FROM users u
-  WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.left_at IS NULL AND u.id = m.user_id AND u.kind = 'bot'`;
+/**
+ * 멤버십 종료(leave·removeBot)는 대화 행을 잠그지 않는다. 같은 문장에서 c.deleted_at IS NULL을 확인하고, 삭제의
+ * END_MEMBERSHIPS_SQL과는 **멤버 행** 잠금으로 직렬화된다: 삭제가 먼저 commit되면 재평가에서 left_at IS NULL이
+ * 거짓이 돼 0행. 그래서 메시지 전송(sendIn의 대화 행 FOR UPDATE)과 서로 막지 않는다(agy r2 minor).
+ */
+const REMOVE_BOT_SQL = `UPDATE conversation_members m SET left_at = $3 FROM users u, conversations c
+  WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.left_at IS NULL AND u.id = m.user_id AND u.kind = 'bot'
+    AND c.id = m.conversation_id AND c.deleted_at IS NULL`;
+
+const LEAVE_SQL = `UPDATE conversation_members m SET left_at = $3 FROM conversations c
+  WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.left_at IS NULL AND c.id = m.conversation_id AND c.deleted_at IS NULL`;
 
 /** 공개 채널만 소프트 삭제한다(이미 삭제·DM·없는 ID는 0행). 대화 행 잠금으로 동시 전송·참여와 직렬화된다. */
 const DELETE_CHANNEL_SQL = `UPDATE conversations SET deleted_at = $3, deleted_by = $2
@@ -81,8 +89,8 @@ const DELETION_RECIPIENTS_SQL = `SELECT m.user_id, u.kind FROM conversation_memb
  */
 const END_MEMBERSHIPS_SQL = 'UPDATE conversation_members SET left_at = $2 WHERE conversation_id = $1 AND left_at IS NULL';
 
-/** 쓰기 경로 tx 첫머리 확인·잠금: 삭제의 UPDATE(FOR NO KEY UPDATE)와 충돌해 삭제 커밋과 직렬화된다. 0행이면 삭제됨/없음. */
-export const LIVE_CONVERSATION_LOCK_SQL = 'SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE';
+/** 멤버십 종료가 0행일 때만: 삭제됨/없음(→ deleted, 404)과 이미 나감(→ none)을 가른다. 잠그지 않는다. */
+const LIVE_CONVERSATION_SQL = 'SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL';
 
 const WORKSPACE_OF_SQL = 'SELECT workspace_id FROM workspace_members WHERE user_id = $1';
 
@@ -175,8 +183,10 @@ async function joinIn(client: pg.PoolClient, conversationId: string, userId: str
   return 'added';
 }
 
-async function lockLive(client: pg.PoolClient, conversationId: string): Promise<boolean> {
-  return ((await client.query(LIVE_CONVERSATION_LOCK_SQL, [conversationId])).rowCount ?? 0) > 0;
+/** 멤버십 종료 문장 실행 → ended / none(대화는 살아 있음) / deleted(삭제됨·없음). */
+async function endMembership(client: pg.PoolClient, sql: string, conversationId: string, userId: string, at: Date): Promise<MembershipEndResult> {
+  if (((await client.query(sql, [conversationId, userId, at])).rowCount ?? 0) > 0) return 'ended';
+  return ((await client.query(LIVE_CONVERSATION_SQL, [conversationId])).rowCount ?? 0) > 0 ? 'none' : 'deleted';
 }
 
 async function workspaceOf(client: pg.PoolClient, userId: string): Promise<string | undefined> {
@@ -215,9 +225,8 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
     },
     removeBot(conversationId, botUserId, at) {
       return inTransaction<MembershipEndResult>(pool, async (client) => {
-        if (!(await lockLive(client, conversationId))) return { commit: false, value: 'deleted' };
-        const res = await client.query(REMOVE_BOT_SQL, [conversationId, botUserId, at]);
-        return { commit: true, value: (res.rowCount ?? 0) > 0 ? 'ended' : 'none' };
+        const value = await endMembership(client, REMOVE_BOT_SQL, conversationId, botUserId, at);
+        return { commit: value === 'ended', value };
       });
     },
     createChannel(channel) {
@@ -246,12 +255,8 @@ export function createPgConversationsStore(pool: pg.Pool): ConversationsStore {
     },
     leave(conversationId, userId, at) {
       return inTransaction<MembershipEndResult>(pool, async (client) => {
-        if (!(await lockLive(client, conversationId))) return { commit: false, value: 'deleted' };
-        const res = await client.query(
-          'UPDATE conversation_members SET left_at = $3 WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL',
-          [conversationId, userId, at],
-        );
-        return { commit: true, value: (res.rowCount ?? 0) > 0 ? 'ended' : 'none' };
+        const value = await endMembership(client, LEAVE_SQL, conversationId, userId, at);
+        return { commit: value === 'ended', value };
       });
     },
     async listMembers(conversationId) {

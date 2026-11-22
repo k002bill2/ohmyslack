@@ -158,6 +158,7 @@ export interface AttachmentsStore {
  * 사람 업로드 저장 tx 안 대화 확인·잠금(FR-CONV-06): 삭제(UPDATE conversations)와 충돌하는 FOR SHARE.
  * 가드 통과 후 삭제가 커밋됐으면 false(호출자가 404로 거부해 저장 0).
  */
+// 전송과의 직렬화는 새로 생기지 않는다: attachments INSERT의 FK 확인(FOR KEY SHARE)이 이미 sendIn의 대화 행 FOR UPDATE와 충돌한다(agy r2 minor 검증).
 export async function lockLiveConversation(client: pg.PoolClient, conversationId: string): Promise<boolean> {
   const res = await client.query('SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [conversationId]);
   return (res.rowCount ?? 0) > 0;

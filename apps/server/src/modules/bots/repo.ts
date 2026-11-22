@@ -150,6 +150,7 @@ export async function lockUploadGrant(
     return 'unauthenticated';
   }
   // 삭제(UPDATE conversations)와 충돌하는 FOR SHARE: 가드 통과 후 삭제가 커밋되면 여기서 0행 → not_found(FR-CONV-06).
+  // 전송과의 직렬화는 기존과 같다: 이전의 FOR KEY SHARE도 sendIn의 대화 행 FOR UPDATE와 충돌했다(agy r2 minor 검증).
   if (!(await one('SELECT 1 FROM conversations WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [grant.conversationId]))) return 'not_found';
   const member = 'SELECT 1 FROM conversation_members WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL FOR SHARE';
   return (await one(member, [grant.conversationId, grant.botUserId])) ? 'ok' : 'not_found';
