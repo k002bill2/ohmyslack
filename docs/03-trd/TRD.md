@@ -95,6 +95,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/conversations/discover?after=&limit=` | 아직 참여하지 않은 공개 채널 목록. join 전에는 메시지·멤버 정보를 반환하지 않음 |
 | `POST /api/conversations` | `{kind:"channel",name}` 채널 생성. owner 전용(PRD FR-CONV-01) |
 | `POST /api/conversations/{id}/join`, `DELETE /api/conversations/{id}/membership` | 공개 채널 참여·나가기. 나간 뒤 구독 즉시 해제 |
+| `DELETE /api/conversations/{id}` | 공개 채널 소프트 삭제(P1 FR FR-CONV-06, 마이그레이션 `0008`: `conversations.deleted_at`·`deleted_by`, 채널 이름 유니크는 `deleted_at IS NULL` 부분 인덱스). 본문 없음 → 204. `access: conversation`(action `delete`, `assertAccess` 단일 판정): owner만 허용(멤버 여부 무관), 비owner 멤버 403 `forbidden`, 비멤버·없는 ID·이미 삭제 404 `not_found`, DM 400 `invalid_request`(DM 비멤버 owner는 404). 메인 리스너 전용(봇 리스너 미등록). 삭제된 대화는 접근 판정·목록·discover·join·전송 잠금에서 없는 대화와 같다. commit 후 기존 멤버의 구독을 끊고 `conversation.deleted`(사람)·`membership.changed left`(봇)를 보냄. `conversation_changes`에는 기록하지 않음(오프라인 기기는 재연결 시 목록으로 정합) |
 | `POST /api/conversations/{id}/bots`, `DELETE /api/conversations/{id}/bots/{bot_user_id}` | owner가 참여 중인 공개 채널에 봇 추가·제거(access `conversation`, action `manage_bots`, P1 FR FR-BOT-08). 추가 201·이미 멤버 200, 제거 204(멱등). 제거 뒤 봇 구독 즉시 해제 |
 | `POST /api/dms` | `{user_id}`로 DM 시작. 정렬된 pair key로 동시 중복 생성 방지 |
 | `GET /api/conversations/{id}/members` | 활성 참여자 목록. 참여자만 접근 |
@@ -146,6 +147,7 @@ Endpoint는 same-origin `/api/ws`입니다. handshake에서 cookie session, 정�
 | `read.updated` | server→client: `conversation_id`, `thread_root_id?`, `last_read_seq`, `updated_at`; null root은 본문 읽음 |
 | `sync.required` | server→client: REST catch-up 수행 지시 |
 | `membership.changed` | server→client: `conversation_id`, `state: 'joined' \| 'left'`. 영향받는 봇의 모든 연결에만 보냄(대화 구독자 팬아웃 아님, P1 FR FR-BOT-09). `left`는 기존 멤버십 종료 처리(`error not_found` + 구독 삭제) 뒤에 보냄 |
+| `conversation.deleted` | server→client: `conversation_id`. owner가 채널을 삭제했을 때(P1 FR FR-CONV-06) 그 시점 활성 멤버였던 사람 사용자의 모든 연결에 보냄. 기존 구독 종료(`error not_found` + 구독 삭제) 뒤에 보냄. 봇 연결에는 대신 `membership.changed left` |
 | `error` | 비민감 `code`, `retryable` |
 
 메시지 read/history 응답과 create/update 이벤트는 `mention_user_ids: uuid[]`를 제공하며, 본문 속 `@이름`은 표시용입니다. 멘션 집계는 ID 배열과 `message_mentions`를 기준으로 합니다. 답글 생성은 `root_reply_count`를 갱신해 이벤트 및 root 응답에 반영하며, 삭제된 답글은 이 수에서 제외합니다. 원문·답글 작성 및 수신 mention은 해당 root의 `thread_unread_targets`를 원자적으로 추가합니다. 읽은 메시지에 나중에 추가된 mention은 unread cursor를 후퇴시키지 않습니다. 수정은 같은 트랜잭션에서 mention 관계를 교체합니다.
@@ -418,6 +420,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 | R3.4 (BOT_CHANNEL_SPEC) | 2026-11-10 | 봇 채널 참여 P1 FR(영환님 결정, BOT_CHANNEL_SPEC §10-1 Q1–Q8 ★ 채택): §3 봇 추가·제거 라우트, §4 `membership.changed`, §5-2 (5) 공개 채널·수치 상한 없음·봇 읽기 `joined_seq` 이후, (6) 봇 `/me` 대화 종류·표시 이름 |
 | R3.5 (ADR-002 §4) | 2026-11-13 | 문서 첨부 계약 §6-1-1 신설(영환님 결정 §4-3 5개 불변): 허용 형식 9종·ZIP/OLE 목록 판정·단일 일치·판정기 자원 상한·`has_macros`·확장자 일치 415·25 MiB 상수·업로드/봇 리스너 상한·파일명 정규화·`attachment` 다운로드·90일·드릴 측정 항목·Hermes 경계. §2 `attachments` 행에 `0005` 지시. 구현 전 계약(1b 레인) |
 | R3.7 (p2s1-attach-order) | 2026-11-14 | 첨부 표시 순서(영환님 결정 2026-11-14): 메시지의 `attachments` 배열 = 전송 요청 `attachment_ids` 순서(응답·이력·답글·sync·WS·봇 경로 공통, 중복 ID 새 요청은 기존대로 400). §2 `attachments.bind_order`(마이그레이션 `0007`, 기존 행 NULL·백필 없음), §3 messages 행, §6-1 결속·projection 정렬. 멱등 비교는 집합 그대로(순서만 다른 재시도 = 원결과) |
+| R3.8 (chdel-server) | 2026-11-22 | 채널 삭제(P1 FR FR-CONV-06, 영환님 요청): §3 `DELETE /api/conversations/{id}`(소프트 삭제·마이그레이션 `0008`·이름 재사용), §4 `conversation.deleted` 프레임 |
 
 ## 리뷰 반영 기록
 
