@@ -91,6 +91,16 @@ export function LogOutIcon() {
   );
 }
 
+/** 환경설정 톱니(Lucide `settings` 형태, ISC — 16 격자로 다시 그림). */
+export function SettingsIcon() {
+  return (
+    <svg {...BASE}>
+      <path d="M6.6 1.5h2.8l.4 1.8 1.2.7 1.8-.6 1.4 2.4-1.4 1.3v1.4l1.4 1.3-1.4 2.4-1.8-.6-1.2.7-.4 1.8H6.6l-.4-1.8-1.2-.7-1.8.6-1.4-2.4 1.4-1.3V7.1L1.8 5.8l1.4-2.4 1.8.6 1.2-.7z" />
+      <circle cx="8" cy="8" r="2" />
+    </svg>
+  );
+}
+
 /** 내비게이션 접기·펼치기(Lucide `panel-left` 형태). */
 export function PanelLeftIcon() {
   return (

@@ -6,12 +6,13 @@ import { Composer, ComposerNotice, DateSeparator, bodyMentionsName, isAtBottom, 
 import { Sidebar } from '../sidebar';
 import { PanelRightIcon } from '../sidebar/icons.js';
 import { ConnectionBanner } from '../sync';
-import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
+import { COMPOSER_COPY, DIALOG_CLOSE_LABEL, PREFERENCES_COPY, messageComposerLabel, messagePlaceholder } from '../../ui/copy.js';
 import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
 import { SessionList } from '../sessions';
 import { ThreadPanel } from '../thread';
 import { browserPushEnv, InstallCard, PushDialog, PushSettings, useInstallPrompt } from '../pwa';
+import { PreferencesDialog, type PreferencesSection } from '../preferences';
 import { canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useBotChannelMenu, useConversationMembers, type BotChannelControlProps } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
 import type { ActionResult } from '../../data';
@@ -356,7 +357,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   /** 같은 공간을 다시 골라도(전환기) 작성기 포커스 효과가 돌게 하는 카운터(F4). */
   const [focusTick, bumpFocus] = useReducer((n: number) => n + 1, 0);
   /** D §7-3 `Ctrl/⌘+K` 공간 전환기·`Ctrl/⌘+/` 단축키 안내. */
-  const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | 'notifications' | null>(null);
+  const [overlay, setOverlay] = useState<'switcher' | 'shortcuts' | 'notifications' | 'preferences' | null>(null);
 
   const space = snap.spaces.find((s) => s.id === state.conversationId);
   /** 비동기 참여 완료 시점의 선택 대화(렌더 당시 값이 아니라 최신). */
@@ -373,6 +374,14 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
     selectedId.current = state.conversationId;
   }, [state.conversationId]);
   const pushEnv = useMemo(() => (dataSource.push ? browserPushEnv() : null), [dataSource.push]);
+  // 환경설정 섹션은 여기서 조립한다 — 섹션 추가 = 항목 하나 추가. 0개면 설정 아이콘을 숨긴다.
+  const preferenceSections = useMemo<readonly PreferencesSection[]>(
+    () =>
+      pushEnv !== null && dataSource.push
+        ? [{ id: 'notifications', label: PREFERENCES_COPY.sections.notifications, description: PREFERENCES_COPY.notificationsDescription, content: <PushSettings env={pushEnv} server={dataSource.push} /> }]
+        : [],
+    [pushEnv, dataSource.push],
+  );
   const root = snap.messages.find((m) => m.id === state.threadRootId && m.conversationId === state.conversationId);
   // 나간 채널은 스레드도 닫힌 것으로 본다 — 답글 작성기로 나간 채널에 보내지 않게(Codex r1 P2).
   const threadOpen = space !== undefined && root !== undefined && space.left !== true;
@@ -672,7 +681,7 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {...(dataSource.listSessions && dataSource.revokeSession ? { onManageSessions: () => setSettings('sessions') } : {})}
       {...(dataSource.logout ? { onLogout: () => void dataSource.logout?.() } : {})}
       {...(dataSource.joinChannel ? { onRejoin: rejoin } : {})}
-      {...(pushEnv !== null && dataSource.push ? { pushSettings: <PushSettings env={pushEnv} server={dataSource.push} /> } : {})}
+      {...(preferenceSections.length > 0 ? { onOpenPreferences: () => setOverlay('preferences') } : {})}
     />
   );
   const spacePanel = panel !== null && (
@@ -821,6 +830,10 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
       {/* 알림 설정은 compact(iPhone 홈 화면 앱)에서도 연다 — 위 오버레이 묶음은 compact에서 그리지 않는다. */}
       {overlay === 'notifications' && pushEnv !== null && dataSource.push && (
         <PushDialog env={pushEnv} server={dataSource.push} onClose={() => setOverlay(null)} />
+      )}
+      {/* 환경설정도 compact에서 연다(설정 아이콘은 compact 공간 목록 계정 카드에도 있다). */}
+      {overlay === 'preferences' && preferenceSections.length > 0 && (
+        <PreferencesDialog sections={preferenceSections} onClose={() => setOverlay(null)} />
       )}
       <div className="visually-hidden" aria-live="polite">
         {announcement}

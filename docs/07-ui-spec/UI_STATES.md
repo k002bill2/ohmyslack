@@ -51,6 +51,7 @@
 | CMP-28 | `AudioAttachment` | 오디오(mp3) 플레이어 | §2-5(첨부 표시) | D §6-2, P FR-OPS-05 |
 | CMP-29 | `ImageAttachment` | 이미지 썸네일·확대 | §2-5(첨부 표시) | D §6-2, P FR-OPS-05 |
 | CMP-30 | `PushSettings` | 설정의 이 기기 알림 구독 카드 | §2-10 | D §6-2, P FR-CLIENT-05 |
+| CMP-34 | `PreferencesDialog` | 「환경설정」 Dialog — 좌측 섹션 목록(세로 tablist) + 우측 패널(h3 제목·설명·내용), 첫 섹션 「알림」(CMP-30) | §2-10 | 2026-11-23 영환님 지시, COPY_GAPS G-76 |
 | CMP-32 | `DocumentAttachment` | 메시지 안 문서 행(형식 표지·파일명·크기·「매크로 포함」·「받기」) + 작성기 문서 칩(ADR-002 1b) | §2-13 | D §6-2, §6-5, P FR-OPS-09 |
 
 - CMP-31은 2단계 `ProcessingStatus`(Jarvis 처리 상태, Claude-Fable §5-1 후보 ID) 자리로 비워 둔다. Claude-Fable §5-1의 후보 CMP-33 `SessionList`는 쓰지 않고 기존 CMP-22를 구체화한다(REPORT UI-D1).
@@ -319,7 +320,9 @@
 - CMP-21 `Avatar`: 이니셜 원형, neutral 5 고정, `alt` 대신 `aria-label` 이름(D §7-5). 상태 없음.
 - CMP-22 `SessionList`: §2-14(ADR-002 1c, FR-AUTH-04).
 
-**CMP-30 `PushSettings`** (P FR-CLIENT-05, ADR-001 §3-i, 전송 경로·키 관리 T §6-2). 카드 문구는 전부 — (정본 없음 → §8 Q-H4), 위치도 Q-H4.
+**CMP-30 `PushSettings`** (P FR-CLIENT-05, ADR-001 §3-i, 전송 경로·키 관리 T §6-2). 카드 문구는 전부 — (정본 없음 → §8 Q-H4). 위치: 사이드바 계정 영역 설정 아이콘 → 환경설정 Dialog(CMP-34) 「알림」 섹션 + Jarvis DM 헤더 「알림 설정…」 Dialog(2026-11-23 영환님 지시 — 계정 카드 아래 상시 카드는 폐지).
+
+**CMP-34 `PreferencesDialog`** (2026-11-23 영환님 지시). 사이드바 계정 카드 아이콘 줄(멤버 관리 → 세션 → **환경설정** → 로그아웃, 접힘에서도 노출)의 톱니 아이콘(접근 이름·툴팁 「환경설정」)으로 연다. 섹션이 0개면 아이콘을 숨긴다. 섹션은 배열 `{ id, label, icon?, description?, content }` — 섹션 추가 = 항목 하나 추가. 목록은 APG 세로 tablist(위/아래·Home/End, compact 가로 줄에서는 왼/오른쪽도)이고 섹션이 1개여도 보인다. wide·medium은 좌우 2단, compact(≤640)는 상단 가로 탭 줄(가로 스크롤·줄바꿈 없음)·화면 폭 Dialog, 탭 44px. Esc·「닫기」로 닫고 설정 아이콘으로 포커스 복귀(CMP-18). URL 라우트 없음.
 
 | 상태 | 진입 조건 | 표시 | 가능한 동작 |
 |---|---|---|---|
@@ -688,7 +691,7 @@ DOM 순서 = 시각 순서: **Sidebar → ConversationHeader → MessageList →
 | Q-H1 | 봇 배지 문구·모양(텍스트 "봇" vs "Jarvis" 고정 아이콘 — 후보 표기이며 정본 아님) | CMP-26, CMP-03(Jarvis DM 항목) | Designer → D §6 정본 |
 | Q-H2 | 첨부만 보낼 때 본문으로 채울 자리 문구(후보 예: "[음성]"·"[이미지]"), 작성기 업로드 실패 문구(크기·형식·허용 형식 안내) | CMP-11 | Designer |
 | Q-H3 | 오디오 플레이어 버튼 이름·재생 실패 문구·만료 자리표시자 문구, 이미지 `alt` 기본값 | CMP-27·28·29 | Designer |
-| Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — 사이드바 계정 영역 + Jarvis DM 헤더 더보기 「알림 설정…」 Dialog(2026-11-16 영환님 지시, COPY_GAPS G-74 — 본문 위 1회 안내 배너는 폐지). 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
+| Q-H4 | PushSettings 위치(설정 화면 vs Jarvis DM 상단 배너) — 사이드바 계정 영역 설정 아이콘 → 환경설정 Dialog 「알림」 섹션 + Jarvis DM 헤더 「알림 설정…」 Dialog(2026-11-23 영환님 지시, COPY_GAPS G-76·G-74 — 본문 위 1회 안내 배너·계정 카드 아래 상시 카드는 폐지). 카드 상태별 문구(미지원·홈 화면 미설치·알림 켜기·거부됨·구독됨·끄기)와 CMP-20 연결 문구 | CMP-30, CMP-20 | 영환님(위치) · Designer(문구) |
 | Q-H5 | 알림 고정 문구(후보: "Jarvis" / "새 메시지가 있습니다")와 잠금 화면 노출 정책 | CMP-30, 서비스 워커 | 영환님 + TRD 저자(T §6-2) |
 | Q-H6 | 제목(`#`) 서식의 시각 크기 단계와 메시지 목록 밀도 영향 | CMP-08 | Designer |
 

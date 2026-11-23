@@ -2,10 +2,10 @@ import { useId, type ReactNode } from 'react';
 import type { Account, ListState, Space } from '../../data';
 import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { isSplitName, NameParts } from '../../ui/NameParts.js';
-import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, SESSION_LIST_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
+import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, PREFERENCES_COPY, SESSION_LIST_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { SIDEBAR_SHELL_COPY } from './copy.js';
-import { AppMark, HashIcon, LogOutIcon, MessageSquareIcon, PanelLeftIcon, PlusIcon, SearchIcon, UsersIcon } from './icons.js';
+import { AppMark, HashIcon, LogOutIcon, MessageSquareIcon, PanelLeftIcon, PlusIcon, SearchIcon, SettingsIcon, UsersIcon } from './icons.js';
 import { UnreadBadge, mentionLabel, threadDotLabel } from './UnreadBadge.js';
 import { SmartphoneIcon } from '../sessions';
 
@@ -39,8 +39,8 @@ export interface SidebarProps {
   readonly onManageSessions?: () => void;
   /** 하단 「로그아웃」. */
   readonly onLogout?: () => void;
-  /** 계정 영역 알림 설정(CMP-30, ★Q-H4). 없으면 렌더하지 않는다. */
-  readonly pushSettings?: ReactNode;
+  /** 계정 영역 설정 아이콘 → 「환경설정」 Dialog(알림 등, 2026-11-23). 없으면(섹션 0개) 아이콘을 렌더하지 않는다. 접힘에서도 보인다. */
+  readonly onOpenPreferences?: () => void;
   /** 「나간 채널 · 다시 참여」(UI_STATES §2-3) → `POST …/join`. 없으면 버튼을 렌더하지 않는다. */
   readonly onRejoin?: (id: string) => void;
 }
@@ -255,13 +255,17 @@ export function Sidebar(props: SidebarProps) {
                 <SmartphoneIcon />
               </IconAction>
             )}
+            {props.onOpenPreferences && (
+              <IconAction label={PREFERENCES_COPY.open} onClick={props.onOpenPreferences}>
+                <SettingsIcon />
+              </IconAction>
+            )}
             {props.onLogout && (
               <IconAction label={SIDEBAR_COPY.logout} onClick={props.onLogout}>
                 <LogOutIcon />
               </IconAction>
             )}
           </AccountCard>
-          {!collapsed && props.pushSettings}
         </div>
       )}
     </nav>
