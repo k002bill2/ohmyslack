@@ -79,6 +79,17 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * 구독 상태를 바꾸는 작업(켜기·끄기 본문)의 완료 알림 — 인자는 작업을 시작한 화면 인스턴스 표식.
+ * 대기 상한보다 늦게 끝난 앞 작업이 다시 연 화면의 정착 상태를 뒤집어도, 그 화면이 다시 읽어 실제 상태로 수렴한다(Codex 3차 리뷰 P2).
+ * 재동기화는 알리지 않는다(루프 방지). 메모리에만 둔다(B7).
+ */
+const pushChangeListeners = new Set<(origin: object) => void>();
+
+function notifyPushChanged(origin: object): void {
+  for (const listener of pushChangeListeners) listener(origin);
+}
+
 /** 메모리 구독 id·작업 체인을 비운다(세션 종료 시 LiveApp, 테스트). */
 export function resetPushMemory(): void {
   knownSubscription = null;
@@ -190,6 +201,18 @@ function usePushState(env: PushEnv, server: PushServerApi) {
     void init();
   }, [init]);
 
+  // 다른 화면이 시작한 켜기·끄기가 끝나면 실제 상태를 다시 읽는다(체인 뒤에서). 자기 작업은 직접 setState한다.
+  const origin = useRef<object>({});
+  useEffect(() => {
+    const listener = (from: object) => {
+      if (from !== origin.current) void init();
+    };
+    pushChangeListeners.add(listener);
+    return () => {
+      pushChangeListeners.delete(listener);
+    };
+  }, [init]);
+
   /**
    * 「알림 켜기」·「다시 시도」 클릭: 권한 요청을 가장 먼저(사용자 제스처 안에서) 호출한다.
    * 권한 응답 대기는 체인 밖에서 한다 — 프롬프트가 열린 채 Dialog를 닫아도 다시 연 화면의 재동기화를 막지 않는다(Codex 재리뷰 P2).
@@ -202,14 +225,18 @@ function usePushState(env: PushEnv, server: PushServerApi) {
         const permission = await asked;
         if (permission !== 'granted') return setState(permission === 'denied' ? 'denied' : 'default');
         await serialize(async () => {
-          if (key.current === null) key.current = await server.vapidPublicKey();
-          if (key.current === null) return setState('unsupported');
-          const manager = await env.pushManager();
-          const sub =
-            (await manager.getSubscription()) ??
-            (await manager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(key.current) }));
-          await registerSubscription(sub, server);
-          setState('subscribed');
+          try {
+            if (key.current === null) key.current = await server.vapidPublicKey();
+            if (key.current === null) return setState('unsupported');
+            const manager = await env.pushManager();
+            const sub =
+              (await manager.getSubscription()) ??
+              (await manager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(key.current) }));
+            await registerSubscription(sub, server);
+            setState('subscribed');
+          } finally {
+            notifyPushChanged(origin.current);
+          }
         });
       } catch {
         setState('failed');
@@ -228,6 +255,8 @@ function usePushState(env: PushEnv, server: PushServerApi) {
         setState('default');
       } catch {
         setState('failed');
+      } finally {
+        notifyPushChanged(origin.current);
       }
     });
   }, [env, server, setState]);

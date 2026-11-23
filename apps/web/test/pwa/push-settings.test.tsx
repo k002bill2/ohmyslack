@@ -285,3 +285,64 @@ describe('직렬화 체인 대기 상한(Codex 재리뷰 P2) — 멈춘 앞 작�
     expect(await screen.findByText(C.subscribed)).toBeTruthy();
   });
 });
+
+describe('늦게 끝난 구독 변경 뒤 재동기화(Codex 3차 리뷰 P2) — 다른 화면이 시작한 작업의 완료를 반영한다', () => {
+  it('DELETE가 대기 상한보다 늦게 끝나면 다시 연 화면은 「구독됨」에서 실제 상태(알림 켜기)로 수렴한다', async () => {
+    let current: PushSubscriptionLike | null = null;
+    const sub: PushSubscriptionLike = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/x',
+      toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/x', expirationTime: null, keys: { p256dh: 'p', auth: 'a' } }),
+      unsubscribe: vi.fn(async () => {
+        current = null;
+        return true;
+      }),
+    };
+    current = sub;
+    const env: PushEnv = {
+      userAgent: DESKTOP_UA,
+      standalone: () => false,
+      supported: true,
+      permission: () => 'granted',
+      requestPermission: vi.fn(async () => 'granted' as const),
+      pushManager: vi.fn(async () => ({ getSubscription: async () => current, subscribe: vi.fn() })),
+    };
+    let releaseDelete: () => void = () => undefined;
+    const server = {
+      vapidPublicKey: vi.fn(async () => KEY),
+      register: vi.fn(async (_s: unknown) => SUB_ID),
+      unregister: vi.fn((_id: string) => new Promise<void>((resolve) => (releaseDelete = resolve))),
+    } satisfies PushServerApi;
+
+    const first = render(<PushSettings env={env} server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: C.disable }));
+    await waitFor(() => expect(server.unregister).toHaveBeenCalledOnce());
+    first.unmount();
+
+    vi.useFakeTimers();
+    let second: ReturnType<typeof render>;
+    try {
+      second = render(<PushSettings env={env} server={server} />);
+      await vi.advanceTimersByTimeAsync(PUSH_OP_WAIT_MS);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 대기 상한 경과 — 아직 브라우저 구독이 살아 있으므로 새 화면은 「구독됨」으로 정착한다.
+    expect(await screen.findByText(C.subscribed)).toBeTruthy();
+
+    releaseDelete();
+    await waitFor(() => expect(second.container.querySelector('section')?.getAttribute('data-state')).toBe('default'));
+    expect(screen.getByRole('button', { name: C.enable })).toBeTruthy();
+    expect(current).toBeNull();
+  });
+
+  it('같은 화면의 켜기·끄기는 완료 알림으로 재동기화를 중복 실행하지 않는다(register 호출 수)', async () => {
+    const { server } = setup();
+    fireEvent.click(await screen.findByRole('button', { name: C.enable }));
+    expect(await screen.findByText(C.subscribed)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: C.disable }));
+    expect(await screen.findByRole('button', { name: C.enable })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(server.register).toHaveBeenCalledTimes(1);
+    expect(server.vapidPublicKey).toHaveBeenCalledTimes(1);
+  });
+});
