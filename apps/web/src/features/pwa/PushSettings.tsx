@@ -118,14 +118,15 @@ export async function syncExistingSubscription(env: PushEnv, server: PushServerA
 }
 
 /**
- * 앱 진입 시 1회 재동기화(서버 구독 행은 세션에 결속 — 재로그인 기기도 환경설정을 열지 않고 다시 수신).
- * 실패는 조용히 무시한다(UI 없음, 로그 없음 — B6). env·server가 없으면 아무것도 하지 않는다.
+ * 앱 진입 시 계정별 1회 재동기화(서버 구독 행은 세션에 결속 — 재로그인 기기도 환경설정을 열지 않고 다시 수신).
+ * `accountId`가 없으면(=`/api/me` 응답 전, CSRF 토큰 미설정) 실행하지 않는다 — CSRF 없는 POST는 403(Codex P1-1).
+ * 계정이 바뀌면(재로그인·전환) 다시 실행한다. 실패는 조용히 무시한다(UI 없음, 로그 없음 — B6).
  */
-export function usePushResync(env: PushEnv | null, server: PushServerApi | undefined): void {
+export function usePushResync(env: PushEnv | null, server: PushServerApi | undefined, accountId: string | undefined): void {
   useEffect(() => {
-    if (env === null || server === undefined) return;
+    if (env === null || server === undefined || accountId === undefined) return;
     syncExistingSubscription(env, server).catch(() => undefined);
-  }, [env, server]);
+  }, [env, server, accountId]);
 }
 
 function usePushState(env: PushEnv, server: PushServerApi) {

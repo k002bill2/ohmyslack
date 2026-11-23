@@ -377,7 +377,8 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history, pushEnv:
   }, [state.conversationId]);
   const pushEnv = useMemo(() => (dataSource.push ? (injectedPushEnv ?? browserPushEnv()) : null), [dataSource.push, injectedPushEnv]);
   // 앱 진입 시 기존 구독 조용히 재등록 — 환경설정 Dialog 열림·사이드바 접힘·compact와 무관(재로그인 기기 수신 끊김 방지).
-  usePushResync(pushEnv, dataSource.push);
+  // account는 http-source가 `/api/me` 응답의 CSRF 토큰을 설정한 뒤에 생긴다 — 그 전에는 실행하지 않는다(Codex P1-1).
+  usePushResync(pushEnv, dataSource.push, snap.account?.id);
   // 환경설정 섹션은 여기서 조립한다 — 섹션 추가 = 항목 하나 추가. 0개면 설정 아이콘을 숨긴다.
   const preferenceSections = useMemo<readonly PreferencesSection[]>(
     () =>

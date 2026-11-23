@@ -1,10 +1,11 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from '../../src/features/layout';
 import { resetPushMemory, type PushEnv, type PushServerApi } from '../../src/features/pwa';
 import type { PushManagerLike, PushSubscriptionLike } from '../../src/features/pwa/PushSettings.js';
+import type { DataSource, Snapshot } from '../../src/data';
 import { PREFERENCES_COPY } from '../../src/ui/copy.js';
-import { memory } from '../helpers/fixtures.js';
+import { memory, seed } from '../helpers/fixtures.js';
 
 // 합성 VAPID 공개키 모양(0x04 + 64바이트, base64url). 실키·고정 리터럴을 두지 않는다(gitleaks generic-api-key).
 const KEY = btoa(String.fromCharCode(4, ...Array.from({ length: 64 }, (_, i) => i))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -94,5 +95,59 @@ describe('앱 진입 시 기존 푸시 구독 조용히 재등록(CMP-30, 환경
     const { server } = renderShell({ existing: fakeSub(), registerFails: true });
     await waitFor(() => expect(server.register).toHaveBeenCalled());
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+/** 스냅숏을 바꿀 수 있는 데이터 소스 — `/api/me`(CSRF 토큰) 응답 전후의 account 유무를 흉내 낸다. */
+function switchableSource(server: PushServerApi) {
+  let snapshot: Snapshot = Object.freeze(seed());
+  const listeners = new Set<() => void>();
+  const source: DataSource & { push: PushServerApi } = {
+    getSnapshot: () => snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    send: () => undefined,
+    push: server,
+  };
+  const setAccount = (next: Snapshot['account']) => {
+    snapshot = Object.freeze({ ...snapshot, ...(next === undefined ? {} : { account: next }) });
+    listeners.forEach((l) => l());
+  };
+  return { source, setAccount };
+}
+
+describe('재등록은 계정(CSRF) 확정 뒤에만(Codex P1-1)', () => {
+  it('account 없음 → register 0회, account가 생기면 1회, 다른 계정으로 바뀌면 다시 1회', async () => {
+    const manager: PushManagerLike = { getSubscription: vi.fn(async () => fakeSub()), subscribe: vi.fn() };
+    const env: PushEnv = {
+      userAgent: DESKTOP_UA,
+      standalone: () => false,
+      supported: true,
+      permission: () => 'granted',
+      requestPermission: vi.fn(async () => 'granted' as const),
+      pushManager: vi.fn(async () => manager),
+    };
+    const server = {
+      vapidPublicKey: vi.fn(async () => KEY),
+      register: vi.fn(async (_s: unknown): Promise<string> => 'id-1'),
+      unregister: vi.fn(async (_id: string) => undefined),
+    } satisfies PushServerApi;
+    const { source, setAccount } = switchableSource(server);
+    render(<AppShell dataSource={source} pushEnv={env} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(server.vapidPublicKey).not.toHaveBeenCalled();
+    expect(server.register).not.toHaveBeenCalled();
+
+    act(() => setAccount(account));
+    await waitFor(() => expect(server.register).toHaveBeenCalledTimes(1));
+    // 같은 계정의 스냅숏 갱신(메시지 도착 등)에는 반복하지 않는다.
+    act(() => setAccount(account));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(server.register).toHaveBeenCalledTimes(1);
+
+    act(() => setAccount({ ...account, id: 'u2' }));
+    await waitFor(() => expect(server.register).toHaveBeenCalledTimes(2));
   });
 });
