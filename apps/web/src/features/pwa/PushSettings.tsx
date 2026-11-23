@@ -53,9 +53,28 @@ let knownSubscription: { readonly endpoint: string; readonly id: string } | null
  */
 let pushOp: Promise<unknown> = Promise.resolve();
 
-/** `fn`을 앞선 구독 변경 작업이 모두 끝난 뒤 실행한다(앞 작업의 실패와 무관). */
+/**
+ * 앞 구독 변경 작업을 기다리는 상한(ms). 서버 요청·브라우저 API가 멈춰도 다시 연 설정이 `loading`에 갇히지 않게 한다(Codex 재리뷰 P2).
+ * SW 활성 대기 상한(`SW_ACTIVATE_TIMEOUT_MS`)과 같은 10초 — 사용자가 화면을 보며 기다릴 수 있는 한도. 넘으면 그냥 진행한다:
+ * 새 작업이 실제 상태를 다시 읽고, 늦게 끝난 앞 작업의 결과는 언마운트된 화면이면 버려진다.
+ */
+export const PUSH_OP_WAIT_MS = 10_000;
+
+/** `previous`가 끝나거나 `ms`가 지나면(먼저 오는 쪽) 끝난다. 실패는 삼킨다. */
+function waitAtMost(previous: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    previous.then(done, done);
+  });
+}
+
+/** `fn`을 앞선 구독 변경 작업이 끝난 뒤(최대 `PUSH_OP_WAIT_MS`) 실행한다(앞 작업의 실패와 무관). */
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
-  const run = pushOp.then(fn);
+  const run = waitAtMost(pushOp, PUSH_OP_WAIT_MS).then(fn);
   pushOp = run.catch(() => undefined);
   return run;
 }
@@ -171,26 +190,31 @@ function usePushState(env: PushEnv, server: PushServerApi) {
     void init();
   }, [init]);
 
-  /** 「알림 켜기」·「다시 시도」 클릭: 권한 요청을 가장 먼저(사용자 제스처 안에서) 호출한다. */
+  /**
+   * 「알림 켜기」·「다시 시도」 클릭: 권한 요청을 가장 먼저(사용자 제스처 안에서) 호출한다.
+   * 권한 응답 대기는 체인 밖에서 한다 — 프롬프트가 열린 채 Dialog를 닫아도 다시 연 화면의 재동기화를 막지 않는다(Codex 재리뷰 P2).
+   */
   const enable = useCallback(() => {
     const asked = env.requestPermission();
     setState('pending');
-    void serialize(async () => {
+    void (async () => {
       try {
         const permission = await asked;
         if (permission !== 'granted') return setState(permission === 'denied' ? 'denied' : 'default');
-        if (key.current === null) key.current = await server.vapidPublicKey();
-        if (key.current === null) return setState('unsupported');
-        const manager = await env.pushManager();
-        const sub =
-          (await manager.getSubscription()) ??
-          (await manager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(key.current) }));
-        await registerSubscription(sub, server);
-        setState('subscribed');
+        await serialize(async () => {
+          if (key.current === null) key.current = await server.vapidPublicKey();
+          if (key.current === null) return setState('unsupported');
+          const manager = await env.pushManager();
+          const sub =
+            (await manager.getSubscription()) ??
+            (await manager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(key.current) }));
+          await registerSubscription(sub, server);
+          setState('subscribed');
+        });
       } catch {
         setState('failed');
       }
-    });
+    })();
   }, [env, server, setState]);
 
   const disable = useCallback(() => {

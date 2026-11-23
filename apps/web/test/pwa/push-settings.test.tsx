@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   base64UrlToBytes,
+  PUSH_OP_WAIT_MS,
   PushSettings,
   resetPushMemory,
   type PushEnv,
@@ -232,5 +233,55 @@ describe('구독 변경 직렬화(Codex P1-3) — 끄기 진행 중 닫고 다�
     expect(screen.queryByText(C.subscribed)).toBeNull();
     expect(current).toBeNull();
     expect(calls).toEqual(['register', 'unregister:start', 'unregister:end', 'unsubscribe']);
+  });
+});
+
+describe('직렬화 체인 대기 상한(Codex 재리뷰 P2) — 멈춘 앞 작업이 다시 연 설정을 막지 않는다', () => {
+  function stuckEnv(over: Partial<PushEnv> = {}): PushEnv {
+    return {
+      userAgent: DESKTOP_UA,
+      standalone: () => false,
+      supported: true,
+      permission: () => 'default',
+      requestPermission: vi.fn(() => new Promise<NotificationPermission>(() => undefined)),
+      pushManager: vi.fn(async () => ({ getSubscription: async () => null, subscribe: vi.fn() })),
+      ...over,
+    };
+  }
+  const okServer = (): PushServerApi => ({ vapidPublicKey: vi.fn(async () => KEY), register: vi.fn(async () => SUB_ID), unregister: vi.fn(async () => undefined) });
+
+  it('권한 프롬프트 무응답 중 닫고 다시 열면 새 화면은 loading에 머물지 않고 실제 상태(default)로 정착', async () => {
+    const env = stuckEnv();
+    const server = okServer();
+    const first = render(<PushSettings env={env} server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: C.enable }));
+    expect(env.requestPermission).toHaveBeenCalledOnce();
+    first.unmount();
+
+    const second = render(<PushSettings env={env} server={server} />);
+    await waitFor(() => expect(second.container.querySelector('section')?.getAttribute('data-state')).toBe('default'));
+    expect(screen.getByRole('button', { name: C.enable })).toBeTruthy();
+  });
+
+  it('앞 작업(DELETE)이 끝나지 않아도 대기 상한(PUSH_OP_WAIT_MS) 경과 후 다시 연 화면이 정착', async () => {
+    const sub = fakeSub();
+    const env = stuckEnv({ permission: () => 'granted', pushManager: vi.fn(async () => ({ getSubscription: async () => sub, subscribe: vi.fn() })) });
+    const server: PushServerApi = { ...okServer(), unregister: vi.fn(() => new Promise<void>(() => undefined)) };
+    const first = render(<PushSettings env={env} server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: C.disable }));
+    await waitFor(() => expect(server.unregister).toHaveBeenCalledOnce());
+    first.unmount();
+
+    vi.useFakeTimers();
+    try {
+      const second = render(<PushSettings env={env} server={server} />);
+      await vi.advanceTimersByTimeAsync(PUSH_OP_WAIT_MS - 1);
+      expect(second.container.querySelector('section')?.getAttribute('data-state')).toBe('loading');
+      await vi.advanceTimersByTimeAsync(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 앞 DELETE가 아직 안 끝났으므로 실제 상태는 여전히 구독됨이다 — 요점은 loading 탈출.
+    expect(await screen.findByText(C.subscribed)).toBeTruthy();
   });
 });
