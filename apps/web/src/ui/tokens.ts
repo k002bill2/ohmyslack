@@ -72,7 +72,10 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
   '--bg-app': { scale: 'slate', step: 1, role: 'surface', dark: { step: 2 } },
   '--bg-sidebar': { scale: 'slate', step: 2, role: 'surface' },
   '--bg-elevated': { scale: 'slate', step: 3, role: 'surface', dark: { step: 1 } },
-  '--bg-hover': { scale: 'slate', step: 4, role: 'surface' },
+  /** 2026-11-23 영환님 지시: 목록 hover 면을 연하게(slate3). 라이트에선 --bg-elevated와 같은 단계 — elevated 면 위 hover는 --bg-hover-strong. */
+  '--bg-hover': { scale: 'slate', step: 3, role: 'surface' },
+  /** elevated 면(라이트 slate3) 위 hover — 이전 --bg-hover 값(slate4)을 유지해 면과 구별된다. */
+  '--bg-hover-strong': { scale: 'slate', step: 4, role: 'surface' },
   '--bg-active': { scale: 'slate', step: 5, role: 'surface' },
   /**
    * 장식 구분선·패널 테두리(시안 R5 slate6). 컴포넌트 식별 경계가 아니라 WCAG 1.4.11 대비 대상 밖(§2-3 4항 예외) —
