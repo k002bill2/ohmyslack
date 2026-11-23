@@ -17,6 +17,14 @@ export interface DialogProps {
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * 상자 안 Tab 정지점 — 음수 tabindex(roving tabindex의 비선택 탭 등)는 브라우저 Tab 순서에 없으므로
+ * 순환 첫/끝·초기 포커스 후보에서 뺀다(Codex P1-2).
+ */
+function tabStops(box: HTMLElement): HTMLElement[] {
+  return [...box.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0);
+}
+
 /** Esc가 IME 조합 확정용이면 닫지 않는다(UI_STATES §4-3 — 조합 중 키는 IME가 먼저). */
 function isComposingKey(e: globalThis.KeyboardEvent): boolean {
   return e.isComposing || e.keyCode === 229 || e.key === 'Process';
@@ -58,7 +66,7 @@ function topBox(): HTMLElement | null | undefined {
  * 상자 자체(복구된 포커스)·상자 밖 포커스도 「항목 밖」으로 본다 — 기본 Tab이 상자 밖으로 빠지지 않게(Codex r1 P2).
  */
 function trapTab(box: HTMLElement, shiftKey: boolean): boolean {
-  const items = [...box.querySelectorAll<HTMLElement>(FOCUSABLE)];
+  const items = tabStops(box);
   const head = items[0];
   const tail = items.at(-1);
   if (head === undefined || tail === undefined) return true;
@@ -159,7 +167,8 @@ export function Dialog({ title, onClose, busy = false, children }: DialogProps) 
     const body = document.body;
     const prevOverflow = body.style.overflow;
     body.style.overflow = 'hidden';
-    const first = box.current?.querySelector<HTMLElement>('input, select, textarea') ?? box.current?.querySelector<HTMLElement>(FOCUSABLE);
+    const stops = box.current === null ? [] : tabStops(box.current);
+    const first = stops.find((el) => el.matches('input, select, textarea')) ?? stops[0];
     (first ?? box.current)?.focus();
     // 배경 비활성: 오버레이의 형제(사이드바·본문·스레드)를 `inert`로 — 포인터·포커스·보조기기 모두 막는다(Codex r1 P1).
     const backdrop = box.current?.parentElement;

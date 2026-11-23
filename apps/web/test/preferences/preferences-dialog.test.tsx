@@ -115,6 +115,41 @@ describe('PreferencesDialog(환경설정 — 섹션 배열 구조)', () => {
   });
 });
 
+describe('포커스 트랩 × roving tabindex(Codex P1-2)', () => {
+  const textOnly = (id: string, label: string): PreferencesSection => ({ id, label, content: <p>{label} 내용</p> });
+
+  it.each([0, 1])('섹션 2개(포커스 가능한 내용 없음, %i번 선택) — Tab/Shift+Tab이 닫기·선택 탭·패널만 돌고 비선택 탭으로 가지 않는다', async (selected) => {
+    const user = userEvent.setup();
+    const sections = [textOnly('a', '섹션 가'), textOnly('b', '섹션 나')];
+    render(<PreferencesDialog sections={sections} onClose={() => {}} />);
+    const dialog = screen.getByRole('dialog', { name: P.title });
+    const close = within(dialog).getByRole('button', { name: DIALOG_CLOSE_LABEL });
+    const tabs = within(dialog).getAllByRole('tab');
+    if (selected === 1) fireEvent.click(tabs[1]!);
+    const active = tabs[selected]!;
+    const inactive = tabs[1 - selected]!;
+    const panel = within(dialog).getByRole('tabpanel');
+    expect(panel.tabIndex).toBe(0);
+
+    close.focus();
+    const forward: Element[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      await user.tab();
+      forward.push(document.activeElement!);
+    }
+    expect(forward).toEqual([active, panel, close, active]);
+
+    close.focus();
+    const backward: Element[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      await user.tab({ shift: true });
+      backward.push(document.activeElement!);
+    }
+    expect(backward).toEqual([panel, active, close, panel]);
+    expect([...forward, ...backward]).not.toContain(inactive);
+  });
+});
+
 describe('사이드바 설정 아이콘', () => {
   it('순서: 멤버 관리 → 세션 → 환경설정 → 로그아웃, 계정 카드 아래 알림 카드는 없다', () => {
     const { container } = render(

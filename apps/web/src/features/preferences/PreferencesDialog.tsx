@@ -79,7 +79,8 @@ export function PreferencesDialog({ sections, onClose }: {
           })}
         </div>
         {current !== undefined && (
-          <div className="preferences-panel" role="tabpanel" id={panelId(current.id)} aria-labelledby={tabId(current.id)}>
+          // APG tabs: 패널을 Tab 정지점으로(tabIndex 0) — 텍스트만 있는 섹션도 탭 다음에 내용으로 갈 수 있게. 단순하게 항상 둔다.
+          <div className="preferences-panel" role="tabpanel" id={panelId(current.id)} aria-labelledby={tabId(current.id)} tabIndex={0}>
             <h3 className="preferences-panel-title">{current.label}</h3>
             {current.description !== undefined && <p className="preferences-panel-description">{current.description}</p>}
             {current.content}
