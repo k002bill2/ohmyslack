@@ -11,7 +11,7 @@ import { isSplitName, NameParts } from '../../ui/NameParts.js';
 import { MemberAdmin } from '../members';
 import { SessionList } from '../sessions';
 import { ThreadPanel } from '../thread';
-import { browserPushEnv, InstallCard, PushDialog, PushSettings, useInstallPrompt } from '../pwa';
+import { browserPushEnv, InstallCard, PushDialog, PushSettings, usePushResync, useInstallPrompt, type PushEnv } from '../pwa';
 import { PreferencesDialog, type PreferencesSection } from '../preferences';
 import { canManageChannelBots, LeftChannelNotice, RejoinButton, useActiveBots, useBotChannelMenu, useConversationMembers, type BotChannelControlProps } from '../conversation-membership';
 import type { MentionCandidate } from '../conversation';
@@ -42,6 +42,8 @@ export interface AppShellProps {
    * 없으면 주소를 건드리지 않는다(메모리 개발 루트·기존 테스트).
    */
   readonly history?: RouteHistory;
+  /** 브라우저 push 배선(테스트 주입). 없으면 `browserPushEnv()`. `dataSource.push`가 없으면 쓰지 않는다. */
+  readonly pushEnv?: PushEnv;
 }
 
 /** 주소 ↔ 패널: `/discover`(채널 찾기)·`/dm/new`(DM 시작). 채널 만들기는 경로가 없다(D §4-2). */
@@ -317,7 +319,7 @@ interface MembershipProps {
 }
 
 /** CMP-01 AppShell — 3/2/1단, §5-2 접힘 규칙, 포커스 관리(디자인 §5·§7-3, UI_STATES §2-2·§3·§4-2). */
-export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShellProps) {
+export function AppShell({ dataSource, drafts: injectedDrafts, history, pushEnv: injectedPushEnv }: AppShellProps) {
   const [drafts] = useState(() => injectedDrafts ?? createDraftStore());
   const [attachmentDrafts] = useState(createAttachmentDraftStore);
   // 셸이 내려가면(로그아웃·401 — LiveApp이 셸 대신 로그인 화면을 그린다) 글 초안과 함께 첨부 초안도 버리고 진행 중 업로드를 끊는다.
@@ -373,7 +375,9 @@ export function AppShell({ dataSource, drafts: injectedDrafts, history }: AppShe
   useEffect(() => {
     selectedId.current = state.conversationId;
   }, [state.conversationId]);
-  const pushEnv = useMemo(() => (dataSource.push ? browserPushEnv() : null), [dataSource.push]);
+  const pushEnv = useMemo(() => (dataSource.push ? (injectedPushEnv ?? browserPushEnv()) : null), [dataSource.push, injectedPushEnv]);
+  // 앱 진입 시 기존 구독 조용히 재등록 — 환경설정 Dialog 열림·사이드바 접힘·compact와 무관(재로그인 기기 수신 끊김 방지).
+  usePushResync(pushEnv, dataSource.push);
   // 환경설정 섹션은 여기서 조립한다 — 섹션 추가 = 항목 하나 추가. 0개면 설정 아이콘을 숨긴다.
   const preferenceSections = useMemo<readonly PreferencesSection[]>(
     () =>

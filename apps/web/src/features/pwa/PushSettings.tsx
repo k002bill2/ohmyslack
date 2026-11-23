@@ -90,27 +90,51 @@ async function registerSubscription(sub: PushSubscriptionLike, server: PushServe
   knownSubscription = { endpoint: sub.endpoint, id };
 }
 
+/** 조용한 재동기화 결과 — `PushSettings` 첫 상태와 같다(`loading`·`failed`·`pending` 제외). */
+export type PushSyncState = Extract<PushState, 'unsupported' | 'ios-install' | 'default' | 'denied' | 'subscribed'>;
+
+/**
+ * 기존 구독을 서버에 조용히 다시 등록한다 — 권한은 절대 요청하지 않는다.
+ * iOS 미설치·미지원·VAPID 없음·권한≠granted·구독 없음이면 아무것도 하지 않고, 키 회전이면 unsubscribe만 한다.
+ * 오류는 던진다(호출자가 표시 여부를 정한다). `onKey`: 받아 온 VAPID 키(PushSettings가 「알림 켜기」에 재사용).
+ */
+export async function syncExistingSubscription(env: PushEnv, server: PushServerApi, onKey: (key: string) => void = () => undefined): Promise<PushSyncState> {
+  const ios = detectInstallMode({ standalone: false, canPrompt: false, userAgent: env.userAgent }) === 'ios';
+  if (ios && !env.standalone()) return 'ios-install';
+  if (!env.supported) return 'unsupported';
+  const key = await server.vapidPublicKey();
+  if (key === null) return 'unsupported';
+  onKey(key);
+  const permission = env.permission();
+  if (permission !== 'granted') return permission === 'denied' ? 'denied' : 'default';
+  const existing = await (await env.pushManager()).getSubscription();
+  if (existing === null) return 'default';
+  if (boundToOtherKey(existing, key)) {
+    await existing.unsubscribe();
+    return 'default';
+  }
+  await registerSubscription(existing, server);
+  return 'subscribed';
+}
+
+/**
+ * 앱 진입 시 1회 재동기화(서버 구독 행은 세션에 결속 — 재로그인 기기도 환경설정을 열지 않고 다시 수신).
+ * 실패는 조용히 무시한다(UI 없음, 로그 없음 — B6). env·server가 없으면 아무것도 하지 않는다.
+ */
+export function usePushResync(env: PushEnv | null, server: PushServerApi | undefined): void {
+  useEffect(() => {
+    if (env === null || server === undefined) return;
+    syncExistingSubscription(env, server).catch(() => undefined);
+  }, [env, server]);
+}
+
 function usePushState(env: PushEnv, server: PushServerApi) {
   const [state, setState] = useState<PushState>('loading');
   const key = useRef<string | null>(null);
 
   const init = useCallback(async () => {
-    const ios = detectInstallMode({ standalone: false, canPrompt: false, userAgent: env.userAgent }) === 'ios';
-    if (ios && !env.standalone()) return setState('ios-install');
-    if (!env.supported) return setState('unsupported');
     try {
-      key.current = await server.vapidPublicKey();
-      if (key.current === null) return setState('unsupported');
-      const permission = env.permission();
-      if (permission !== 'granted') return setState(permission === 'denied' ? 'denied' : 'default');
-      const existing = await (await env.pushManager()).getSubscription();
-      if (existing === null) return setState('default');
-      if (boundToOtherKey(existing, key.current)) {
-        await existing.unsubscribe();
-        return setState('default');
-      }
-      await registerSubscription(existing, server);
-      setState('subscribed');
+      setState(await syncExistingSubscription(env, server, (k) => (key.current = k)));
     } catch {
       setState('failed');
     }

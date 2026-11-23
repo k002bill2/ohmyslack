@@ -409,10 +409,6 @@ export const PUSH_NOTIFICATION_COPY = {
   body: '새 메시지가 있습니다',
 } as const;
 
-/**
- * CMP-30 PushSettings 문구(W-23). 정본 미정(UI_STATES §8 Q-H4) — Jarvis ★ 임시 결정.
- * 위치: 사이드바 계정 영역 + Jarvis DM 헤더 더보기 「알림 설정…」 Dialog(G-74, 2026-11-16 — 본문 위 배너 폐지).
- */
 /** 환경설정 Dialog(사이드바 계정 영역 설정 아이콘, 2026-11-23 영환님 지시). 섹션 이름은 `sections`에 하나씩 추가한다. */
 export const PREFERENCES_COPY = {
   title: '환경설정',
@@ -424,6 +420,10 @@ export const PREFERENCES_COPY = {
   notificationsDescription: '이 기기에서 받을 알림을 켜거나 끕니다.',
 } as const;
 
+/**
+ * CMP-30 PushSettings 문구(W-23). 정본 미정(UI_STATES §8 Q-H4) — Jarvis ★ 임시 결정.
+ * 위치: 사이드바 계정 영역 + Jarvis DM 헤더 더보기 「알림 설정…」 Dialog(G-74, 2026-11-16 — 본문 위 배너 폐지).
+ */
 export const PUSH_SETTINGS_COPY = {
   title: '알림',
   unsupported: '이 브라우저에서는 알림을 받을 수 없습니다.',

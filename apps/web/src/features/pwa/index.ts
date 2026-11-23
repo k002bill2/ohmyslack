@@ -19,8 +19,11 @@ export {
   browserPushEnv,
   PushSettings,
   resetPushMemory,
+  syncExistingSubscription,
+  usePushResync,
   type PushEnv,
   type PushServerApi,
   type PushState,
+  type PushSyncState,
 } from './PushSettings.js';
 export { PushDialog } from './PushDialog.js';
