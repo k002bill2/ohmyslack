@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   base64UrlToBytes,
+  PUSH_OP_WAIT_MS,
   PushSettings,
   resetPushMemory,
   type PushEnv,
@@ -173,9 +174,175 @@ describe('CMP-30 PushSettings 상태(UI_STATES §2-10)', () => {
 
   it('VAPID 키 조회가 네트워크 오류면 등록 실패', async () => {
     const { server } = setup();
+    // 첫 인스턴스의 재동기화(직렬화 체인 — 마이크로태스크 뒤 실행)가 끝난 뒤에 실패를 건다.
+    await screen.findByRole('button', { name: C.enable });
     server.vapidPublicKey.mockRejectedValueOnce(new Error('network'));
     cleanup();
     render(<PushSettings env={{ userAgent: DESKTOP_UA, standalone: () => false, supported: true, permission: () => 'default', requestPermission: async () => 'default', pushManager: async () => ({ getSubscription: async () => null, subscribe: async () => fakeSub() }) }} server={server} />);
     expect(await screen.findByText(C.failed)).toBeTruthy();
+  });
+});
+
+describe('구독 변경 직렬화(Codex P1-3) — 끄기 진행 중 닫고 다시 열기', () => {
+  it('DELETE 지연 중 언마운트 → 재마운트 → 지연 해제: 새 화면은 실제 상태(알림 켜기)이고 DELETE 뒤 register가 다시 나가지 않는다', async () => {
+    const calls: string[] = [];
+    let current: PushSubscriptionLike | null = null;
+    const sub: PushSubscriptionLike = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/x',
+      toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/x', expirationTime: null, keys: { p256dh: 'p', auth: 'a' } }),
+      unsubscribe: vi.fn(async () => {
+        calls.push('unsubscribe');
+        current = null;
+        return true;
+      }),
+    };
+    current = sub;
+    const manager: PushManagerLike = { getSubscription: vi.fn(async () => current), subscribe: vi.fn() };
+    const env: PushEnv = {
+      userAgent: DESKTOP_UA,
+      standalone: () => false,
+      supported: true,
+      permission: () => 'granted',
+      requestPermission: vi.fn(async () => 'granted' as const),
+      pushManager: vi.fn(async () => manager),
+    };
+    let releaseDelete: () => void = () => undefined;
+    const server = {
+      vapidPublicKey: vi.fn(async () => KEY),
+      register: vi.fn(async (_s: unknown) => {
+        calls.push('register');
+        return SUB_ID;
+      }),
+      unregister: vi.fn(async (_id: string) => {
+        calls.push('unregister:start');
+        await new Promise<void>((resolve) => (releaseDelete = resolve));
+        calls.push('unregister:end');
+      }),
+    } satisfies PushServerApi;
+
+    const first = render(<PushSettings env={env} server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: C.disable }));
+    await waitFor(() => expect(server.unregister).toHaveBeenCalledTimes(1));
+    first.unmount(); // Dialog 닫기 — 막지 않는다.
+
+    render(<PushSettings env={env} server={server} />);
+    await new Promise((r) => setTimeout(r, 20));
+    releaseDelete();
+
+    expect(await screen.findByRole('button', { name: C.enable })).toBeTruthy();
+    expect(screen.queryByText(C.subscribed)).toBeNull();
+    expect(current).toBeNull();
+    expect(calls).toEqual(['register', 'unregister:start', 'unregister:end', 'unsubscribe']);
+  });
+});
+
+describe('직렬화 체인 대기 상한(Codex 재리뷰 P2) — 멈춘 앞 작업이 다시 연 설정을 막지 않는다', () => {
+  function stuckEnv(over: Partial<PushEnv> = {}): PushEnv {
+    return {
+      userAgent: DESKTOP_UA,
+      standalone: () => false,
+      supported: true,
+      permission: () => 'default',
+      requestPermission: vi.fn(() => new Promise<NotificationPermission>(() => undefined)),
+      pushManager: vi.fn(async () => ({ getSubscription: async () => null, subscribe: vi.fn() })),
+      ...over,
+    };
+  }
+  const okServer = (): PushServerApi => ({ vapidPublicKey: vi.fn(async () => KEY), register: vi.fn(async () => SUB_ID), unregister: vi.fn(async () => undefined) });
+
+  it('권한 프롬프트 무응답 중 닫고 다시 열면 새 화면은 loading에 머물지 않고 실제 상태(default)로 정착', async () => {
+    const env = stuckEnv();
+    const server = okServer();
+    const first = render(<PushSettings env={env} server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: C.enable }));
+    expect(env.requestPermission).toHaveBeenCalledOnce();
+    first.unmount();
+
+    const second = render(<PushSettings env={env} server={server} />);
+    await waitFor(() => expect(second.container.querySelector('section')?.getAttribute('data-state')).toBe('default'));
+    expect(screen.getByRole('button', { name: C.enable })).toBeTruthy();
+  });
+
+  it('앞 작업(DELETE)이 끝나지 않아도 대기 상한(PUSH_OP_WAIT_MS) 경과 후 다시 연 화면이 정착', async () => {
+    const sub = fakeSub();
+    const env = stuckEnv({ permission: () => 'granted', pushManager: vi.fn(async () => ({ getSubscription: async () => sub, subscribe: vi.fn() })) });
+    const server: PushServerApi = { ...okServer(), unregister: vi.fn(() => new Promise<void>(() => undefined)) };
+    const first = render(<PushSettings env={env} server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: C.disable }));
+    await waitFor(() => expect(server.unregister).toHaveBeenCalledOnce());
+    first.unmount();
+
+    vi.useFakeTimers();
+    try {
+      const second = render(<PushSettings env={env} server={server} />);
+      await vi.advanceTimersByTimeAsync(PUSH_OP_WAIT_MS - 1);
+      expect(second.container.querySelector('section')?.getAttribute('data-state')).toBe('loading');
+      await vi.advanceTimersByTimeAsync(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 앞 DELETE가 아직 안 끝났으므로 실제 상태는 여전히 구독됨이다 — 요점은 loading 탈출.
+    expect(await screen.findByText(C.subscribed)).toBeTruthy();
+  });
+});
+
+describe('늦게 끝난 구독 변경 뒤 재동기화(Codex 3차 리뷰 P2) — 다른 화면이 시작한 작업의 완료를 반영한다', () => {
+  it('DELETE가 대기 상한보다 늦게 끝나면 다시 연 화면은 「구독됨」에서 실제 상태(알림 켜기)로 수렴한다', async () => {
+    let current: PushSubscriptionLike | null = null;
+    const sub: PushSubscriptionLike = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/x',
+      toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/x', expirationTime: null, keys: { p256dh: 'p', auth: 'a' } }),
+      unsubscribe: vi.fn(async () => {
+        current = null;
+        return true;
+      }),
+    };
+    current = sub;
+    const env: PushEnv = {
+      userAgent: DESKTOP_UA,
+      standalone: () => false,
+      supported: true,
+      permission: () => 'granted',
+      requestPermission: vi.fn(async () => 'granted' as const),
+      pushManager: vi.fn(async () => ({ getSubscription: async () => current, subscribe: vi.fn() })),
+    };
+    let releaseDelete: () => void = () => undefined;
+    const server = {
+      vapidPublicKey: vi.fn(async () => KEY),
+      register: vi.fn(async (_s: unknown) => SUB_ID),
+      unregister: vi.fn((_id: string) => new Promise<void>((resolve) => (releaseDelete = resolve))),
+    } satisfies PushServerApi;
+
+    const first = render(<PushSettings env={env} server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: C.disable }));
+    await waitFor(() => expect(server.unregister).toHaveBeenCalledOnce());
+    first.unmount();
+
+    vi.useFakeTimers();
+    let second: ReturnType<typeof render>;
+    try {
+      second = render(<PushSettings env={env} server={server} />);
+      await vi.advanceTimersByTimeAsync(PUSH_OP_WAIT_MS);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 대기 상한 경과 — 아직 브라우저 구독이 살아 있으므로 새 화면은 「구독됨」으로 정착한다.
+    expect(await screen.findByText(C.subscribed)).toBeTruthy();
+
+    releaseDelete();
+    await waitFor(() => expect(second.container.querySelector('section')?.getAttribute('data-state')).toBe('default'));
+    expect(screen.getByRole('button', { name: C.enable })).toBeTruthy();
+    expect(current).toBeNull();
+  });
+
+  it('같은 화면의 켜기·끄기는 완료 알림으로 재동기화를 중복 실행하지 않는다(register 호출 수)', async () => {
+    const { server } = setup();
+    fireEvent.click(await screen.findByRole('button', { name: C.enable }));
+    expect(await screen.findByText(C.subscribed)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: C.disable }));
+    expect(await screen.findByRole('button', { name: C.enable })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(server.register).toHaveBeenCalledTimes(1);
+    expect(server.vapidPublicKey).toHaveBeenCalledTimes(1);
   });
 });

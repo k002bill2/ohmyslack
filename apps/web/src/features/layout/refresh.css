@@ -104,7 +104,7 @@
   cursor: pointer;
 }
 .sidebar-jump:hover {
-  background: var(--bg-hover);
+  background: var(--bg-hover-strong);
 }
 .sidebar-jump-text {
   flex: 1 1 auto;
@@ -596,3 +596,19 @@
   padding-inline-start: var(--msg-gutter);
 }
 
+
+/*
+ * 2026-11-23: --bg-hover가 slate3(라이트 --bg-elevated와 같은 단계)로 연해져, elevated 면 위 hover는 --bg-hover-strong(slate4).
+ * 항상 elevated 위인 규칙은 원 규칙에서 바꿨고, 여기는 상황에 따라 elevated 위인 경우만 덮는다.
+ */
+.account-card .icon-button.sidebar-icon-action:hover,
+.app-shell[data-layout='compact'] > .sidebar .icon-button.sidebar-icon-action:hover,
+.app-shell[data-layout='compact'] .header-menu > .icon-button:hover,
+.app-shell[data-layout='compact'] .header-menu > .icon-button[aria-expanded='true'],
+.app-shell[data-layout='compact'] .thread-panel .composer .composer-tool:hover:not(:disabled),
+.thread-root .doc-download:hover,
+.dialog .btn-secondary:hover,
+.dialog .dialog-close:hover,
+.dialog .error-state button:hover {
+  background: var(--bg-hover-strong);
+}

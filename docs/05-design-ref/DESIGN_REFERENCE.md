@@ -116,7 +116,8 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | `--bg-app` | neutral 1 (**다크 2**) | 본문·떠 있는 패널 배경 |
 | `--bg-sidebar` | neutral 2 | 사이드바·스레드 패널 배경(**유채색 금지**, §2-2) |
 | `--bg-elevated` | neutral 3 (**다크 1**) | 앱 바닥(ground)·옅은 카드·키 표시 |
-| `--bg-hover` / `--bg-active` | neutral 4 / 5 | 목록 항목 hover·선택 |
+| `--bg-hover` / `--bg-active` | neutral 3 / 5 | 목록 항목 hover(2026-11-23 영환님 지시로 4→3, 연하게)·선택 |
+| `--bg-hover-strong` | neutral 4 | `--bg-elevated`(라이트 neutral 3) 면 위 hover — 면과 같은 단계가 되어 hover가 사라지지 않게 |
 | `--border-subtle` / `--border` | neutral 6 / 7 | 장식 구분선·패널 테두리(대비 예외 §2-3 4항, 시안 색) / 입력란·조작 대상 경계(3:1 보정 neutral 9) |
 | `--text-muted` / `--text` | neutral 11 / 12 | 메타·**상태 라벨(전송 중 등)** / 본문 |
 | `--accent-solid` | accent 9 | 전송 버튼·선택 항목 표시선·링크 밑줄 |

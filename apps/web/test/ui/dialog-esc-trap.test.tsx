@@ -221,3 +221,46 @@ describe('Dialog — 포커스가 BODY일 때도 트랩', () => {
     expect(document.activeElement).toBe(within(outer()).getByRole('button', { name: '닫기' }));
   });
 });
+
+describe('Dialog — 음수 tabindex 요소는 Tab 순환 끝점이 아니다(Codex P1-2, roving tabindex)', () => {
+  function Roving() {
+    return (
+      <Dialog title="roving" onClose={() => undefined}>
+        <button type="button" tabIndex={-1}>
+          앞 비선택
+        </button>
+        <button type="button">선택</button>
+        <button type="button" tabIndex={-1}>
+          뒤 비선택
+        </button>
+      </Dialog>
+    );
+  }
+  const button = (name: string) => within(screen.getByRole('dialog')).getByRole('button', { name });
+
+  it('열릴 때 첫 포커스는 닫기(음수 tabindex 탭이 아님)', () => {
+    render(<Roving />);
+    expect(document.activeElement).toBe(button('닫기'));
+  });
+
+  it('닫기에서 Shift+Tab → 마지막 Tab 정지점(선택), 뒤 비선택 아님', () => {
+    render(<Roving />);
+    button('닫기').focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(button('선택'));
+  });
+
+  it('선택(마지막 Tab 정지점)에서 Tab → 닫기로 순환', () => {
+    render(<Roving />);
+    button('선택').focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(document.activeElement).toBe(button('닫기'));
+  });
+
+  it('포커스가 BODY일 때 Shift+Tab → 마지막 Tab 정지점(선택)', () => {
+    render(<Roving />);
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document.body, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(button('선택'));
+  });
+});

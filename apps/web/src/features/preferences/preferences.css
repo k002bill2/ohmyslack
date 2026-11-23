@@ -1,0 +1,68 @@
+/*
+ * 환경설정 Dialog: wide·medium은 좌측 섹션 목록(고정 폭) + 우측 패널 2단.
+ * Dialog 면이 --bg-elevated(라이트 slate3)라 탭 hover는 --bg-hover-strong(slate4) — --bg-hover면 면과 같아져 사라진다.
+ */
+.preferences-body {
+  display: flex;
+  gap: var(--space-4);
+  inline-size: min(36rem, 100%);
+}
+.preferences-tabs {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  inline-size: 10rem;
+}
+.preferences-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 44px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.preferences-tab:hover {
+  background: var(--bg-hover-strong);
+  color: var(--text);
+}
+.preferences-tab[aria-selected='true'] {
+  background: var(--bg-active);
+  color: var(--text);
+  font-weight: 700;
+}
+.preferences-panel {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+.preferences-panel-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-md);
+}
+.preferences-panel-description {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+}
+
+/* compact(≤640): 목록이 상단 가로 탭 줄(가로 스크롤, 줄바꿈 없음), Dialog는 화면 폭(.dialog 규칙). */
+@media (width <= 640px) {
+  .preferences-body {
+    flex-direction: column;
+    inline-size: auto;
+  }
+  .preferences-tabs {
+    flex-direction: row;
+    inline-size: auto;
+    overflow-x: auto;
+  }
+  .preferences-tab {
+    flex: none;
+  }
+}

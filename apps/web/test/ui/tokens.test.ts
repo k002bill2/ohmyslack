@@ -21,7 +21,7 @@ beforeAll(async () => {
 
 /** §3-3 역할 표 이름 정본(테스트 쪽 독립 사본). */
 const CANON_ROLE_NAMES = [
-  '--bg-app', '--bg-sidebar', '--bg-elevated', '--bg-hover', '--bg-active',
+  '--bg-app', '--bg-sidebar', '--bg-elevated', '--bg-hover', '--bg-hover-strong', '--bg-active',
   '--border-subtle', '--border', '--text-muted', '--text',
   '--accent-solid', '--accent-text', '--accent-bg', '--success-text',
   '--warning-bg', '--warning-text', '--danger-bg', '--danger-text', '--danger-solid',
@@ -48,6 +48,17 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
     for (const s of SCHEMES) expect(Object.keys(tokens.colors[s])).toEqual(CANON_ROLE_NAMES);
   });
 
+  // 2026-11-23 영환님 지시: hover 면 연하게(slate3). elevated 면 위 hover는 --bg-hover-strong(slate4)이라 면과 구별된다.
+  it('hover 면은 slate3(라이트에선 elevated와 같음)이고, --bg-hover-strong은 elevated와 다르다', () => {
+    expect(tok('light', '--bg-hover').value).toBe(tok('light', '--bg-elevated').value);
+    for (const s of SCHEMES) {
+      expect(tok(s, '--bg-hover-strong').value, s).not.toBe(tok(s, '--bg-elevated').value);
+      expect(tok(s, '--bg-hover-strong').value, s).not.toBe(tok(s, '--bg-hover').value);
+      expect(tok(s, '--bg-hover').value, s).not.toBe(tok(s, '--bg-sidebar').value);
+      expect(tok(s, '--bg-hover').value, s).not.toBe(tok(s, '--bg-app').value);
+    }
+  });
+
   it('light and dark have identical key sets', () => {
     expect(Object.keys(tokens.colors.light).sort()).toEqual(Object.keys(tokens.colors.dark).sort());
   });
@@ -69,8 +80,8 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
 
   it('text tokens stay ≥ 4.5:1 on the other canon backgrounds they are used on', () => {
     const pairs: ReadonlyArray<readonly [string, string]> = [
-      ['--text', '--bg-sidebar'], ['--text', '--bg-elevated'], ['--text', '--bg-hover'], ['--text', '--bg-active'],
-      ['--text-muted', '--bg-sidebar'], ['--text-muted', '--bg-elevated'], ['--text-muted', '--bg-hover'],
+      ['--text', '--bg-sidebar'], ['--text', '--bg-elevated'], ['--text', '--bg-hover'], ['--text', '--bg-hover-strong'], ['--text', '--bg-active'],
+      ['--text-muted', '--bg-sidebar'], ['--text-muted', '--bg-elevated'], ['--text-muted', '--bg-hover'], ['--text-muted', '--bg-hover-strong'],
       ['--text-muted', '--bg-active'], ['--text', '--accent-bg'], ['--accent-text', '--accent-bg'],
       ['--danger-text', '--danger-bg'], ['--mention-text', '--bg-app'],
     ];
