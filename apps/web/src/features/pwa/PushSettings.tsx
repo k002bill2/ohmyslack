@@ -46,9 +46,24 @@ export type PushState = 'loading' | 'unsupported' | 'ios-install' | 'default' | 
 /** 이 탭의 서버 구독 id(endpoint별). 새로 고치면 사라지고, 다음 진입 때 upsert로 다시 받는다. */
 let knownSubscription: { readonly endpoint: string; readonly id: string } | null = null;
 
-/** 메모리 구독 id를 비운다(세션 종료 시 LiveApp, 테스트). */
+/**
+ * 진행 중인 구독 변경 작업(켜기·끄기·재동기화) 체인 — 모듈 수준이라 화면 인스턴스가 바뀌어도 이어진다.
+ * 끄기 중 Dialog를 닫고 다시 열면 새 인스턴스의 재동기화가 이전 DELETE·unsubscribe 뒤에 실제 상태를 읽는다(Codex P1-3).
+ * 메모리에만 둔다(B7).
+ */
+let pushOp: Promise<unknown> = Promise.resolve();
+
+/** `fn`을 앞선 구독 변경 작업이 모두 끝난 뒤 실행한다(앞 작업의 실패와 무관). */
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const run = pushOp.then(fn);
+  pushOp = run.catch(() => undefined);
+  return run;
+}
+
+/** 메모리 구독 id·작업 체인을 비운다(세션 종료 시 LiveApp, 테스트). */
 export function resetPushMemory(): void {
   knownSubscription = null;
+  pushOp = Promise.resolve();
 }
 
 /** base64url VAPID 공개 키 → 바이트. */
@@ -125,21 +140,32 @@ export async function syncExistingSubscription(env: PushEnv, server: PushServerA
 export function usePushResync(env: PushEnv | null, server: PushServerApi | undefined, accountId: string | undefined): void {
   useEffect(() => {
     if (env === null || server === undefined || accountId === undefined) return;
-    syncExistingSubscription(env, server).catch(() => undefined);
+    serialize(() => syncExistingSubscription(env, server)).catch(() => undefined);
   }, [env, server, accountId]);
 }
 
 function usePushState(env: PushEnv, server: PushServerApi) {
-  const [state, setState] = useState<PushState>('loading');
+  const [state, setRawState] = useState<PushState>('loading');
   const key = useRef<string | null>(null);
+  // 언마운트 뒤 끝난 작업의 결과는 버린다 — 작업 자체는 끝까지 간다(Dialog 닫기를 막지 않음).
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const setState = useCallback((next: PushState) => {
+    if (mounted.current) setRawState(next);
+  }, []);
 
   const init = useCallback(async () => {
     try {
-      setState(await syncExistingSubscription(env, server, (k) => (key.current = k)));
+      setState(await serialize(() => syncExistingSubscription(env, server, (k) => (key.current = k))));
     } catch {
       setState('failed');
     }
-  }, [env, server]);
+  }, [env, server, setState]);
 
   useEffect(() => {
     void init();
@@ -149,7 +175,7 @@ function usePushState(env: PushEnv, server: PushServerApi) {
   const enable = useCallback(() => {
     const asked = env.requestPermission();
     setState('pending');
-    void (async () => {
+    void serialize(async () => {
       try {
         const permission = await asked;
         if (permission !== 'granted') return setState(permission === 'denied' ? 'denied' : 'default');
@@ -164,12 +190,12 @@ function usePushState(env: PushEnv, server: PushServerApi) {
       } catch {
         setState('failed');
       }
-    })();
-  }, [env, server]);
+    });
+  }, [env, server, setState]);
 
   const disable = useCallback(() => {
     setState('pending');
-    void (async () => {
+    void serialize(async () => {
       try {
         const sub = await (await env.pushManager()).getSubscription();
         if (knownSubscription !== null) await server.unregister(knownSubscription.id);
@@ -179,8 +205,8 @@ function usePushState(env: PushEnv, server: PushServerApi) {
       } catch {
         setState('failed');
       }
-    })();
-  }, [env, server]);
+    });
+  }, [env, server, setState]);
 
   return { state, enable, disable };
 }
