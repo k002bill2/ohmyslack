@@ -57,6 +57,33 @@ VOICE_TYPES = {".mp3": "audio/mpeg"}
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 INBOUND_IMAGE_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 ATTACHMENTS_PER_MESSAGE_MAX = 4  # shared/attachments.ts
+# 수신 문서·텍스트(shared/attachments.ts ATTACHMENT_FILE_MIMES = ATTACHMENT_DOC_MIMES + ATTACHMENT_TEXT_MIMES, 값 복제):
+# MIME → 파일명이 없을 때 쓸 기본 확장자(stem은 shared ATTACHMENT_FILENAME_FALLBACK_STEM "document").
+INBOUND_DOC_DEFAULT_EXT = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.ms-word.document.macroEnabled.12": ".docm",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-excel.sheet.macroEnabled.12": ".xlsm",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.ms-powerpoint.presentation.macroEnabled.12": ".pptm",
+    "application/hwp+zip": ".hwpx",
+    "application/x-hwp": ".hwp",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "text/plain": ".txt",
+    "text/markdown": ".md",
+    "text/csv": ".csv",
+}
+INBOUND_DOC_MIMES = frozenset(INBOUND_DOC_DEFAULT_EXT)
+INBOUND_DOC_FALLBACK_STEM = "document"  # shared/attachments.ts ATTACHMENT_FILENAME_FALLBACK_STEM
+ATTACHMENT_DOC_MAX_BYTES = 25 * 1024 * 1024  # shared/attachments.ts ATTACHMENT_DOC_MAX_BYTES (문서·텍스트 파일당)
+# Hermes 문서 캐시 이름 상한(UTF-8 바이트, oms-doc-inbound-fix1 P2-1): 서버는 파일명을 255바이트까지 허용하지만
+# Hermes는 `doc_<12hex>_` 17바이트 접두를 붙여(자르기 없음) NAME_MAX 255를 넘으면 ENAMETOOLONG으로 문서가 빠진다.
+# 17바이트 접두 + 여유를 두고 200바이트로 자른다. 확장자는 마지막 `.` 이후 이 길이 이하일 때만 보존한다.
+INBOUND_DOC_FILENAME_MAX_BYTES = 200
+INBOUND_DOC_EXT_MAX_BYTES = 16
 # 파일 읽기 스레드 프로세스 전체 상한(설계 r4 §Q2 S1): 정상 호출 1건(첨부 ≤ 4)은 슬롯 부족 없이 돈다.
 READ_SLOTS = ATTACHMENTS_PER_MESSAGE_MAX
 _READ_SLOTS = threading.BoundedSemaphore(READ_SLOTS)
@@ -196,6 +223,24 @@ def strip_mention_token(body: str, display_name: str) -> str:
         return text
     match = re.match(rf"@{re.escape(display_name)}(?!\w)", text)
     return text[match.end():].strip() if match else text
+
+
+def _fit_doc_filename(name: str) -> str:
+    """문서 캐시 이름을 UTF-8 `INBOUND_DOC_FILENAME_MAX_BYTES` 이하로 맞춘다(P2-1). 짧으면 그대로.
+
+    확장자 = 마지막 `.` 이후(첫 글자 `.`은 확장자로 보지 않음), UTF-8 `INBOUND_DOC_EXT_MAX_BYTES` 이하일 때만 보존.
+    stem은 바이트 단위로 자른 뒤 잘린 다중 바이트 문자를 버려(문자 경계 유지) 끝 공백·점을 정리하고, 비면 `document`.
+    """
+    if len(name.encode("utf-8", "ignore")) <= INBOUND_DOC_FILENAME_MAX_BYTES:
+        return name
+    dot = name.rfind(".")
+    ext = name[dot:] if dot > 0 else ""
+    if len(ext.encode("utf-8", "ignore")) > INBOUND_DOC_EXT_MAX_BYTES:
+        ext = ""
+    stem = name[:len(name) - len(ext)]
+    budget = INBOUND_DOC_FILENAME_MAX_BYTES - len(ext.encode("utf-8", "ignore"))
+    stem = stem.encode("utf-8", "ignore")[:budget].decode("utf-8", "ignore").rstrip(" .")
+    return (stem or INBOUND_DOC_FALLBACK_STEM) + ext
 
 
 def _is_uuid(value: Any) -> bool:
@@ -632,10 +677,13 @@ class OhmySlackAdapter(BasePlatformAdapter):
         text = strip_mention_token(str(m["body"]), self._display_name) if kind == "channel" else str(m["body"])
         try:
             # 다운로드는 dedup 해제 보호 구간 안: 취소되면 discard 후 재연결 catch-up에서 다시 받는다.
-            media_urls, media_types = await self._cache_inbound_images(m)
+            media_urls, media_types, has_document = await self._cache_inbound_media(m)
+            # 문서가 하나라도 있으면 DOCUMENT. Hermes는 첨부별 MIME을 먼저 보므로 섞인 이미지는 그대로 비전으로 간다.
+            message_type = (MessageType.DOCUMENT if has_document
+                            else MessageType.PHOTO if media_urls else MessageType.TEXT)
             event = MessageEvent(text=text, user_id=str(m["author_id"]), source=source, raw_message=m,
                                  message_id=mid, media_urls=media_urls, media_types=media_types,
-                                 message_type=MessageType.PHOTO if media_urls else MessageType.TEXT)
+                                 message_type=message_type)
             await self.handle_message(event)
         except BaseException:
             # 인계 실패: 중복 방지 등록을 풀고 커서도 전진시키지 않는다 → 재연결 catch-up에서 재전달.
@@ -645,33 +693,64 @@ class OhmySlackAdapter(BasePlatformAdapter):
             self._mark_bot_thread(thread_id)  # 이후 이 스레드의 owner 비멘션 답글은 같은 세션으로 이어진다
         self._remember(mid)
 
-    async def _cache_inbound_images(self, m: dict) -> tuple[list[str], list[str]]:
-        """사람 메시지의 이미지 첨부를 봇 토큰으로 받아 Hermes 이미지 캐시에 둔다. 실패한 첨부는 건너뛴다(텍스트는 전달).
+    async def _cache_inbound_media(self, m: dict) -> tuple[list[str], list[str], bool]:
+        """사람 메시지의 이미지·문서 첨부를 봇 토큰으로 받아 Hermes 캐시에 둔다 → (경로들, MIME들, 문서 포함 여부).
 
-        오디오 첨부는 아직 Hermes에 넘기지 않는다(남은 작업). 로그에는 첨부 ID·예외 종류만 싣는다.
+        이미지 3종: 이미지 캐시(상한 10 MiB, 기존 동작). 문서·텍스트(`INBOUND_DOC_MIMES`): 상한 25 MiB로 받아
+        Hermes `cache_media_bytes_async`(문서 캐시 `doc_<uuid>_<파일명>`)에 둔다 — Hermes가 경로 안내를 붙인다.
+        오디오·영상·허용 밖 MIME은 넘기지 않는다. 실패한 첨부는 건너뛴다(텍스트는 전달). 로그에는 첨부 ID·예외 종류만
+        싣는다(파일명·본문·토큰 금지).
         """
         from gateway.platforms.base import cache_image_from_bytes_async
         urls: list[str] = []
         types: list[str] = []
+        has_document = False
         attachments = m.get("attachments") or ()
         for att in list(attachments)[:ATTACHMENTS_PER_MESSAGE_MAX]:
             if not isinstance(att, dict):
                 continue
             aid, mime = str(att.get("id") or ""), str(att.get("mime") or "")
             ext = INBOUND_IMAGE_EXT.get(mime)
-            if ext is None or att.get("expired") or not _is_uuid(aid) or self._client is None:
+            is_doc = ext is None and mime in INBOUND_DOC_MIMES
+            if (ext is None and not is_doc) or att.get("expired") or not _is_uuid(aid) or self._client is None:
                 continue
             try:
-                data = await self._client.download_attachment(aid)
-                path = await cache_image_from_bytes_async(data, ext=ext)
+                if not is_doc:
+                    data = await self._client.download_attachment(aid)
+                    path = await cache_image_from_bytes_async(data, ext=ext)
+                    media_type = mime
+                else:
+                    # import를 여기 두어 Hermes에 함수가 없을 때도 문서 첨부만 건너뛴다(이미지·텍스트 전달 유지).
+                    from gateway.platforms.base import cache_media_bytes_async
+                    data = await self._client.download_attachment(aid, max_bytes=ATTACHMENT_DOC_MAX_BYTES)
+                    cached = await cache_media_bytes_async(data, filename=self._inbound_doc_filename(att, mime),
+                                                           mime_type=mime)
+                    if cached is None:
+                        logger.warning("ohmyslack: inbound attachment %s skipped (not cached)", aid)
+                        continue
+                    path, media_type = cached.path, cached.media_type
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — 첨부 하나의 실패로 지시 전달을 막지 않는다
                 logger.warning("ohmyslack: inbound attachment %s skipped (%s)", aid, type(exc).__name__)
                 continue
             urls.append(path)
-            types.append(mime)
-        return urls, types
+            types.append(media_type)
+            has_document = has_document or is_doc
+        return urls, types, has_document
+
+    @staticmethod
+    def _inbound_doc_filename(att: dict, mime: str) -> str:
+        """서버 filename의 basename(경로 조작 문자 정리는 Hermes도 한다). 없거나 비면 `document<MIME 기본 확장자>`.
+
+        UTF-8 `INBOUND_DOC_FILENAME_MAX_BYTES`를 넘으면 확장자(≤ `INBOUND_DOC_EXT_MAX_BYTES`)는 두고 stem을 문자 경계에서
+        자른다(끝 공백·점 정리, 비면 `document`).
+        """
+        raw = att.get("filename")
+        name = os.path.basename(raw.replace("\\", "/")).replace("\x00", "").strip() if isinstance(raw, str) else ""
+        if not name or name in {".", ".."}:
+            name = INBOUND_DOC_FALLBACK_STEM + INBOUND_DOC_DEFAULT_EXT.get(mime, "")
+        return _fit_doc_filename(name)
 
     def _remember(self, mid: str) -> None:
         self._recent = (self._recent + (mid,))[-RECENT_IDS_MAX:]

@@ -17,9 +17,11 @@ PLATFORM_HINT = (
     "Messages are plain text with markdown code fences; each top-level message starts a new thread and you "
     "reply inside it. In channels you only see the owner's messages that mention you, and you always reply "
     "in the thread. "
-    "Attachments: you can send MP3 audio (send_voice) and PNG/JPEG/WebP images (max 10 MiB each); "
-    "images the owner attaches arrive as image files. Other file types (documents, video, other audio "
-    "formats) are not supported — they are replaced by a short text notice."
+    "Attachments: images the owner attaches arrive as image files, and documents the owner attaches "
+    "(PDF, Word/Excel/PowerPoint, HWP/HWPX, TXT/MD/CSV; max 25 MiB each) arrive as files whose saved "
+    "path is given to you. Video and other audio attachments are not supported. You can still only send "
+    "MP3 audio (send_voice) and PNG/JPEG/WebP images (max 10 MiB each); other file types you send "
+    "(documents, video, other audio formats) are replaced by a short text notice."
 )
 
 
