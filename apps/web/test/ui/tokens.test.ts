@@ -48,9 +48,14 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
     for (const s of SCHEMES) expect(Object.keys(tokens.colors[s])).toEqual(CANON_ROLE_NAMES);
   });
 
-  // 2026-11-23 영환님 지시: hover 면 연하게(slate3). elevated 면 위 hover는 --bg-hover-strong(slate4)이라 면과 구별된다.
-  it('hover 면은 slate3(라이트에선 elevated와 같음)이고, --bg-hover-strong은 elevated와 다르다', () => {
-    expect(tok('light', '--bg-hover').value).toBe(tok('light', '--bg-elevated').value);
+  // 2026-11-23 영환님 지시 #F8F8F8 → 최근접 오픈 값 Radix gray2. elevated 면 위는 --bg-hover-strong. 스레드 패널 면은 --bg-app이라 별도 hover 토큰 없음.
+  it('라이트 hover 면은 Radix gray2(#f9f9f9), 다크는 slate3 유지', () => {
+    expect(tok('light', '--bg-hover').value).toBe('#f9f9f9');
+    expect(tok('light', '--bg-hover').scale).toBe('gray');
+    expect(tok('dark', '--bg-hover').scale).toBe('slate');
+  });
+
+  it('--bg-hover-strong은 elevated·hover와 다르고, hover는 app·sidebar와 다르다', () => {
     for (const s of SCHEMES) {
       expect(tok(s, '--bg-hover-strong').value, s).not.toBe(tok(s, '--bg-elevated').value);
       expect(tok(s, '--bg-hover-strong').value, s).not.toBe(tok(s, '--bg-hover').value);

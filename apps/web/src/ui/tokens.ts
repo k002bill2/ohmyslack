@@ -11,17 +11,18 @@ const OPEN_COLOR_SOURCE = 'https://raw.githubusercontent.com/yeun/open-color/mas
 const OPEN_COLOR_WHITE = '#ffffff';
 
 export type Scheme = 'light' | 'dark';
-export type ScaleName = 'slate' | 'teal' | 'green' | 'amber' | 'red';
+export type ScaleName = 'slate' | 'gray' | 'teal' | 'green' | 'amber' | 'red';
 export type ColorRole = 'surface' | 'text' | 'nontext';
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 
 /**
  * Radix Colors 공식 값(MIT). 원본: github.com/radix-ui/colors `src/light.ts`·`src/dark.ts` (2026-11-07 취득).
- * 인덱스 0 = step 1. neutral = slate, accent = teal(§3-3 기본값), 상태색 green·amber·red(§3-3 역할 표).
+ * 인덱스 0 = step 1. neutral = slate(+ 라이트 hover 전용 gray2), accent = teal(§3-3 기본값), 상태색 green·amber·red(§3-3 역할 표).
  */
 export const radixScales: Readonly<Record<Scheme, Readonly<Record<ScaleName, readonly string[]>>>> = Object.freeze({
   light: {
     slate: ['#fcfcfd', '#f9f9fb', '#f0f0f3', '#e8e8ec', '#e0e1e6', '#d9d9e0', '#cdced6', '#b9bbc6', '#8b8d98', '#80838d', '#60646c', '#1c2024'],
+    gray: ['#fcfcfc', '#f9f9f9', '#f0f0f0', '#e8e8e8', '#e0e0e0', '#d9d9d9', '#cecece', '#bbbbbb', '#8d8d8d', '#838383', '#646464', '#202020'],
     teal: ['#fafefd', '#f3fbf9', '#e0f8f3', '#ccf3ea', '#b8eae0', '#a1ded2', '#83cdc1', '#53b9ab', '#12a594', '#0d9b8a', '#008573', '#0d3d38'],
     green: ['#fbfefc', '#f4fbf6', '#e6f6eb', '#d6f1df', '#c4e8d1', '#adddc0', '#8eceaa', '#5bb98b', '#30a46c', '#2b9a66', '#218358', '#193b2d'],
     amber: ['#fefdfb', '#fefbe9', '#fff7c2', '#ffee9c', '#fbe577', '#f3d673', '#e9c162', '#e2a336', '#ffc53d', '#ffba18', '#ab6400', '#4f3422'],
@@ -29,6 +30,7 @@ export const radixScales: Readonly<Record<Scheme, Readonly<Record<ScaleName, rea
   },
   dark: {
     slate: ['#111113', '#18191b', '#212225', '#272a2d', '#2e3135', '#363a3f', '#43484e', '#5a6169', '#696e77', '#777b84', '#b0b4ba', '#edeef0'],
+    gray: ['#111111', '#191919', '#222222', '#2a2a2a', '#313131', '#3a3a3a', '#484848', '#606060', '#6e6e6e', '#7b7b7b', '#b4b4b4', '#eeeeee'],
     teal: ['#0d1514', '#111c1b', '#0d2d2a', '#023b37', '#084843', '#145750', '#1c6961', '#207e73', '#12a594', '#0eb39e', '#0bd8b6', '#adf0dd'],
     green: ['#0e1512', '#121b17', '#132d21', '#113b29', '#174933', '#20573e', '#28684a', '#2f7c57', '#30a46c', '#33b074', '#3dd68c', '#b1f1cb'],
     amber: ['#16120c', '#1d180f', '#302008', '#3f2700', '#4d3000', '#5c3d05', '#714f19', '#8f6424', '#ffc53d', '#ffd60a', '#ffca16', '#ffe7b3'],
@@ -72,8 +74,11 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
   '--bg-app': { scale: 'slate', step: 1, role: 'surface', dark: { step: 2 } },
   '--bg-sidebar': { scale: 'slate', step: 2, role: 'surface' },
   '--bg-elevated': { scale: 'slate', step: 3, role: 'surface', dark: { step: 1 } },
-  /** 2026-11-23 영환님 지시: 목록 hover 면을 연하게(slate3). 라이트에선 --bg-elevated와 같은 단계 — elevated 면 위 hover는 --bg-hover-strong. */
-  '--bg-hover': { scale: 'slate', step: 3, role: 'surface' },
+  /**
+   * 2026-11-23 영환님 지시: hover 면 #F8F8F8. 원시값은 오픈 스케일에 없어 최근접 오픈 값 Radix gray2(#f9f9f9)를 쓴다(§3-1). 다크는 slate3 유지.
+   * 스레드 패널 면도 --bg-app(wide·medium)이라 본문과 같은 hover. elevated(slate3) 면 위는 --bg-hover-strong.
+   */
+  '--bg-hover': { scale: 'gray', step: 2, role: 'surface', dark: { scale: 'slate', step: 3 } },
   /** elevated 면(라이트 slate3) 위 hover — 이전 --bg-hover 값(slate4)을 유지해 면과 구별된다. */
   '--bg-hover-strong': { scale: 'slate', step: 4, role: 'surface' },
   '--bg-active': { scale: 'slate', step: 5, role: 'surface' },
