@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { makeChipThumbnail, thumbnailEdgePx } from './chip-thumbnail.js';
 import type { ComposerChip } from './composer-upload.js';
-import { composerKindLabel, extensionOf, maxBytesFor } from './file-kinds.js';
+import { composerDocumentKind, extensionOf, maxBytesFor } from './file-kinds.js';
+import { FileKindTile } from './FileKindTile.js';
 
 /** undefined = 생성 중, null = 실패(표지로 대체), string = 축소 data URL. */
 type Thumb = string | null | undefined;
 
 /**
- * 작성기 칩 맨 앞(D §6-5 「작성기 칩」): 이미지 칩은 미리보기 썸네일, 그 밖은 형식 표지 텍스트.
+ * 작성기 칩 맨 앞(D §6-5 「작성기 칩」): 이미지 칩은 미리보기 썸네일, 문서 칩은 형식 타일(메시지 카드와 같은 `FileKindTile`,
+ * 업로드 중이면 모서리 스피너), 허용 밖은 없음.
  * 썸네일 소스는 축소 data URL(CSP `img-src 'self' data:` — blob: 금지), 컴포넌트 상태(메모리)에만 둔다(B7).
  * 칩 키로 마운트되므로 같은 칩 재렌더에는 다시 만들지 않고, 언마운트·칩 교체 시 늦은 결과는 버린다.
  * 상한 초과 이미지는 디코딩하지 않고, 생성 중에는 같은 크기 빈 자리를 그리며, 실패면 확장자 대문자 표지로 대체한다.
@@ -33,6 +35,10 @@ export function ChipLead({ chip }: { readonly chip: ComposerChip }) {
       <img className="composer-chip-thumb" src={thumb} alt="" aria-hidden="true" onError={() => setThumb(null)} />
     );
   }
-  const label = image ? extensionOf(file.name).toUpperCase() || null : composerKindLabel(file.name);
+  if (!image) {
+    const docKind = composerDocumentKind(file.name);
+    return docKind === null ? null : <FileKindTile kind={docKind} ext={extensionOf(file.name)} busy={chip.status === 'uploading'} />;
+  }
+  const label = extensionOf(file.name).toUpperCase() || null;
   return label === null ? null : <span className="composer-chip-kind">{label}</span>;
 }

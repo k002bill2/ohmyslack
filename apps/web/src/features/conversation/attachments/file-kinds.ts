@@ -73,12 +73,6 @@ export function maxBytesFor(kind: ComposerFileKind): number {
   return kind === 'image' ? ATTACHMENT_MAX_BYTES : ATTACHMENT_DOC_MAX_BYTES;
 }
 
-/** 작성기 칩 표지(G-59): 문서는 확장자로 고른 형식, 이미지·허용 밖은 null. */
-export function composerKindLabel(name: string): string | null {
-  const kind = DOC_EXT_KIND.get(extensionOf(name));
-  return kind === undefined ? null : DOCUMENT_KIND_COPY[kind];
-}
-
 /** 메시지 첨부 행의 형식 표지(G-59, 서버 판정 mime 기준). 문서·텍스트가 아니면 null. */
 export function documentKindLabel(mime: string): string | null {
   return isAttachmentFileMime(mime) ? DOCUMENT_KIND_COPY[FILE_FORMATS[mime].kind] : null;

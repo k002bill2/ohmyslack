@@ -106,7 +106,8 @@ describe('FR-OPS-09 작성기 문서 칩', () => {
       expect(opts?.type).toBe('application/octet-stream');
       expect(opts?.signal).toBeInstanceOf(AbortSignal);
       const chip = screen.getByTitle(name).closest('li') as HTMLElement;
-      expect(within(chip).getByText(name.split('.')[1]?.toUpperCase() ?? '')).toBeTruthy();
+      // 타일 글자와 형식 라벨이 같은 문자열(TXT·MD·CSV)이라 보조줄 형식 라벨로 좁힌다.
+      expect(chip.querySelector('.composer-chip-format')?.textContent).toBe(name.split('.')[1]?.toUpperCase());
     },
   );
 
@@ -173,6 +174,46 @@ describe('FR-OPS-09 작성기 문서 칩', () => {
     // 늦은 응답은 버린다.
     await act(async () => d.resolve({ ok: true, value: attachment({ mime: 'application/x-hwp', filename: 'plan.hwp' }) }));
     expect(screen.queryByTitle('plan.hwp')).toBeNull();
+  });
+
+  it('문서 칩: 형식 타일 + [파일명 / 형식 · 크기], 업로드 중 = 타일 모서리 스피너 + aria-busy + 스크린리더용 「업로드 중」', async () => {
+    const d = deferred();
+    const upload = vi.fn<Upload>(() => d.promise);
+    const { pick } = mount(upload);
+    await pick(file('예산.xlsx', 2048));
+    const chip = screen.getByTitle('예산.xlsx').closest('li') as HTMLElement;
+    expect(chip.getAttribute('aria-busy')).toBe('true');
+    const tile = chip.querySelector(':scope > .file-kind-tile') as HTMLElement;
+    expect(tile.textContent).toBe('XLSX');
+    expect(tile.classList.contains('file-tile-green')).toBe(true);
+    expect(tile.getAttribute('aria-hidden')).toBe('true');
+    expect(tile.querySelector('.file-kind-tile-spinner')).not.toBeNull();
+    const meta = chip.querySelector('.composer-chip-main .composer-chip-meta') as HTMLElement;
+    expect([...meta.children].map((c) => c.className)).toEqual(['composer-chip-format', 'composer-chip-sep', 'composer-chip-size']);
+    expect(meta.querySelector('.composer-chip-format')?.textContent).toBe(DOCUMENT_KIND_COPY.excel);
+    expect(meta.querySelector('.composer-chip-size')?.textContent).toBe('2KB');
+    const state = chip.querySelector('.composer-chip-state') as HTMLElement;
+    expect(state.classList.contains('visually-hidden')).toBe(true);
+    expect(state.textContent).toBe(ATTACHMENT_COPY.uploading);
+    expect(state.querySelector('.composer-chip-progress')).toBeNull();
+    // 이미지 썸네일 경로·형식 대체 표지는 쓰지 않는다.
+    expect(chip.querySelector('.composer-chip-thumb, .composer-chip-kind')).toBeNull();
+    await act(async () => d.resolve({ ok: true, value: attachment({ mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: '예산.xlsx' }) }));
+    expect(chip.getAttribute('aria-busy')).toBe('false');
+    expect(chip.querySelector('.file-kind-tile-spinner')).toBeNull();
+    expect(chip.querySelector('.composer-chip-state')).toBeNull();
+  });
+
+  it('이미지 칩은 그대로: 한 줄(파일명·크기) + 보이는 「업로드 중」과 점 진행 표시, 타일 없음', async () => {
+    const upload = vi.fn<Upload>(() => new Promise<Result>(() => undefined));
+    const { pick } = mount(upload);
+    await pick(file('a.png', 100, 'image/png'));
+    const chip = screen.getByTitle('a.png').closest('li') as HTMLElement;
+    expect(chip.querySelector('.file-kind-tile, .composer-chip-main, .composer-chip-format')).toBeNull();
+    const state = chip.querySelector('.composer-chip-state') as HTMLElement;
+    expect(state.classList.contains('visually-hidden')).toBe(false);
+    expect(state.querySelector('.composer-chip-progress')).not.toBeNull();
+    expect(chip.querySelector(':scope > .composer-chip-size')).not.toBeNull();
   });
 
   it('제거 뒤 포커스: 다음 칩의 「첨부 제거」', async () => {
