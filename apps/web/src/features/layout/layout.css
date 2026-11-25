@@ -684,10 +684,18 @@ body {
   text-align: center;
   font-size: var(--text-sm);
 }
-.thread-panel > .composer {
+/*
+ * 스레드 작성기 도크: 패널 전체 폭 불투명 면(패널 실효 배경 --bg-app — wide·medium 카드 규칙, compact는 셸 면)이 카드 둘레·아래 틈을 덮는다.
+ * z-index 2: 답글 hover 도구 막대(z-index 1)보다 위. flow-root: 카드 margin이 래퍼 밖으로 접혀 투명 틈이 되지 않게.
+ */
+.thread-panel > [data-composer='thread'] {
+  display: flow-root;
+  flex: none;
   position: sticky;
   bottom: 0;
+  z-index: 2;
   margin-top: auto;
+  background: var(--bg-app);
 }
 @media (width <= 640px) {
   .conversation-header {

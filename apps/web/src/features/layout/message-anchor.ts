@@ -115,12 +115,12 @@ export function isUserScrollInput(event: Event, scope: HTMLElement): boolean {
 }
 
 /**
- * sticky 작성기가 스크롤 영역 안에 있으면(스레드 패널) 그 높이만큼 scroll-padding-bottom을 둬 가운데·끝 정렬이
+ * sticky 작성기 도크가 스크롤 영역 안에 있으면(스레드 패널 [data-composer='thread']) 그 높이만큼 scroll-padding-bottom을 둬 가운데·끝 정렬이
  * 작성기 뒤로 가지 않게 한다(QA D-1). 작성기가 바깥에 있으면(본문 목록) 비운다. 값은 실측 높이 — 고정 px가 아니다.
  */
 function padForComposer(scope: HTMLElement): void {
-  const composer = scope.querySelector<HTMLElement>(':scope > .composer');
-  scope.style.scrollPaddingBottom = composer === null ? '' : `${composer.offsetHeight}px`;
+  const dock = scope.querySelector<HTMLElement>(":scope > [data-composer='thread']");
+  scope.style.scrollPaddingBottom = dock === null ? '' : `${dock.offsetHeight}px`;
 }
 
 /**

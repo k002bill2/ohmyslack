@@ -4,7 +4,7 @@ import { prefersNoAutoKeyboard } from '../../ui/no-auto-keyboard.js';
 /** 본문 영역: 작성기 입력란 → 잠긴 DM 안내 → 메시지 목록(tabIndex=-1, 터치 기기 폴백). */
 export const MAIN_DISCARD_FOCUS = ["[data-composer='main'] .composer-input", ':scope > .composer-notice', '.message-list'] as const;
 /** 스레드 패널: 스레드 작성기 → 스레드 안내 → 제목(tabIndex=-1) → 「닫기」. */
-export const THREAD_DISCARD_FOCUS = [':scope > .composer .composer-input', ':scope > .composer-notice', '.thread-title', '.thread-close'] as const;
+export const THREAD_DISCARD_FOCUS = [":scope > [data-composer='thread'] .composer-input", ":scope > [data-composer='thread'] > .composer-notice", '.thread-title', '.thread-close'] as const;
 
 /** 프로그래밍 focus 시 가상 키보드를 띄우는 대상. */
 const TEXT_ENTRY = 'textarea, input, [contenteditable]:not([contenteditable="false"])';
