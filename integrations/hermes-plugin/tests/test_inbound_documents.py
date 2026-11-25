@@ -201,3 +201,100 @@ async def test_inbound_document_cancel_propagates(server, make_adapter, monkeypa
     with pytest.raises(asyncio.CancelledError):
         await adapter._cache_inbound_media(_message(att))
     assert calls == [(att["id"], {"max_bytes": DOC_MAX})]
+
+
+# ---------- fix1 (QA P2-1·P3-2·P3-3) ----------
+LONG_KO_PDF = "가" * 84 + ".pdf"  # 84*3 + 4 = 256바이트(서버 허용 200자 이내, Hermes 17바이트 접두 시 NAME_MAX 초과)
+NAME_MAX_BYTES = 200
+
+
+@pytest.mark.parametrize(("filename", "expected"), [
+    (r"..\..\evil.pdf", "evil.pdf"),
+    ("a\x00b.pdf", "ab.pdf"),
+    ("..", "document.pdf"),
+    ("", "document.pdf"),
+    (None, "document.pdf"),
+    ("dir/", "document.pdf"),
+])
+def test_inbound_doc_filename_sanitizes(filename, expected):
+    from ohmyslack.adapter import OhmySlackAdapter
+    att = {"id": str(uuid.uuid4()), "mime": PDF_MIME}
+    if filename is not None:
+        att["filename"] = filename
+    assert OhmySlackAdapter._inbound_doc_filename(att, PDF_MIME) == expected
+
+
+def test_inbound_doc_filename_long_name_is_truncated_on_char_boundary():
+    from ohmyslack.adapter import OhmySlackAdapter
+    assert len(LONG_KO_PDF.encode("utf-8")) == 256
+    name = OhmySlackAdapter._inbound_doc_filename({"filename": LONG_KO_PDF}, PDF_MIME)
+    assert name.endswith(".pdf")
+    encoded = name.encode("utf-8")  # 손상 문자(잘린 다중 바이트·대체 문자)가 있으면 strict 인코딩 실패 또는 �
+    assert len(encoded) <= NAME_MAX_BYTES
+    assert "�" not in name
+    assert set(name[:-len(".pdf")]) == {"가"}
+    assert len(encoded) > NAME_MAX_BYTES - 3 - len(".pdf")  # 필요 이상으로 자르지 않는다
+
+
+async def test_inbound_long_document_name_is_cached(server, make_adapter):
+    adapter = await _connected(make_adapter, server)
+    att = _att(server, PDF_MIME, PDF, filename=LONG_KO_PDF)
+    await server.push_live(_message(att))
+    await wait_for(lambda: len(adapter.events) == 1)
+    event = adapter.events[0]
+    assert server.downloads == [att["id"]]
+    assert len(event.media_urls) == 1
+    path = Path(event.media_urls[0])
+    assert path.name.endswith(".pdf")
+    assert path.read_bytes() == PDF
+
+
+@pytest.mark.parametrize(("mime", "filename"), [
+    ("application/x-hwp", "보고서.hwp"),
+    ("application/hwp+zip", "보고서.hwpx"),
+    ("application/vnd.ms-excel.sheet.macroEnabled.12", "표.xlsm"),
+])
+async def test_inbound_hwp_and_macro_documents_keep_mime(server, make_adapter, mime, filename):
+    from gateway.platforms.event import MessageType
+    adapter = await _connected(make_adapter, server)
+    att = _att(server, mime, b"PK\x03\x04" + b"\x00" * 64, filename=filename)
+    await server.push_live(_message(att))
+    await wait_for(lambda: len(adapter.events) == 1)
+    event = adapter.events[0]
+    assert server.downloads == [att["id"]]
+    # MIME은 대소문자 무관(RFC 2045) — Hermes cache_media_bytes가 소문자로 정규화한다(base.py 1453).
+    assert [t.lower() for t in event.media_types] == [mime.lower()]
+    assert event.message_type == MessageType.DOCUMENT
+    assert len(event.media_urls) == 1
+
+
+async def test_inbound_image_over_10mib_is_skipped(server, make_adapter, caplog):
+    from gateway.platforms.event import MessageType
+    caplog.set_level(logging.DEBUG)
+    adapter = await _connected(make_adapter, server)
+    att = _att(server, "image/png", PNG + b"\x00" * (IMAGE_MAX + 1 - len(PNG)))
+    await server.push_live(_message(att))
+    await wait_for(lambda: len(adapter.events) == 1, timeout=10.0)
+    event = adapter.events[0]
+    assert server.downloads == [att["id"]]
+    assert event.media_urls == []
+    assert event.message_type == MessageType.TEXT
+    assert att["id"] in caplog.text
+
+
+async def test_inbound_download_max_bytes_per_kind(server, make_adapter, monkeypatch):
+    adapter = await _connected(make_adapter, server)
+    original = adapter._client.download_attachment
+    calls: list[tuple[str, dict]] = []
+
+    async def _spy(aid, **kwargs):
+        calls.append((aid, kwargs))
+        return await original(aid, **kwargs)
+
+    monkeypatch.setattr(adapter._client, "download_attachment", _spy)
+    img = _att(server, "image/png", PNG)
+    doc = _att(server, PDF_MIME, PDF, filename="c.pdf")
+    await server.push_live(_message(img, doc))
+    await wait_for(lambda: len(adapter.events) == 1)
+    assert calls == [(img["id"], {}), (doc["id"], {"max_bytes": DOC_MAX})]  # 이미지는 기본 상한(10 MiB)
+    assert len(adapter.events[0].media_urls) == 2

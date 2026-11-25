@@ -79,6 +79,11 @@ INBOUND_DOC_DEFAULT_EXT = {
 INBOUND_DOC_MIMES = frozenset(INBOUND_DOC_DEFAULT_EXT)
 INBOUND_DOC_FALLBACK_STEM = "document"  # shared/attachments.ts ATTACHMENT_FILENAME_FALLBACK_STEM
 ATTACHMENT_DOC_MAX_BYTES = 25 * 1024 * 1024  # shared/attachments.ts ATTACHMENT_DOC_MAX_BYTES (문서·텍스트 파일당)
+# Hermes 문서 캐시 이름 상한(UTF-8 바이트, oms-doc-inbound-fix1 P2-1): 서버는 파일명을 255바이트까지 허용하지만
+# Hermes는 `doc_<12hex>_` 17바이트 접두를 붙여(자르기 없음) NAME_MAX 255를 넘으면 ENAMETOOLONG으로 문서가 빠진다.
+# 17바이트 접두 + 여유를 두고 200바이트로 자른다. 확장자는 마지막 `.` 이후 이 길이 이하일 때만 보존한다.
+INBOUND_DOC_FILENAME_MAX_BYTES = 200
+INBOUND_DOC_EXT_MAX_BYTES = 16
 # 파일 읽기 스레드 프로세스 전체 상한(설계 r4 §Q2 S1): 정상 호출 1건(첨부 ≤ 4)은 슬롯 부족 없이 돈다.
 READ_SLOTS = ATTACHMENTS_PER_MESSAGE_MAX
 _READ_SLOTS = threading.BoundedSemaphore(READ_SLOTS)
@@ -218,6 +223,24 @@ def strip_mention_token(body: str, display_name: str) -> str:
         return text
     match = re.match(rf"@{re.escape(display_name)}(?!\w)", text)
     return text[match.end():].strip() if match else text
+
+
+def _fit_doc_filename(name: str) -> str:
+    """문서 캐시 이름을 UTF-8 `INBOUND_DOC_FILENAME_MAX_BYTES` 이하로 맞춘다(P2-1). 짧으면 그대로.
+
+    확장자 = 마지막 `.` 이후(첫 글자 `.`은 확장자로 보지 않음), UTF-8 `INBOUND_DOC_EXT_MAX_BYTES` 이하일 때만 보존.
+    stem은 바이트 단위로 자른 뒤 잘린 다중 바이트 문자를 버려(문자 경계 유지) 끝 공백·점을 정리하고, 비면 `document`.
+    """
+    if len(name.encode("utf-8", "ignore")) <= INBOUND_DOC_FILENAME_MAX_BYTES:
+        return name
+    dot = name.rfind(".")
+    ext = name[dot:] if dot > 0 else ""
+    if len(ext.encode("utf-8", "ignore")) > INBOUND_DOC_EXT_MAX_BYTES:
+        ext = ""
+    stem = name[:len(name) - len(ext)]
+    budget = INBOUND_DOC_FILENAME_MAX_BYTES - len(ext.encode("utf-8", "ignore"))
+    stem = stem.encode("utf-8", "ignore")[:budget].decode("utf-8", "ignore").rstrip(" .")
+    return (stem or INBOUND_DOC_FALLBACK_STEM) + ext
 
 
 def _is_uuid(value: Any) -> bool:
@@ -718,12 +741,16 @@ class OhmySlackAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _inbound_doc_filename(att: dict, mime: str) -> str:
-        """서버 filename의 basename(경로 조작 문자 정리는 Hermes도 한다). 없거나 비면 `document<MIME 기본 확장자>`."""
+        """서버 filename의 basename(경로 조작 문자 정리는 Hermes도 한다). 없거나 비면 `document<MIME 기본 확장자>`.
+
+        UTF-8 `INBOUND_DOC_FILENAME_MAX_BYTES`를 넘으면 확장자(≤ `INBOUND_DOC_EXT_MAX_BYTES`)는 두고 stem을 문자 경계에서
+        자른다(끝 공백·점 정리, 비면 `document`).
+        """
         raw = att.get("filename")
         name = os.path.basename(raw.replace("\\", "/")).replace("\x00", "").strip() if isinstance(raw, str) else ""
         if not name or name in {".", ".."}:
             name = INBOUND_DOC_FALLBACK_STEM + INBOUND_DOC_DEFAULT_EXT.get(mime, "")
-        return name
+        return _fit_doc_filename(name)
 
     def _remember(self, mid: str) -> None:
         self._recent = (self._recent + (mid,))[-RECENT_IDS_MAX:]
