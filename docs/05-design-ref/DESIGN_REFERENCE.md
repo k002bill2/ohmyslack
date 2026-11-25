@@ -77,7 +77,7 @@
 | 코드 폰트 | **JetBrains Mono** | SIL OFL 1.1 | `raw.githubusercontent.com/JetBrains/JetBrainsMono/master/OFL.txt` | 코드 블록·식별자 표시용. 한글은 본문 폰트로 폴백. 동봉 시 Pretendard와 같은 규칙(수정 없는 배포 파일 + 고지) |
 | 아이콘(1차) | **Lucide** | ISC | `raw.githubusercontent.com/lucide-icons/lucide/main/LICENSE`, `lucide.dev/license` | §3-4 이름 사용. 세트 혼용은 화면당 1개 |
 | 아이콘(대안) | Phosphor Icons / Tabler Icons | MIT / MIT | `phosphor-icons/core/main/LICENSE`, `tabler/tabler-icons/main/LICENSE` | Lucide에 없는 글리프가 필요할 때만 |
-| 색 체계 | **Radix Colors** | MIT | `raw.githubusercontent.com/radix-ui/colors/main/LICENSE` | 12단계 스케일, 라이트/다크 쌍(§3-3) |
+| 색 체계 | **Radix Colors** | MIT | `raw.githubusercontent.com/radix-ui/colors/main/LICENSE` | 12단계 스케일, 라이트/다크 쌍(§3-3). `gray` 스케일은 라이트 `--bg-hover`(gray2 #f9f9f9, 영환님 지시 #F8F8F8의 최근접 오픈 값)에만 사용 — `src/light.ts`·`dark.ts`(`grayDark`) 2026-11-25 확인 |
 | 색 체계(대안) | Open Color / Tailwind 색 팔레트 | MIT / MIT | `yeun/open-color/master/LICENSE`, `tailwindlabs/tailwindcss/main/LICENSE` | Radix로 부족할 때만 |
 | 브레이크포인트 기준값 | 640px·1024px (Tailwind 문서 `sm 40rem`·`lg 64rem`의 **숫자만** 차용) | 공개 기술 문서 | `tailwindcss.com/docs/responsive-design` | **의미는 다릅니다:** Tailwind `sm`은 640px **이상**에 적용되고, 이 문서의 compact는 640px **이하**입니다(§5-1). 프레임워크 채택을 뜻하지 않음 |
 | 이모지 | 시스템 네이티브(MVP) | — | — | v1 후보: Noto Color Emoji(OFL 1.1), Fluent UI Emoji(MIT), Twemoji(그래픽 CC BY 4.0 → 표기 의무, 비권장) |
@@ -116,7 +116,8 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | `--bg-app` | neutral 1 (**다크 2**) | 본문·떠 있는 패널 배경 |
 | `--bg-sidebar` | neutral 2 | 사이드바·스레드 패널 배경(**유채색 금지**, §2-2) |
 | `--bg-elevated` | neutral 3 (**다크 1**) | 앱 바닥(ground)·옅은 카드·키 표시 |
-| `--bg-hover` / `--bg-active` | neutral 3 / 5 | 목록 항목 hover(2026-11-23 영환님 지시로 4→3, 연하게)·선택 |
+| `--bg-hover` / `--bg-active` | 라이트 **Radix gray 2(#f9f9f9)**·다크 neutral 3 / neutral 5 | 목록 항목 hover(2026-11-23 영환님 지시 #F8F8F8 — 원시값은 오픈 스케일에 없어 최근접 오픈 값 gray2, 채널당 +1)·선택 |
+| `--bg-hover-sidebar` | neutral 3 | `--bg-sidebar`(라이트 neutral 2 #f9f9fb) 면 위 hover(스레드 패널) — `--bg-hover`(gray2)와 거의 같아 사라지므로 패널 안에서만 `--bg-hover`로 재정의 |
 | `--bg-hover-strong` | neutral 4 | `--bg-elevated`(라이트 neutral 3) 면 위 hover — 면과 같은 단계가 되어 hover가 사라지지 않게 |
 | `--border-subtle` / `--border` | neutral 6 / 7 | 장식 구분선·패널 테두리(대비 예외 §2-3 4항, 시안 색) / 입력란·조작 대상 경계(3:1 보정 neutral 9) |
 | `--text-muted` / `--text` | neutral 11 / 12 | 메타·**상태 라벨(전송 중 등)** / 본문 |

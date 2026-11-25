@@ -598,6 +598,16 @@
 
 
 /*
+ * 라이트 --bg-hover(gray2 #f9f9f9)는 스레드 패널 면(--bg-sidebar slate2 #f9f9fb)과 사실상 같아 hover가 안 보인다.
+ * 패널 안에서만 --bg-hover를 직전 값(--bg-hover-sidebar, slate3)으로 다시 정의한다 — 하위 hover 규칙은 var(--bg-hover) 그대로.
+ * (compact의 스레드는 별도 전체 화면이라 대상 아님. 원문 상자·--bg-hover-strong 규칙은 영향 없음.)
+ */
+.thread-wide,
+.thread-medium {
+  --bg-hover: var(--bg-hover-sidebar);
+}
+
+/*
  * 2026-11-23: --bg-hover가 slate3(라이트 --bg-elevated와 같은 단계)로 연해져, elevated 면 위 hover는 --bg-hover-strong(slate4).
  * 항상 elevated 위인 규칙은 원 규칙에서 바꿨고, 여기는 상황에 따라 elevated 위인 경우만 덮는다.
  */

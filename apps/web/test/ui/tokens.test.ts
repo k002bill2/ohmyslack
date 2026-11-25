@@ -21,7 +21,7 @@ beforeAll(async () => {
 
 /** §3-3 역할 표 이름 정본(테스트 쪽 독립 사본). */
 const CANON_ROLE_NAMES = [
-  '--bg-app', '--bg-sidebar', '--bg-elevated', '--bg-hover', '--bg-hover-strong', '--bg-active',
+  '--bg-app', '--bg-sidebar', '--bg-elevated', '--bg-hover', '--bg-hover-sidebar', '--bg-hover-strong', '--bg-active',
   '--border-subtle', '--border', '--text-muted', '--text',
   '--accent-solid', '--accent-text', '--accent-bg', '--success-text',
   '--warning-bg', '--warning-text', '--danger-bg', '--danger-text', '--danger-solid',
@@ -48,9 +48,17 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
     for (const s of SCHEMES) expect(Object.keys(tokens.colors[s])).toEqual(CANON_ROLE_NAMES);
   });
 
-  // 2026-11-23 영환님 지시: hover 면 연하게(slate3). elevated 면 위 hover는 --bg-hover-strong(slate4)이라 면과 구별된다.
-  it('hover 면은 slate3(라이트에선 elevated와 같음)이고, --bg-hover-strong은 elevated와 다르다', () => {
-    expect(tok('light', '--bg-hover').value).toBe(tok('light', '--bg-elevated').value);
+  // 2026-11-23 영환님 지시 #F8F8F8 → 최근접 오픈 값 Radix gray2. sidebar 면 위는 --bg-hover-sidebar(slate3), elevated 면 위는 --bg-hover-strong.
+  it('라이트 hover 면은 Radix gray2(#f9f9f9), 다크는 slate3 유지. hover-sidebar는 slate3', () => {
+    expect(tok('light', '--bg-hover').value).toBe('#f9f9f9');
+    expect(tok('light', '--bg-hover').scale).toBe('gray');
+    expect(tok('dark', '--bg-hover').value).toBe(tok('dark', '--bg-hover-sidebar').value);
+    expect(tok('dark', '--bg-hover').scale).toBe('slate');
+    expect(tok('light', '--bg-hover-sidebar').value).toBe('#f0f0f3');
+    for (const s of SCHEMES) expect(tok(s, '--bg-hover-sidebar').value, s).not.toBe(tok(s, '--bg-sidebar').value);
+  });
+
+  it('--bg-hover-strong은 elevated·hover와 다르고, hover는 app·sidebar와 다르다', () => {
     for (const s of SCHEMES) {
       expect(tok(s, '--bg-hover-strong').value, s).not.toBe(tok(s, '--bg-elevated').value);
       expect(tok(s, '--bg-hover-strong').value, s).not.toBe(tok(s, '--bg-hover').value);
@@ -80,8 +88,8 @@ describe('design tokens (DESIGN_REFERENCE §3·§7-1)', () => {
 
   it('text tokens stay ≥ 4.5:1 on the other canon backgrounds they are used on', () => {
     const pairs: ReadonlyArray<readonly [string, string]> = [
-      ['--text', '--bg-sidebar'], ['--text', '--bg-elevated'], ['--text', '--bg-hover'], ['--text', '--bg-hover-strong'], ['--text', '--bg-active'],
-      ['--text-muted', '--bg-sidebar'], ['--text-muted', '--bg-elevated'], ['--text-muted', '--bg-hover'], ['--text-muted', '--bg-hover-strong'],
+      ['--text', '--bg-sidebar'], ['--text', '--bg-elevated'], ['--text', '--bg-hover'], ['--text', '--bg-hover-sidebar'], ['--text', '--bg-hover-strong'], ['--text', '--bg-active'],
+      ['--text-muted', '--bg-sidebar'], ['--text-muted', '--bg-elevated'], ['--text-muted', '--bg-hover'], ['--text-muted', '--bg-hover-sidebar'], ['--text-muted', '--bg-hover-strong'],
       ['--text-muted', '--bg-active'], ['--text', '--accent-bg'], ['--accent-text', '--accent-bg'],
       ['--danger-text', '--danger-bg'], ['--mention-text', '--bg-app'],
     ];
