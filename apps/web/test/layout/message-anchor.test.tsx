@@ -517,7 +517,7 @@ describe('알림 탭 스레드 앵커 위치 보정(QA D-1)', () => {
     Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
       configurable: true,
       get(this: HTMLElement) {
-        return this.classList.contains('composer') ? 118 : 0;
+        return this.dataset['composer'] === 'thread' ? 118 : 0;
       },
     });
     try {
@@ -532,18 +532,18 @@ describe('알림 탭 스레드 앵커 위치 보정(QA D-1)', () => {
     }
   });
 
-  it('스레드 패널 scroll-padding-bottom = sticky 작성기 높이(가운데 정렬이 작성기 뒤로 가지 않게)', () => {
+  it('스레드 패널 scroll-padding-bottom = sticky 작성기 도크 높이(가운데 정렬이 작성기 뒤로 가지 않게)', () => {
     const offset = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
     Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
       configurable: true,
       get(this: HTMLElement) {
-        return this.classList.contains('composer') ? 118 : 0;
+        return this.dataset['composer'] === 'thread' ? 118 : 0;
       },
     });
     try {
       const view = open(`/c/${C1}?thread=${M1}#message-${R1}`).view;
       const panel = view.container.querySelector<HTMLElement>('.thread-panel')!;
-      expect(panel.querySelector(':scope > .composer')).not.toBeNull();
+      expect(panel.querySelector(":scope > [data-composer='thread'] > .composer")).not.toBeNull();
       expect(panel.style.scrollPaddingBottom).toBe('118px');
     } finally {
       if (offset === undefined) delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;

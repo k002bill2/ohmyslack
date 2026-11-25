@@ -456,8 +456,7 @@
   text-align: center;
   line-height: var(--leading-body);
 }
-[data-composer] > .composer,
-.thread-panel > .composer {
+[data-composer] > .composer {
   margin-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
 }
 .composer .composer-input {

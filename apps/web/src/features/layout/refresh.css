@@ -45,15 +45,12 @@
   background: var(--bg-app);
 }
 /*
- * margin-top은 auto 유지(layout.css 기본 규칙) — 답글이 적어도 작성기가 패널 바닥에 붙는다(R5 실렌더 834).
- * 긴 스레드는 패널이 스크롤돼 sticky가 걸리는데, bottom 0이면 margin-bottom이 무시돼 패널 끝에 붙는다(운영 834 실측 1px).
- * bottom을 같은 space-3으로 두고, 그 틈으로 지나가는 답글은 패널 면 색 링(spread)으로 가린다.
+ * 스레드 작성기는 불투명 도크(layout.css [data-composer='thread'], sticky bottom 0) 안 카드 — 바닥 여백 space-3은 도크 면 안의 margin이라
+ * 긴 스레드에서도 유지되고, 둘레 틈은 도크 면이 덮는다(둥근 링 없음). 위 space-2는 마지막 답글과 카드 사이 여백.
  */
-.app-shell:not([data-layout='compact']) .thread-panel > .composer {
-  bottom: var(--space-3);
-  margin: auto var(--space-3) var(--space-3);
+.app-shell:not([data-layout='compact']) [data-composer='thread'] > .composer {
+  margin: var(--space-2) var(--space-3) var(--space-3);
   border-radius: var(--radius-xl);
-  box-shadow: 0 0 0 var(--space-3) var(--bg-app);
 }
 
 /* 다이얼로그·메뉴 카드: 큰 반경 + overlay 그림자. */

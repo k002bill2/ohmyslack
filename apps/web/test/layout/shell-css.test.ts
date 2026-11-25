@@ -38,19 +38,31 @@ describe('알림 탭 대상 없음 안내(W-23b Codex 확인 라운드 P2)', () 
   });
 });
 
-describe('스레드 작성기 하단 고정(R5 실렌더 834 — 시안 「중간 폭 · 2단 + 스레드 시트」)', () => {
+describe('스레드 작성기 하단 도크(composer-dock — 스크롤되는 답글이 작성기 둘레로 비치지 않게)', () => {
   const refresh = readFileSync(fileURLToPath(new URL('../../src/features/layout/refresh.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  it('떠 있는 패널 여백 규칙이 margin-top: auto(패널 바닥으로 밀기)를 덮어쓰지 않는다', () => {
-    const rule = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-      .filter((m) => (m[1] ?? '').trim() === ".app-shell:not([data-layout='compact']) .thread-panel > .composer")
-      .at(-1)?.[2] ?? '';
-    expect(rule).toMatch(/margin: auto var\(--space-3\) var\(--space-3\)/);
+  const conversation = readFileSync(fileURLToPath(new URL('../../src/features/conversation/conversation.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const ruleIn = (src: string, selector: string) =>
+    [...src.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => (m[1] ?? '').trim() === selector).at(-1)?.[2] ?? '';
+  it('래퍼가 패널 바닥 sticky(bottom 0) + 답글 도구 막대(z-index 1)보다 위 + 패널 면(--bg-app) 불투명 배경', () => {
+    const dock = last(".thread-panel > [data-composer='thread']");
+    expect(dock).toContain('position: sticky');
+    expect(dock).toMatch(/bottom: 0;/);
+    expect(dock).toContain('z-index: 2');
+    expect(dock).toContain('margin-top: auto');
+    expect(dock).toContain('background: var(--bg-app)');
+    // 카드 margin이 래퍼 밖으로 접혀 나가 투명 틈이 생기지 않게 래퍼가 margin을 가둔다.
+    expect(dock).toContain('display: flow-root');
   });
-  it('긴 스레드(패널 스크롤)에서도 sticky 작성기가 바닥 여백 space-3을 지킨다 — bottom 0이면 margin이 무시돼 패널 끝에 붙는다(운영 실렌더 834, 1px)', () => {
-    const rule = [...refresh.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-      .filter((m) => (m[1] ?? '').trim() === ".app-shell:not([data-layout='compact']) .thread-panel > .composer")
-      .at(-1)?.[2] ?? '';
-    expect(rule).toMatch(/bottom: var\(--space-3\)/);
+  it('카드 자체는 더 이상 sticky·둥근 링으로 가리지 않는다', () => {
+    for (const src of [css, refresh, conversation]) {
+      expect(src).not.toMatch(/\.thread-panel > \.composer\b/);
+      expect(src).not.toMatch(/box-shadow: 0 0 0 var\(--space-3\)/);
+    }
+  });
+  it('넓은·중간 화면 카드 여백: 위 space-2(마지막 답글과 틈) · 좌우·아래 space-3 — 래퍼 면 안에서', () => {
+    expect(ruleIn(refresh, ".app-shell:not([data-layout='compact']) [data-composer='thread'] > .composer")).toMatch(
+      /margin: var\(--space-2\) var\(--space-3\) var\(--space-3\)/,
+    );
   });
 });
 

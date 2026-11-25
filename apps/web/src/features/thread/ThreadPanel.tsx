@@ -200,20 +200,23 @@ export function ThreadPanel({ variant, root, replies, onClose, onSend, onUpload,
           ))}
         </ul>
       )}
-      {composerNotice !== undefined ? (
-        <ComposerNotice text={composerNotice} />
-      ) : (
-        <Composer
-          key={root.id}
-          label={COMPOSER_COPY.replyLabel}
-          placeholder={COMPOSER_COPY.replyPlaceholder}
-          showHint={variant !== 'compact'}
-          onSend={onSend}
-          {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
-          {...(onUpload === undefined ? {} : { onUpload })}
-          {...(attachmentDrafts === undefined ? {} : { attachmentDraft: { store: attachmentDrafts, key: root.id } })}
-        />
-      )}
+      {/* 하단 도크: 불투명 래퍼가 작성기 둘레까지 덮어 스크롤되는 답글이 비치지 않게(메인 [data-composer='main']과 같은 패턴). */}
+      <div data-composer="thread">
+        {composerNotice !== undefined ? (
+          <ComposerNotice text={composerNotice} />
+        ) : (
+          <Composer
+            key={root.id}
+            label={COMPOSER_COPY.replyLabel}
+            placeholder={COMPOSER_COPY.replyPlaceholder}
+            showHint={variant !== 'compact'}
+            onSend={onSend}
+            {...(drafts === undefined ? {} : { draft: { store: drafts, key: root.id } })}
+            {...(onUpload === undefined ? {} : { onUpload })}
+            {...(attachmentDrafts === undefined ? {} : { attachmentDraft: { store: attachmentDrafts, key: root.id } })}
+          />
+        )}
+      </div>
     </Tag>
   );
 }
