@@ -132,6 +132,7 @@ Radix 문서 기준 단계 용도: **1–2 앱 배경, 3–5 컴포넌트 배경
 | `--danger-line` | red 6 | 「여기부터 새 메시지」 구분선(장식, R5) |
 | `--mention-text` | neutral 12 (다크 accent 11) | 본문 @멘션 글자(R5) |
 | `--focus-ring` | accent 8 | 2px 포커스 링(WCAG 2.4.7) |
+| `--file-tile-{tone}` / `--on-file-tile-{tone}` | tone 11 (다크 9) / 라이트 Open Color `white`·다크 neutral 1 | 문서 형식 타일 면·확장자 글자(2026-11-25 doc-attach-card, UI_STATES §2-13). tone = green·blue·orange·red·cyan(Radix 같은 이름 스케일)·neutral(slate, **다크 11** — slate9 위 글자 3.68 < 4.5). 형식→tone 대응은 웹 `FILE_TILE_TONES` 한 곳 |
 
 - **기본값(R3 확정, 영환님 번복 가능 §14-1):** neutral = `slate`, accent = `teal`. 대안 `sand` / `jade`·`indigo`. **배제:** `purple`·`plum`·`violet`을 면 배경으로(§2-2).
 - 대비: Radix 문서는 step 11·12 텍스트가 step 1–2 배경에서 AA를 만족하도록 설계되었다고 설명합니다(설계 의도). 우리 조합은 `check:design-tokens`가 두 스킴에서 실측합니다(WCAG 1.4.3 4.5:1, 1.4.11 3:1).

@@ -84,6 +84,18 @@ export function documentKindLabel(mime: string): string | null {
   return isAttachmentFileMime(mime) ? DOCUMENT_KIND_COPY[FILE_FORMATS[mime].kind] : null;
 }
 
+/** 작성기 문서 칩의 형식(확장자 기준). 이미지·허용 밖은 null. */
+export function composerDocumentKind(name: string): DocumentKind | null {
+  return DOC_EXT_KIND.get(extensionOf(name)) ?? null;
+}
+
+/** 메시지 첨부의 형식·대표 확장자(서버 판정 mime 기준, 타일 글자용). 문서·텍스트가 아니면 null. */
+export function documentFormat(mime: string): { readonly kind: DocumentKind; readonly ext: string } | null {
+  if (!isAttachmentFileMime(mime)) return null;
+  const { kind, ext } = FILE_FORMATS[mime];
+  return { kind, ext: ext[0] ?? '' };
+}
+
 /** 파일명 → 이름부·확장자부(점 포함). 확장자가 없거나 이름부가 비면 전체가 이름부(UI_STATES §2-13 말줄임 규칙). */
 export function splitFilename(name: string): { readonly stem: string; readonly ext: string } {
   const dot = name.lastIndexOf('.');

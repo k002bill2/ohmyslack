@@ -11,13 +11,14 @@ const OPEN_COLOR_SOURCE = 'https://raw.githubusercontent.com/yeun/open-color/mas
 const OPEN_COLOR_WHITE = '#ffffff';
 
 export type Scheme = 'light' | 'dark';
-export type ScaleName = 'slate' | 'gray' | 'teal' | 'green' | 'amber' | 'red';
+export type ScaleName = 'slate' | 'gray' | 'teal' | 'green' | 'amber' | 'red' | 'blue' | 'orange' | 'cyan';
 export type ColorRole = 'surface' | 'text' | 'nontext';
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 
 /**
  * Radix Colors 공식 값(MIT). 원본: github.com/radix-ui/colors `src/light.ts`·`src/dark.ts` (2026-11-07 취득).
  * 인덱스 0 = step 1. neutral = slate(+ 라이트 hover 전용 gray2), accent = teal(§3-3 기본값), 상태색 green·amber·red(§3-3 역할 표).
+ * blue·orange·cyan은 문서 형식 타일 색(§3-3 「문서 형식 타일」 행, 2026-11-25 취득)에만 쓴다.
  */
 export const radixScales: Readonly<Record<Scheme, Readonly<Record<ScaleName, readonly string[]>>>> = Object.freeze({
   light: {
@@ -27,6 +28,9 @@ export const radixScales: Readonly<Record<Scheme, Readonly<Record<ScaleName, rea
     green: ['#fbfefc', '#f4fbf6', '#e6f6eb', '#d6f1df', '#c4e8d1', '#adddc0', '#8eceaa', '#5bb98b', '#30a46c', '#2b9a66', '#218358', '#193b2d'],
     amber: ['#fefdfb', '#fefbe9', '#fff7c2', '#ffee9c', '#fbe577', '#f3d673', '#e9c162', '#e2a336', '#ffc53d', '#ffba18', '#ab6400', '#4f3422'],
     red: ['#fffcfc', '#fff7f7', '#feebec', '#ffdbdc', '#ffcdce', '#fdbdbe', '#f4a9aa', '#eb8e90', '#e5484d', '#dc3e42', '#ce2c31', '#641723'],
+    blue: ['#fbfdff', '#f4faff', '#e6f4fe', '#d5efff', '#c2e5ff', '#acd8fc', '#8ec8f6', '#5eb1ef', '#0090ff', '#0588f0', '#0d74ce', '#113264'],
+    orange: ['#fefcfb', '#fff7ed', '#ffefd6', '#ffdfb5', '#ffd19a', '#ffc182', '#f5ae73', '#ec9455', '#f76b15', '#ef5f00', '#cc4e00', '#582d1d'],
+    cyan: ['#fafdfe', '#f2fafb', '#def7f9', '#caf1f6', '#b5e9f0', '#9ddde7', '#7dcedc', '#3db9cf', '#00a2c7', '#0797b9', '#107d98', '#0d3c48'],
   },
   dark: {
     slate: ['#111113', '#18191b', '#212225', '#272a2d', '#2e3135', '#363a3f', '#43484e', '#5a6169', '#696e77', '#777b84', '#b0b4ba', '#edeef0'],
@@ -35,6 +39,9 @@ export const radixScales: Readonly<Record<Scheme, Readonly<Record<ScaleName, rea
     green: ['#0e1512', '#121b17', '#132d21', '#113b29', '#174933', '#20573e', '#28684a', '#2f7c57', '#30a46c', '#33b074', '#3dd68c', '#b1f1cb'],
     amber: ['#16120c', '#1d180f', '#302008', '#3f2700', '#4d3000', '#5c3d05', '#714f19', '#8f6424', '#ffc53d', '#ffd60a', '#ffca16', '#ffe7b3'],
     red: ['#191111', '#201314', '#3b1219', '#500f1c', '#611623', '#72232d', '#8c333a', '#b54548', '#e5484d', '#ec5d5e', '#ff9592', '#ffd1d9'],
+    blue: ['#0d1520', '#111927', '#0d2847', '#003362', '#004074', '#104d87', '#205d9e', '#2870bd', '#0090ff', '#3b9eff', '#70b8ff', '#c2e6ff'],
+    orange: ['#17120e', '#1e160f', '#331e0b', '#462100', '#562800', '#66350c', '#7e451d', '#a35829', '#f76b15', '#ff801f', '#ffa057', '#ffe0c2'],
+    cyan: ['#0b161a', '#101b20', '#082c36', '#003848', '#004558', '#045468', '#12677e', '#11809c', '#00a2c7', '#23afd0', '#4ccce6', '#b6ecf7'],
   },
 });
 
@@ -67,6 +74,28 @@ interface RoleSpec {
 }
 
 const BG_APP = '--bg-app';
+
+/**
+ * §3-3 「문서 형식 타일」(2026-11-25 doc-attach-card): 채운 정사각 타일 면 + 그 위 확장자 글자. 색조(tone) 이름으로 두고
+ * 형식(kind)→색조 대응은 웹 `FILE_TILE_TONES` 표 한 곳이 정한다. 면은 --accent-strong과 같은 단계(라이트 11·다크 9),
+ * 글자는 라이트 Open Color 순백·다크 slate1(--on-accent-strong과 같은 규칙).
+ */
+const FILE_TILE_SPECS: Readonly<Record<string, RoleSpec>> = Object.fromEntries(
+  ([
+    ['green', 'green', 9],
+    ['blue', 'blue', 9],
+    ['orange', 'orange', 9],
+    ['red', 'red', 9],
+    ['cyan', 'cyan', 9],
+    // slate9 다크는 slate1 글자 대비 3.68 < 4.5 — 다크만 slate11(9.06).
+    ['neutral', 'slate', 11],
+  ] as const).flatMap(([tone, scale, darkStep]) => {
+    const surface = `--file-tile-${tone}`;
+    const face: RoleSpec = { scale, step: 11, role: 'surface', dark: { step: darkStep } };
+    const ink: RoleSpec = { scale: 'slate', step: 1, role: 'text', on: surface, lightWhite: true };
+    return [[surface, face], [`--on-file-tile-${tone}`, ink]];
+  }),
+);
 
 /** §3-3 역할 표(이름·스케일·단계 정본 그대로). override만 정본과 다르다 — REPORT "정본 오류" 참조. */
 const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
@@ -133,6 +162,7 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
     scale: 'teal', step: 8, role: 'nontext', on: BG_APP,
     override: { light: { step: 10, reason: 'teal8/bg-app 2.30 < 3 (§7-1 1.4.11)' } },
   },
+  ...FILE_TILE_SPECS,
 };
 
 /** §3-3 역할 토큰 이름(정본 표 순서). */

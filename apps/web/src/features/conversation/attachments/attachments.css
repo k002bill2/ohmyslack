@@ -303,3 +303,70 @@
     overflow-wrap: anywhere;
   }
 }
+
+/*
+ * 문서 형식 타일(UI_STATES §2-13·§2-6): 둥근 정사각 2.5rem(작성기 이미지 썸네일과 같은 크기) + 확장자 대문자(최대 4자).
+ * 색은 형식별 클래스 → §3-3 「문서 형식 타일」 토큰(라이트·다크 글자 대비 4.5:1 이상, check:design-tokens).
+ */
+.file-kind-tile {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.file-tile-green {
+  background: var(--file-tile-green);
+  color: var(--on-file-tile-green);
+}
+.file-tile-blue {
+  background: var(--file-tile-blue);
+  color: var(--on-file-tile-blue);
+}
+.file-tile-orange {
+  background: var(--file-tile-orange);
+  color: var(--on-file-tile-orange);
+}
+.file-tile-red {
+  background: var(--file-tile-red);
+  color: var(--on-file-tile-red);
+}
+.file-tile-cyan {
+  background: var(--file-tile-cyan);
+  color: var(--on-file-tile-cyan);
+}
+.file-tile-neutral {
+  background: var(--file-tile-neutral);
+  color: var(--on-file-tile-neutral);
+}
+/* 업로드 중 스피너(장식): 타일 오른쪽 위 모서리 작은 원. 움직임 줄이기 설정이면 회전 없이 정적 표시. */
+.file-kind-tile-spinner {
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-1));
+  width: 0.875rem;
+  height: 0.875rem;
+  box-sizing: border-box;
+  border: 2px solid var(--border-subtle);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  background: var(--bg-app);
+  animation: file-kind-tile-spin 0.8s linear infinite;
+}
+@keyframes file-kind-tile-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-kind-tile-spinner {
+    animation: none;
+  }
+}
