@@ -362,7 +362,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 
 ### 6-2. Web Push (R3.3, ADR-001 §3-i, PRD FR-CLIENT-05)
 
-- 범위: 사람 계정의 구독 기기에 ① Jarvis DM의 새 최상위 메시지·자기 스레드 답글 ② 자기 멘션을 보냅니다. 자기 메시지·이미 읽은 대화는 보내지 않습니다. 같은 대화 알림은 60초 안에 1건으로 묶습니다(`Topic` 헤더로 교체).
+- 범위: 사람 계정의 구독 기기에 ① Jarvis DM의 새 최상위 메시지·자기 스레드 답글 ② 채널에서 자기가 쓴 원문의 스레드에 봇이 단 답글 ③ 자기 멘션을 보냅니다. 사람이 채널 스레드에 단 답글은 멘션만, 채널 최상위 봇 게시는 보내지 않습니다. 자기 메시지·이미 읽은 대화는 보내지 않습니다. 같은 대화 알림은 60초 안에 1건으로 묶습니다(`Topic` 헤더로 교체).
 - payload: `{v:1, kind:"message", conversation_id, message_id, thread_root_id?, from_bot:boolean}`만 보냅니다(식별자만, 본문 없음). 알림 탭 시 SW는 `message_id`(답글이면 `thread_root_id`의 스레드 안 `message_id`) 위치로 대화를 엽니다 — 알림 뒤 메시지가 더 쌓여도 해당 브리핑을 찾을 수 있게 하기 위함입니다(PRD S8). **본문·대화 이름·작성자 이름 미포함.** 표시 문구는 SW 고정(「새 메시지가 있습니다」, Jarvis DM이면 「Jarvis」)입니다. iOS는 silent push 금지이므로 SW는 `event.waitUntil(showNotification())`를 반드시 호출합니다.
 - VAPID: P-256 키쌍을 로컬 명령 `apps/server/bin/vapid-keygen.ts`로 생성합니다. 개인키는 서버 비밀 파일(600, 저장소 밖)·환경 변수 경로로만 주입하고, 미설정 시 push 기능만 비활성(기동은 계속)하며 `/api/push/vapid-public-key`는 404입니다. `sub`는 `mailto:` 실제 주소(공백·꺾쇠 금지)입니다. 키 회전 = 전 구독 재등록(`vapid_key_id`로 구분).
 - 전송: 서버 → push service outbound HTTPS. `TTL` 헤더 필수(제안 86400). 404·410 응답 시 구독을 삭제합니다. endpoint는 https + 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com`, 그리고 Chromium 계열 FCM 대체 호스트 `jmt<숫자>.google.com` — 경로 `/fcm/send/<token>`일 때만, 2026-11-16 운영 실측)만 등록합니다.
