@@ -27,6 +27,9 @@ const CANON_ROLE_NAMES = [
   '--warning-bg', '--warning-text', '--danger-bg', '--danger-text', '--danger-solid',
   '--accent-strong', '--on-accent-strong', '--danger-strong', '--on-danger-strong', '--danger-line', '--mention-text',
   '--focus-ring',
+  '--file-tile-green', '--on-file-tile-green', '--file-tile-blue', '--on-file-tile-blue',
+  '--file-tile-orange', '--on-file-tile-orange', '--file-tile-red', '--on-file-tile-red',
+  '--file-tile-cyan', '--on-file-tile-cyan', '--file-tile-neutral', '--on-file-tile-neutral',
 ];
 const SCHEMES = ['light', 'dark'] as const;
 

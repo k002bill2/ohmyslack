@@ -97,7 +97,10 @@ describe('작성기 칩 이미지 썸네일', () => {
     const { container } = render(view([chip(1, 'report.pdf', 'document', 'done'), chip(2, 'x.exe', null, 'failed')]));
     expect(container.querySelector('img')).toBeNull();
     expect(slot(container)).toBeNull();
-    expect(container.querySelector('.composer-chip-kind')?.textContent).toBe('PDF');
+    // 문서 칩 앞머리 = 형식 타일(장식) + 보조줄 형식 라벨. 이미지 대체 표지(.composer-chip-kind)는 쓰지 않는다.
+    expect(container.querySelector('.composer-chip .file-kind-tile')?.textContent).toBe('PDF');
+    expect(container.querySelector('.composer-chip-format')?.textContent).toBe('PDF');
+    expect(container.querySelector('.composer-chip-kind')).toBeNull();
     expect(createBitmap).not.toHaveBeenCalled();
   });
 

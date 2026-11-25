@@ -4,21 +4,9 @@ import { ATTACHMENT_COPY, documentDownloadName } from '../../../ui/copy.js';
 import { attachmentUrl } from './attachment-url.js';
 import { formatBytes } from './composer-upload.js';
 import { isAttachmentGone } from './expiry-check.js';
-import { documentKindLabel } from './file-kinds.js';
+import { documentFormat, documentKindLabel } from './file-kinds.js';
+import { FileKindTile } from './FileKindTile.js';
 import { FileName } from './FileName.js';
-
-/** Lucide `file-text` 형태(장식). */
-function FileTextIcon() {
-  return (
-    <svg className="doc-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-      <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-        <path d="M10 9H8M16 13H8M16 17H8" />
-      </g>
-    </svg>
-  );
-}
 
 /** Lucide `download` 형태(장식). */
 function DownloadIcon() {
@@ -33,7 +21,8 @@ function DownloadIcon() {
 }
 
 /**
- * CMP-32 DocumentAttachment — 메시지 안 문서·텍스트 행(UI_STATES §2-13, COPY_GAPS G-59–G-62).
+ * CMP-32 DocumentAttachment — 메시지 안 문서·텍스트 카드(UI_STATES §2-13, COPY_GAPS G-59–G-62).
+ * [형식 타일(장식)] [파일명 / 「{형식} · {크기}」(+「매크로 포함」)] [「받기」 아이콘 링크 — 글자는 스크린리더 전용].
  * 「받기」는 일반 `<a download>` 링크(서버 `Content-Disposition: attachment`) — 바이트를 JS로 받지 않는다(UI-D5, B7).
  * 단, 누를 때 `HEAD`로 만료만 먼저 확인한다(QA iPhone r2 W3 — 화면을 연 뒤 만료되면 오류 JSON이 파일로 내려오던 문제).
  * 사람·봇 문서가 같은 DOM이다(UI-D9). 만료면 「받기」·크기 없이 자리표시자만.
@@ -78,22 +67,26 @@ export function DocumentAttachment({ attachment }: { readonly attachment: Attach
   const kind = documentKindLabel(attachment.mime) ?? '';
   const macros = attachment.has_macros === true;
   const size = formatBytes(attachment.byte_size);
+  const format = documentFormat(attachment.mime);
   return (
     <div className={expired ? 'attachment doc-attachment doc-attachment-expired' : 'attachment doc-attachment'}>
-      <FileTextIcon />
+      {format !== null && <FileKindTile kind={format.kind} ext={format.ext} />}
       <div className="doc-main">
-        <span className="doc-head">
+        <FileName name={filename} base="doc-name" />
+        <span className="doc-meta">
           <span className="doc-kind">{kind}</span>
-          <FileName name={filename} base="doc-name" />
-        </span>
-        {expired ? (
-          <span className="doc-meta">{ATTACHMENT_COPY.expired}</span>
-        ) : (
-          <span className="doc-meta">
-            <span className="doc-size">{size}</span>
-            {macros && <span className="doc-macros">{ATTACHMENT_COPY.macros}</span>}
+          <span className="doc-sep" aria-hidden="true">
+            ·
           </span>
-        )}
+          {expired ? (
+            <span className="doc-expired">{ATTACHMENT_COPY.expired}</span>
+          ) : (
+            <>
+              <span className="doc-size">{size}</span>
+              {macros && <span className="doc-macros">{ATTACHMENT_COPY.macros}</span>}
+            </>
+          )}
+        </span>
       </div>
       {!expired && (
         <a
@@ -105,7 +98,7 @@ export function DocumentAttachment({ attachment }: { readonly attachment: Attach
           aria-label={documentDownloadName(filename, kind, size, macros)}
         >
           <DownloadIcon />
-          <span>{ATTACHMENT_COPY.download}</span>
+          <span className="visually-hidden">{ATTACHMENT_COPY.download}</span>
         </a>
       )}
     </div>
