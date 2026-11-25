@@ -35,11 +35,15 @@ export interface PushService {
 
 type Outcome = 'sent' | 'expired' | 'failed';
 
-/** ① Jarvis DM 새 원문 → 모든 멤버, Jarvis DM 답글 → 원문 작성자 ② 멘션 대상. 작성자는 저장소 질의에서 제외한다. */
+/**
+ * ① Jarvis DM 새 원문 → 모든 멤버, Jarvis DM 답글 → 원문 작성자 ② 채널 스레드에서 봇이 단 답글 → 원문 작성자
+ * ③ 멘션 대상. 사람이 채널 스레드에 단 답글은 멘션만. 작성자·봇 원문 작성자는 저장소 질의에서 제외한다.
+ */
 function recipientsOf(event: MessageChange, botDm: boolean, rootAuthorId: string | null): { readonly everyone: boolean; readonly userIds: readonly string[] } {
   const message = event.message;
   const userIds = new Set<string>(message.mentionUserIds);
-  if (botDm && message.threadRootId !== null && rootAuthorId !== null) userIds.add(rootAuthorId);
+  const notifiesRootAuthor = botDm || message.authorKind === 'bot';
+  if (notifiesRootAuthor && message.threadRootId !== null && rootAuthorId !== null) userIds.add(rootAuthorId);
   userIds.delete(message.authorId);
   return { everyone: botDm && message.threadRootId === null, userIds: [...userIds] };
 }
