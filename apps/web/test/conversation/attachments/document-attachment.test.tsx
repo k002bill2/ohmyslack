@@ -306,8 +306,9 @@ describe('FR-OPS-09 메시지 안 문서 행', () => {
     ['application/hwp+zip', 'a.hwpx', DOCUMENT_KIND_COPY.hwp],
     ['application/vnd.ms-powerpoint', 'a.ppt', DOCUMENT_KIND_COPY.powerpoint],
   ] as const)('형식 표지: %s → %s', (mime, filename, label) => {
-    render(<AttachmentList attachments={[doc({ mime, filename })]} />);
-    expect(screen.getByText(label)).toBeTruthy();
+    const { container } = render(<AttachmentList attachments={[doc({ mime, filename })]} />);
+    // 타일 글자(장식)가 형식 표지와 같을 수 있어(PDF·TXT…) 보조줄의 형식 표지 요소로 좁힌다.
+    expect(container.querySelector('.doc-meta .doc-kind')?.textContent).toBe(label);
     expect(screen.queryByText(ATTACHMENT_COPY.macros)).toBeNull();
   });
 
@@ -315,6 +316,51 @@ describe('FR-OPS-09 메시지 안 문서 행', () => {
     render(<AttachmentList attachments={[doc({ mime: XLSM, filename: '예산.xlsm', byte_size: 1.2 * 1024 * 1024, has_macros: true })]} />);
     expect(screen.getByText(ATTACHMENT_COPY.macros)).toBeTruthy();
     expect(screen.getByRole('link', { name: '예산.xlsm 받기, Excel, 1.2MB, 매크로 포함' })).toBeTruthy();
+  });
+
+  it('카드 구조: [타일(장식)] [파일명 / 형식 · 크기] [받기 아이콘 — 글자는 스크린리더 전용]', () => {
+    const { container } = render(<AttachmentList attachments={[doc({ mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: '예산.xlsx', byte_size: 1.2 * 1024 * 1024 })]} />);
+    const card = container.querySelector('.doc-attachment') as HTMLElement;
+    const children = [...card.children].map((c) => c.className);
+    expect(children).toEqual(['file-kind-tile file-tile-green', 'doc-main', 'doc-download']);
+    const tile = card.querySelector('.file-kind-tile') as HTMLElement;
+    expect(tile.textContent).toBe('XLSX');
+    expect(tile.getAttribute('aria-hidden')).toBe('true');
+    const main = card.querySelector('.doc-main') as HTMLElement;
+    expect([...main.children].map((c) => c.className)).toEqual(['doc-name', 'doc-meta']);
+    const meta = main.querySelector('.doc-meta') as HTMLElement;
+    expect([...meta.children].map((c) => c.className)).toEqual(['doc-kind', 'doc-sep', 'doc-size']);
+    expect(meta.querySelector('.doc-sep')?.getAttribute('aria-hidden')).toBe('true');
+    expect(meta.textContent).toBe(`${DOCUMENT_KIND_COPY.excel}·1.2MB`);
+    const link = within(card).getByRole('link', { name: '예산.xlsx 받기, Excel, 1.2MB' });
+    // 보이는 것은 아이콘뿐: 「받기」 글자는 visually-hidden 요소 안.
+    expect(link.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(link.querySelector('.visually-hidden')?.textContent).toBe(ATTACHMENT_COPY.download);
+    expect([...link.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE)).toHaveLength(0);
+  });
+
+  it('카드 타일은 서버 판정 mime 기준(파일명 확장자와 무관)', () => {
+    const { container } = render(<AttachmentList attachments={[doc({ mime: 'application/pdf', filename: '이상한이름.docx' })]} />);
+    const tile = container.querySelector('.file-kind-tile') as HTMLElement;
+    expect(tile.textContent).toBe('PDF');
+    expect(tile.classList.contains('file-tile-red')).toBe(true);
+  });
+
+  it('매크로 카드: 보조줄 = 형식 · 크기 + 「매크로 포함」 표지, 타일은 매크로 확장자', () => {
+    const { container } = render(<AttachmentList attachments={[doc({ mime: XLSM, filename: '예산.xlsm', byte_size: 1.2 * 1024 * 1024, has_macros: true })]} />);
+    const meta = container.querySelector('.doc-meta') as HTMLElement;
+    expect([...meta.children].map((c) => c.className)).toEqual(['doc-kind', 'doc-sep', 'doc-size', 'doc-macros']);
+    expect(container.querySelector('.file-kind-tile')?.textContent).toBe('XLSM');
+  });
+
+  it('만료 카드: 타일·파일명·「형식 · 만료된 첨부입니다」, 받기·크기 없음', () => {
+    const { container } = render(<AttachmentList attachments={[doc({ expired: true })]} />);
+    const card = container.querySelector('.doc-attachment.doc-attachment-expired') as HTMLElement;
+    expect([...card.children].map((c) => c.className)).toEqual(['file-kind-tile file-tile-blue', 'doc-main']);
+    const meta = card.querySelector('.doc-meta') as HTMLElement;
+    expect([...meta.children].map((c) => c.className)).toEqual(['doc-kind', 'doc-sep', 'doc-expired']);
+    expect(meta.querySelector('.doc-expired')?.textContent).toBe(ATTACHMENT_COPY.expired);
+    expect(card.querySelector('.doc-size')).toBeNull();
   });
 
   it('긴 파일명: 확장자부를 별도 요소로 둬 말줄임에서 빠진다', () => {

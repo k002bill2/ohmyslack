@@ -196,22 +196,21 @@
 }
 
 /*
- * CMP-32 문서 행(UI_STATES §2-13, D §6-5). 390 = 파일명 블록(이름부 최대 2줄) + 메타 줄 + 오른쪽 「받기」 44×44 이상.
- * medium·wide = 한 줄. 확장자부는 줄이지 않는다(매크로 확장자 위장 판단).
+ * CMP-32 문서 카드(UI_STATES §2-13, D §6-5): [형식 타일 2.5rem] [파일명(굵게) / 「{형식} · {크기}」(+매크로 포함)] [받기 아이콘 44×44].
+ * 폭: 최대 26rem, 그보다 좁은 화면(390)에서는 메시지 폭 100%. 확장자부는 줄이지 않는다(매크로 확장자 위장 판단).
  */
 .doc-attachment {
-  --doc-row-max-width: 480px;
+  --doc-card-max-width: 26rem;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  max-width: min(100%, var(--doc-row-max-width));
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.doc-icon {
-  flex: none;
-  color: var(--text-muted);
+  gap: var(--space-3);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: min(100%, var(--doc-card-max-width));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
 }
 .doc-main {
   display: flex;
@@ -220,21 +219,10 @@
   gap: var(--space-1);
   min-width: 0;
 }
-.doc-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  min-width: 0;
-}
-.doc-kind {
-  flex: none;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-}
 .doc-name {
   display: flex;
   min-width: 0;
+  font-weight: 600;
 }
 .doc-name-stem {
   min-width: 0;
@@ -250,9 +238,16 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   color: var(--text-muted);
   font-size: var(--text-xs);
+}
+.doc-kind {
+  flex: none;
+}
+/* 보조줄 구분점(장식, aria-hidden) — 형식과 크기·만료 문구 사이. */
+.doc-sep {
+  flex: none;
 }
 /* 「매크로 포함」 — 텍스트가 본체, 색만으로 구분하지 않도록 테두리도 둔다(FR-CLIENT-07). */
 .doc-macros {
@@ -262,34 +257,31 @@
   color: var(--warning-text);
   background: var(--warning-bg);
 }
+/* 「받기」: 보이는 것은 아이콘뿐(글자는 visually-hidden), 접근 이름은 aria-label(G-62) 그대로. */
 .doc-download {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  gap: var(--space-1);
   min-width: 44px;
   min-height: 44px;
-  padding-inline: var(--space-2);
   border-radius: var(--radius-md);
-  color: var(--text);
+  color: var(--text-muted);
   text-decoration: none;
 }
 .doc-download:hover {
-  background: var(--bg-hover);
+  background: var(--bg-hover-strong);
+  color: var(--text);
 }
-.doc-attachment-expired .doc-head,
-.doc-attachment-expired .doc-meta {
+.doc-attachment-expired .doc-name {
   color: var(--text-muted);
+  font-weight: 400;
 }
-.doc-attachment-expired .doc-meta {
+.doc-attachment-expired .doc-expired {
   font-style: italic;
 }
 @media (width <= 640px) {
   /* compact: 이름부 최대 2줄까지 보이고 그 뒤 말줄임(터치에는 title이 보이지 않음). */
-  .doc-head {
-    flex-wrap: wrap;
-  }
   /* 이름부가 2줄로 접히면 확장자부를 끝 줄 옆에 둔다(위 정렬이면 첫 줄 끝에 와 이름이 확장자에서 끝나 보임 — QA iPhone r2 W4). */
   .doc-name {
     align-items: flex-end;
