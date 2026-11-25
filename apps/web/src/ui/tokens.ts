@@ -76,11 +76,9 @@ const ROLE_SPECS: Readonly<Record<string, RoleSpec>> = {
   '--bg-elevated': { scale: 'slate', step: 3, role: 'surface', dark: { step: 1 } },
   /**
    * 2026-11-23 영환님 지시: hover 면 #F8F8F8. 원시값은 오픈 스케일에 없어 최근접 오픈 값 Radix gray2(#f9f9f9)를 쓴다(§3-1). 다크는 slate3 유지.
-   * 라이트 --bg-sidebar(slate2)와 거의 같아 그 면 위(스레드 패널)는 --bg-hover-sidebar. elevated(slate3) 면 위는 --bg-hover-strong.
+   * 스레드 패널 면도 --bg-app(wide·medium)이라 본문과 같은 hover. elevated(slate3) 면 위는 --bg-hover-strong.
    */
   '--bg-hover': { scale: 'gray', step: 2, role: 'surface', dark: { scale: 'slate', step: 3 } },
-  /** --bg-sidebar 면 위 hover(스레드 패널) — 직전 --bg-hover 값(slate3). */
-  '--bg-hover-sidebar': { scale: 'slate', step: 3, role: 'surface' },
   /** elevated 면(라이트 slate3) 위 hover — 이전 --bg-hover 값(slate4)을 유지해 면과 구별된다. */
   '--bg-hover-strong': { scale: 'slate', step: 4, role: 'surface' },
   '--bg-active': { scale: 'slate', step: 5, role: 'surface' },
