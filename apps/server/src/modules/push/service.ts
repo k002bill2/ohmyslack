@@ -3,7 +3,7 @@ import { isAllowedPushEndpoint, PUSH_COALESCE_WINDOW_MS, PUSH_TTL_SECONDS, pushP
 import type { MessageChange } from '../messages/events.js';
 import type { OpsLogger } from '../ops/logger.js';
 import type { PushConfig } from './config.js';
-import type { PushStore, PushTarget } from './repo.js';
+import type { PushContext, PushStore, PushTarget } from './repo.js';
 import { topicOf, vapidDetailsOf, webPushSend, type PushSend } from './sender.js';
 
 /** push 서비스(정본: TRD §6-2). 등록·해제와 메시지 생성 뒤 비동기 전송을 맡는다. */
@@ -36,16 +36,19 @@ export interface PushService {
 type Outcome = 'sent' | 'expired' | 'failed';
 
 /**
- * ① Jarvis DM 새 원문 → 모든 멤버, Jarvis DM 답글 → 원문 작성자 ② 채널 스레드에서 봇이 단 답글 → 원문 작성자
- * ③ 멘션 대상. 사람이 채널 스레드에 단 답글은 멘션만. 작성자·봇 원문 작성자는 저장소 질의에서 제외한다.
+ * ① Jarvis DM 새 원문 → 모든 멤버, Jarvis DM 답글 → 원문 작성자 ② 채널 최상위 봇 게시 → 채널 사람 멤버 전원,
+ * 채널 스레드에서 봇이 단 답글 → 원문 작성자 ③ 멘션 대상. 사람이 채널에 쓴 글(최상위·답글)은 멘션만.
+ * 작성자·봇 원문 작성자는 저장소 질의에서 제외한다.
  */
-function recipientsOf(event: MessageChange, botDm: boolean, rootAuthorId: string | null): { readonly everyone: boolean; readonly userIds: readonly string[] } {
+function recipientsOf(event: MessageChange, ctx: PushContext): { readonly everyone: boolean; readonly userIds: readonly string[] } {
   const message = event.message;
   const userIds = new Set<string>(message.mentionUserIds);
-  const notifiesRootAuthor = botDm || message.authorKind === 'bot';
-  if (notifiesRootAuthor && message.threadRootId !== null && rootAuthorId !== null) userIds.add(rootAuthorId);
+  const fromBot = message.authorKind === 'bot';
+  const notifiesRootAuthor = ctx.botDm || fromBot;
+  if (notifiesRootAuthor && message.threadRootId !== null && ctx.rootAuthorId !== null) userIds.add(ctx.rootAuthorId);
   userIds.delete(message.authorId);
-  return { everyone: botDm && message.threadRootId === null, userIds: [...userIds] };
+  const everyone = message.threadRootId === null && (ctx.botDm || (ctx.channel && fromBot));
+  return { everyone, userIds: [...userIds] };
 }
 
 /** 묶음 창(60초)이 지난 항목을 지운다 — 창 밖 항목은 판정에 쓰이지 않으므로 맵이 무한히 자라지 않게(W-23b). */
@@ -99,7 +102,7 @@ export function createPushService(deps: PushServiceDeps): PushService {
     const message = event.message;
     if (message.deletedAt !== null) return;
     const ctx = await store.context(message.conversationId, message.threadRootId);
-    const wanted = recipientsOf(event, ctx.botDm, ctx.rootAuthorId);
+    const wanted = recipientsOf(event, ctx);
     if (!wanted.everyone && wanted.userIds.length === 0) return;
     const now = clock();
     const targets = await store.targets({

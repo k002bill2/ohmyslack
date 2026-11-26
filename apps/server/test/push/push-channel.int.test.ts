@@ -60,20 +60,13 @@ describe('FR-CLIENT-05 Web Push — 채널 스레드 봇 답글', () => {
     expect(c.received).toHaveLength(0);
   });
 
-  it('채널 최상위 봇 게시는 보내지 않는다', async () => {
-    const { c, a, b, channel } = await channelWithBot();
-    await subscribe(c, a, device('a'));
-    await subscribe(c, b, device('b'));
-    await sendAs(c, c.botUserId, channel);
-    await flush(c);
-    expect(c.received).toHaveLength(0);
-  });
-
   it('봇 원문에 봇이 단 답글은 보내지 않는다(원문 작성자가 봇)', async () => {
     const { c, a, b, channel } = await channelWithBot();
     await subscribe(c, a, device('a'));
     await subscribe(c, b, device('b'));
     const root = await sendAs(c, c.botUserId, channel);
+    await flush(c);
+    c.received.splice(0); // 봇 최상위 원문 자체 알림(채널 멤버 전원)은 push-channel-root.int에서 검사
     await sendAs(c, c.botUserId, channel, { threadRootId: root });
     await flush(c);
     expect(c.received).toHaveLength(0);

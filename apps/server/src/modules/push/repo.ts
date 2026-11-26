@@ -24,6 +24,8 @@ export interface PushTarget {
 export interface PushContext {
   /** 봇 멤버가 있는 DM(Jarvis DM). */
   readonly botDm: boolean;
+  /** 채널 대화(채널 최상위 봇 게시 → 채널 사람 멤버 전원). */
+  readonly channel: boolean;
   /** 답글이면 원문 작성자, 아니면 null. */
   readonly rootAuthorId: string | null;
 }
@@ -32,7 +34,7 @@ export interface PushTargetQuery {
   readonly conversationId: string;
   readonly threadRootId: string | null;
   readonly seq: number;
-  /** true면 대화의 모든 멤버(Jarvis DM 새 원문), 아니면 userIds만. */
+  /** true면 대화의 모든 멤버(Jarvis DM 새 원문·채널 최상위 봇 게시), 아니면 userIds만. */
   readonly everyone: boolean;
   readonly userIds: readonly string[];
   /** 자기 메시지는 보내지 않는다. */
@@ -105,16 +107,17 @@ export function createPgPushStore(pool: pg.Pool): PushStore {
       await pool.query('UPDATE push_subscriptions SET last_success_at = $2 WHERE id = $1', [id, at]);
     },
     async context(conversationId, threadRootId) {
-      const res = await pool.query<{ bot_dm: boolean; root_author_id: string | null }>(
+      const res = await pool.query<{ bot_dm: boolean; channel: boolean; root_author_id: string | null }>(
         `SELECT (c.kind = 'dm' AND EXISTS (
                    SELECT 1 FROM conversation_members m JOIN users u ON u.id = m.user_id
                     WHERE m.conversation_id = c.id AND u.kind = 'bot')) AS bot_dm,
+                c.kind = 'channel' AS channel,
                 (SELECT r.author_id FROM messages r WHERE r.id = $2::uuid AND r.conversation_id = c.id) AS root_author_id
            FROM conversations c WHERE c.id = $1 AND c.deleted_at IS NULL`,
         [conversationId, threadRootId],
       );
       const row = res.rows[0];
-      return { botDm: row?.bot_dm === true, rootAuthorId: row?.root_author_id ?? null };
+      return { botDm: row?.bot_dm === true, channel: row?.channel === true, rootAuthorId: row?.root_author_id ?? null };
     },
     async targets(q) {
       const res = await pool.query<{ id: string; user_id: string; endpoint: string; p256dh: string; auth: string }>(TARGETS_SQL, [
