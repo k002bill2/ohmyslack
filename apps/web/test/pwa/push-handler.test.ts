@@ -234,6 +234,25 @@ describe('FR-CLIENT-05 SW 알림 본문 미리보기 — 세션으로 조회, �
     expect(settled).toBe(true);
   });
 
+  it('같은 대화 push 2건: 첫 조회가 늦게 끝나도 표시는 수신 순서(오래된 알림이 최신을 덮지 않음)', async () => {
+    const MSG2 = '44444444-4444-4444-8444-444444444444';
+    const release = new Map<string, (v: string | null) => void>();
+    const fetchPreview = vi.fn((id: string) => new Promise<string | null>((r) => { release.set(id, r); }));
+    const { h, showNotification } = setup([], fetchPreview);
+    const first = pushEvent(data(PAYLOAD));
+    const second = pushEvent(data({ ...PAYLOAD, message_id: MSG2 }));
+    h.onPush(first.event);
+    h.onPush(second.event);
+    expect(fetchPreview).toHaveBeenCalledTimes(2);
+    release.get(MSG2)?.('둘째');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(showNotification).not.toHaveBeenCalled();
+    release.get(MSG)?.('첫째');
+    await Promise.all([...first.waits, ...second.waits]);
+    expect(showNotification.mock.calls.map(([, o]) => (o as { body: string }).body)).toEqual(['첫째', '둘째']);
+  });
+
   it('createPreviewFetcher: same-origin·no-store·AbortSignal로 /api/messages/<id>/preview를 부르고 200 + 문자열만 받는다', async () => {
     const fetchFn = vi.fn<PreviewFetchLike>(async () => response(200, { text: '미리보기' }));
     const fetchPreview = createPreviewFetcher(fetchFn);

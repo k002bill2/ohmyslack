@@ -217,16 +217,25 @@ async function openOrFocus(clients: ClientsLike, origin: string, path: string): 
 
 /** push·notificationclick 핸들러. 저장소 API는 받지 않는다(B7 — 알림 표시만). */
 export function createPushHandlers(deps: PushHandlerDeps) {
+  /** tag(대화)별 표시 순서 — 조회 완료 순서가 뒤집혀도 늦게 받은 push가 마지막에 표시된다(같은 tag는 교체). */
+  const lastShown = new Map<string, Promise<void>>();
   return {
     onPush(event: PushEventLike): void {
       const payload = parsePushData(event.data);
-      // 미리보기 조회와 표시를 한 promise로 묶어 waitUntil에 넘긴다 — 조회가 실패해도 showNotification은 정확히 1회.
-      event.waitUntil(
-        (async () => {
-          const spec = notificationFor(payload, await safePreview(deps.fetchPreview, payload));
-          await deps.showNotification(spec.title, spec.options);
-        })(),
-      );
+      // 조회는 바로 시작하고, 표시는 같은 tag의 앞선 표시가 끝난 뒤에 한다. 조회와 표시를 한 promise로 묶어
+      // waitUntil에 넘긴다 — 조회가 실패해도 showNotification은 정확히 1회(앞선 표시 실패와도 무관).
+      const preview = safePreview(deps.fetchPreview, payload);
+      const tag = notificationFor(payload).options.tag;
+      const shown = (lastShown.get(tag) ?? Promise.resolve()).then(async () => {
+        const spec = notificationFor(payload, await preview);
+        await deps.showNotification(spec.title, spec.options);
+      });
+      const settled = shown.catch(() => undefined);
+      lastShown.set(tag, settled);
+      void settled.then(() => {
+        if (lastShown.get(tag) === settled) lastShown.delete(tag);
+      });
+      event.waitUntil(shown);
     },
     onNotificationClick(event: NotificationClickEventLike): void {
       event.notification.close();
