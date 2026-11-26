@@ -10,6 +10,7 @@ import {
   repliesQuerySchema,
   type HistoryResponse,
   type MessageDeleteResponse,
+  type MessagePreviewResponse,
   type MessageView,
   type MessageWriteResponse,
   type RepliesResponse,
@@ -150,6 +151,16 @@ async function remove(deps: MessageRouteDeps, request: FastifyRequest): Promise<
   return { message_id: message.id, seq: message.seq, deleted_at: message.deletedAt?.toISOString() ?? '', change_id: changeId };
 }
 
+/**
+ * 알림 미리보기(TRD §6-2): push payload는 식별자만, SW가 로그인 세션으로 평문만 가져간다.
+ * 본문 파생값이므로 캐시 금지(no-store)·로그 금지. 봇 라우트에는 두지 않는다.
+ */
+async function preview(deps: MessageRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<MessagePreviewResponse> {
+  const text = await deps.messages.preview(pathId(request));
+  reply.header('cache-control', 'no-store');
+  return { text };
+}
+
 /** 메시지 라우트(정본: TRD §3, DEV_DESIGN §2-4). replies의 경로 변수는 TRD `{root_id}`와 같은 위치의 `:id`다. */
 export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDeps): void {
   const account = accountGuard(deps.auth);
@@ -163,6 +174,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     history(deps, request),
   );
   app.get('/api/messages/:id/replies', { config: { access: 'message' }, preHandler: onMessage('read') }, (request) => replies(deps, request));
+  app.get('/api/messages/:id/preview', { config: { access: 'message' }, preHandler: onMessage('read') }, (request, reply) => preview(deps, request, reply));
   app.patch('/api/messages/:id', { config: { access: 'message' }, preHandler: onMessage('write') }, (request) => edit(deps, request));
   app.delete('/api/messages/:id', { config: { access: 'message' }, preHandler: onMessage('write') }, (request) => remove(deps, request));
 }

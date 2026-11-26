@@ -124,3 +124,16 @@ export const repliesResponseSchema = z.object({
 });
 
 export type RepliesResponse = z.infer<typeof repliesResponseSchema>;
+
+/** 알림 미리보기 최대 길이(code point, TRD §6-2). 초과분은 잘라 `…`을 붙인다. */
+export const MESSAGE_PREVIEW_MAX = 100;
+
+/**
+ * `GET /api/messages/{id}/preview` 응답(TRD §6-2). SW가 push 수신 뒤 로그인 세션으로 가져가는 평문 미리보기.
+ * 삭제된 메시지·평문이 빈 메시지는 `null`(SW는 고정 문구로 폴백).
+ */
+export const messagePreviewResponseSchema = z.strictObject({
+  text: z.string().min(1).nullable(),
+});
+
+export type MessagePreviewResponse = z.infer<typeof messagePreviewResponseSchema>;
