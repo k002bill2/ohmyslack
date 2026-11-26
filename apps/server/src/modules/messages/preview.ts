@@ -24,6 +24,22 @@ const SLOT_CLOSE = '\u{E001}';
 const SLOT_CHARS = /[\u{E000}\u{E001}]/gu;
 const SLOT = /\u{E000}(\d+)\u{E001}/gu;
 
+/** 평문화 입력 상한(code point). 미리보기는 100자만 쓰므로 마크업 제거분 여유를 두고 먼저 잘라 이차 시간 입력을 막는다. */
+const PREVIEW_INPUT_MAX = 2000;
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/** grapheme을 쪼개지 않고 code point 합이 `max` 이하인 최대 접두사. */
+function graphemePrefix(text: string, max: number): string {
+  let used = 0;
+  let out = '';
+  for (const { segment } of GRAPHEMES.segment(text)) {
+    used += [...segment].length;
+    if (used > max) break;
+    out += segment;
+  }
+  return out;
+}
+
 /** 길이가 정확히 `len`인 백틱 묶음의 시작 위치(`from` 이후). 없으면 -1. */
 function findTickRun(text: string, from: number, len: number): number {
   let at = text.indexOf('`', from);
@@ -78,13 +94,12 @@ function stripMarkup(text: string): string {
 export function toPreviewText(body: string): string | null {
   const code: string[] = [];
   const keep = (content: string): string => `${SLOT_OPEN}${code.push(content) - 1}${SLOT_CLOSE}`;
-  const fenced = body.replace(SLOT_CHARS, '').replace(FENCE_BLOCK, (_m, _fence: string, content: string) => keep(content));
+  const fenced = Array.from(body).slice(0, PREVIEW_INPUT_MAX).join('').replace(SLOT_CHARS, '').replace(FENCE_BLOCK, (_m, _fence: string, content: string) => keep(content));
   const masked = maskInlineCode(fenced, keep);
   const plain = stripMarkup(masked)
     .replace(SLOT, (_m, i: string) => code[Number(i)] ?? '')
     .replace(SPACES, ' ')
     .trim();
   if (plain.length === 0) return null;
-  const points = [...plain];
-  return points.length <= MESSAGE_PREVIEW_MAX ? plain : `${points.slice(0, MESSAGE_PREVIEW_MAX).join('').trimEnd()}…`;
+  return [...plain].length <= MESSAGE_PREVIEW_MAX ? plain : `${graphemePrefix(plain, MESSAGE_PREVIEW_MAX).trimEnd()}…`;
 }

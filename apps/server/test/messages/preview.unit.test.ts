@@ -61,6 +61,39 @@ describe('FR-CLIENT-05 push 알림 미리보기 평문화(toPreviewText)', () =>
     expect(performance.now() - started).toBeLessThan(100);
   });
 
+  it.each([
+    ['[ 반복', '['.repeat(100_000)],
+    ['*a 반복', '*a '.repeat(33_334)],
+    ['_a 반복', '_a '.repeat(33_334)],
+    ['[a]( 반복', '[a]('.repeat(25_000)],
+  ])('10만 자 악성 입력(%s)은 200ms 안에 끝나고 결과는 null 또는 100 code point 이하(+…)', (_name, input) => {
+    const started = performance.now();
+    const out = toPreviewText(input);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(out === null || codePointLength(out) <= MESSAGE_PREVIEW_MAX + 1).toBe(true);
+  });
+
+  it('입력 상한 절단은 서로게이트 쌍을 깨지 않는다', () => {
+    const out = toPreviewText('😀'.repeat(5_000)) ?? '';
+    expect(hasLoneSurrogate(out)).toBe(false);
+  });
+
+  it('grapheme 단위 절단: ZWJ 가족·결합 문자·국기를 경계에서 분리하지 않는다', () => {
+    const family = '👨‍👩‍👧‍👦'; // 7 code point 1 grapheme
+    const out = toPreviewText(`${'가'.repeat(MESSAGE_PREVIEW_MAX - 3)}${family}`) ?? '';
+    expect(out).toBe(`${'가'.repeat(MESSAGE_PREVIEW_MAX - 3)}…`);
+    const combining = 'e' + String.fromCodePoint(0x301);
+    const out2 = toPreviewText(`${'가'.repeat(MESSAGE_PREVIEW_MAX - 1)}${combining}`) ?? '';
+    expect(out2).toBe(`${'가'.repeat(MESSAGE_PREVIEW_MAX - 1)}…`);
+    const flag = '🇰🇷'; // 2 code point 1 grapheme
+    const out3 = toPreviewText(`${'가'.repeat(MESSAGE_PREVIEW_MAX - 1)}${flag}`) ?? '';
+    expect(out3).toBe(`${'가'.repeat(MESSAGE_PREVIEW_MAX - 1)}…`);
+    // 경계에 정확히 들어가면 유지
+    const fits = `${'가'.repeat(MESSAGE_PREVIEW_MAX - 2)}${flag}`;
+    expect(toPreviewText(fits)).toBe(fits);
+    expect(toPreviewText(`${fits}나`)).toBe(`${fits}…`);
+  });
+
   it.each(['', '   \n\t', '```\n```', '**  **', '> ', '[](https://example.test)', '#  '])('평문이 비면 null (%j)', (input) => {
     expect(toPreviewText(input)).toBeNull();
   });
