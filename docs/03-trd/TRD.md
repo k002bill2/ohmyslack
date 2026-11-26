@@ -101,6 +101,7 @@ UUID는 공개 개체 ID, `timestamptz`는 UTC 시각입니다. 아래는 구현
 | `GET /api/conversations/{id}/members` | 활성 참여자 목록. 참여자만 접근 |
 | `GET /api/conversations/{id}/messages?before_seq=&after_seq=&around_seq=&limit=` | 접근 가능한 대화 이력. `roots_only=true`로 본문만, 기본 최대 100건 |
 | `GET /api/messages/{root_id}/replies?before_seq=&after_seq=&limit=` | 1단 답글 목록. root 대화 접근 검사 |
+| `GET /api/messages/{id}/preview` | push 알림 본문용 평문 미리보기 `{text: string \| null}`(§6-2, shared `messagePreviewResponseSchema`). 접근 판정은 replies와 같은 `message` 메타·`read`(비참여자·없는 ID 404, 미인증 401). 서버가 마크다운 표식을 걷어 낸 평문을 최대 100 code point(초과 시 `…`)로 자르고, 삭제·평문 없음은 `null`. `Cache-Control: no-store`, 로그·계측 0. 메인 리스너 전용(봇 리스너 미등록) |
 | `POST /api/conversations/{id}/messages` | `{client_message_id,body,thread_root_id?,attachment_ids?}`; 생성 메시지(`client_message_id` 포함)·seq·global `change_id` 반환. `attachment_ids`는 최대 4개, 같은 요청자가 올리고 아직 결속되지 않은 같은 대화 첨부만(§6-1). 멱등 payload 비교에 포함(첨부 ID **집합** 비교 — 순서만 바꾼 같은 키 재시도는 원결과·첫 요청의 순서를 반환). **R3.7:** 응답·이력·답글·`GET /api/sync`·WS 이벤트(사람·봇 경로 공통)의 `attachments` 배열은 이 요청 `attachment_ids`의 순서입니다. 같은 ID가 두 번 든 새 요청은 지금처럼 400 `invalid_attachments`(결속 0)이므로 순서는 첫 등장 위치 = 유일 위치입니다 |
 | `POST /api/conversations/{id}/messages` — 비활성 상대 DM | DM 상대(보내는 사람 외 멤버, 봇 owner DM의 봇 포함)가 비활성이면 루트·답글 모두 403 `forbidden`(새 오류 코드 없음). DB·이벤트·push 변화 없음. 판정 전에 같은 멱등 키 재시도는 원결과를 반환. 편집·삭제·읽기·읽음·첨부 업로드/다운로드는 변경 없음 |
 | `PATCH /api/messages/{id}` | 작성자만 수정. 새 `change_id`, 수정된 mention ID 반환 |
@@ -363,7 +364,7 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 ### 6-2. Web Push (R3.3, ADR-001 §3-i, PRD FR-CLIENT-05)
 
 - 범위: 사람 계정의 구독 기기에 ① Jarvis DM의 새 최상위 메시지·자기 스레드 답글 ② 채널 최상위 봇 게시(→ 그 채널의 사람 멤버 전원)·채널에서 자기가 쓴 원문의 스레드에 봇이 단 답글 ③ 자기 멘션을 보냅니다. 사람이 채널에 쓴 글(최상위·스레드 답글)은 멘션만 보냅니다. 자기 메시지·이미 읽은 대화는 보내지 않습니다. 생성 후 전송 전에 삭제된 메시지는 보내지 않습니다(대상 질의와 매 전송 직전에 삭제 여부 재확인, 삭제되면 남은 대상 전송 중단). 같은 대화 알림은 60초 안에 1건으로 묶습니다(`Topic` 헤더로 교체).
-- payload: `{v:1, kind:"message", conversation_id, message_id, thread_root_id?, from_bot:boolean}`만 보냅니다(식별자만, 본문 없음). 알림 탭 시 SW는 `message_id`(답글이면 `thread_root_id`의 스레드 안 `message_id`) 위치로 대화를 엽니다 — 알림 뒤 메시지가 더 쌓여도 해당 브리핑을 찾을 수 있게 하기 위함입니다(PRD S8). **본문·대화 이름·작성자 이름 미포함.** 표시 문구는 SW 고정(「새 메시지가 있습니다」, Jarvis DM이면 「Jarvis」)입니다. iOS는 silent push 금지이므로 SW는 `event.waitUntil(showNotification())`를 반드시 호출합니다.
+- payload: `{v:1, kind:"message", conversation_id, message_id, thread_root_id?, from_bot:boolean}`만 보냅니다(식별자만, 본문 없음). 알림 탭 시 SW는 `message_id`(답글이면 `thread_root_id`의 스레드 안 `message_id`) 위치로 대화를 엽니다 — 알림 뒤 메시지가 더 쌓여도 해당 브리핑을 찾을 수 있게 하기 위함입니다(PRD S8). **본문·대화 이름·작성자 이름 미포함.** 알림 제목은 SW 고정(「ohmyslack」, 봇 발신이면 「Jarvis」)입니다. 알림 본문은 SW가 수신 뒤 로그인 세션(같은 출처 쿠키)으로 `GET /api/messages/{message_id}/preview`(§3)를 3초 타임아웃으로 가져온 평문 미리보기(최대 100 code point)이고, 실패(타임아웃·401/403/404·네트워크 오류·`null`·형식 이상)하면 고정 문구 「새 메시지가 있습니다」입니다(R3.9). 앱 안 미리보기 토글은 두지 않고 잠금 화면 노출은 OS 설정(iOS 「미리보기 표시」, Android 「민감한 알림 내용 숨기기」)으로 통제합니다. iOS는 silent push 금지이므로 SW는 `event.waitUntil(showNotification())`를 반드시 호출합니다.
 - VAPID: P-256 키쌍을 로컬 명령 `apps/server/bin/vapid-keygen.ts`로 생성합니다. 개인키는 서버 비밀 파일(600, 저장소 밖)·환경 변수 경로로만 주입하고, 미설정 시 push 기능만 비활성(기동은 계속)하며 `/api/push/vapid-public-key`는 404입니다. `sub`는 `mailto:` 실제 주소(공백·꺾쇠 금지)입니다. 키 회전 = 전 구독 재등록(`vapid_key_id`로 구분).
 - 전송: 서버 → push service outbound HTTPS. `TTL` 헤더 필수(제안 86400). 404·410 응답 시 구독을 삭제합니다. endpoint는 https + 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com`, 그리고 Chromium 계열 FCM 대체 호스트 `jmt<숫자>.google.com` — 경로 `/fcm/send/<token>`일 때만, 2026-11-16 운영 실측)만 등록합니다.
 - 근거 URL: https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/ , https://webkit.org/blog/12945/meet-web-push/ , RFC 8030·8291·8292.
@@ -421,6 +422,7 @@ SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지
 | R3.5 (ADR-002 §4) | 2026-11-13 | 문서 첨부 계약 §6-1-1 신설(영환님 결정 §4-3 5개 불변): 허용 형식 9종·ZIP/OLE 목록 판정·단일 일치·판정기 자원 상한·`has_macros`·확장자 일치 415·25 MiB 상수·업로드/봇 리스너 상한·파일명 정규화·`attachment` 다운로드·90일·드릴 측정 항목·Hermes 경계. §2 `attachments` 행에 `0005` 지시. 구현 전 계약(1b 레인) |
 | R3.7 (p2s1-attach-order) | 2026-11-14 | 첨부 표시 순서(영환님 결정 2026-11-14): 메시지의 `attachments` 배열 = 전송 요청 `attachment_ids` 순서(응답·이력·답글·sync·WS·봇 경로 공통, 중복 ID 새 요청은 기존대로 400). §2 `attachments.bind_order`(마이그레이션 `0007`, 기존 행 NULL·백필 없음), §3 messages 행, §6-1 결속·projection 정렬. 멱등 비교는 집합 그대로(순서만 다른 재시도 = 원결과) |
 | R3.8 (chdel-server) | 2026-11-22 | 채널 삭제(P1 FR FR-CONV-06, 영환님 요청): §3 `DELETE /api/conversations/{id}`(소프트 삭제·마이그레이션 `0008`·이름 재사용), §4 `conversation.deleted` 프레임 |
+| R3.9 (push-preview) | 2026-11-26 | push 알림 본문 미리보기(영환님 지시 「미리보기 진행」): §3 `GET /api/messages/{id}/preview`, §6-2 표시 문구(제목 고정·본문 = 세션 조회 미리보기, 실패 시 고정 문구). payload 계약 변화 없음 |
 
 ## 리뷰 반영 기록
 

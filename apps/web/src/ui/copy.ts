@@ -401,7 +401,7 @@ export function documentDownloadName(filename: string, kind: string, size: strin
 
 /**
  * Web Push 알림 고정 문구(W-23, TRD §6-2). 정본 미정(UI_STATES §8 Q-H5) — Jarvis ★ 임시 결정.
- * 서비스 워커가 쓴다 — 메시지 본문·대화 이름·작성자 이름은 표시하지 않는다.
+ * 서비스 워커가 쓴다 — 제목은 항상 이 문구, 본문은 세션으로 가져온 미리보기가 없을 때의 폴백이다(R3.9). 대화 이름·작성자 이름은 표시하지 않는다.
  */
 export const PUSH_NOTIFICATION_COPY = {
   title: 'ohmyslack',

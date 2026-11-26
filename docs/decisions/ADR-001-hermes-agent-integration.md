@@ -135,6 +135,7 @@
 
 - **판단 근거(추정)**: 브리핑은 cron이 정해진 시각에 보내는 비동기 메시지입니다. 알림이 없으면 영환님이 앱을 열어야만 도착을 압니다. Slack을 계속 쓰는 이유 중 「브리핑을 받는다」의 실체는 iPhone 알림이므로, 푸시 없이 Slack을 끄면 기능 후퇴입니다. 반면 Slack과 병행하는 H1–H2 동안은 Slack 알림이 남아 있어 푸시가 없어도 됩니다.
 - **범위(★ 최소)**: Jarvis DM의 새 최상위 메시지와 자기 스레드 답글, 자기 멘션. payload에는 `conversation_id`/`thread_root_id`/`from_bot`만, **본문·이름 미포함**, 알림 문구는 SW 고정(「Jarvis」/「새 메시지가 있습니다」). iOS는 silent push가 금지이므로 SW는 항상 알림을 띄웁니다(https://webkit.org/blog/12945/meet-web-push/).
+- **변경 이력(2026-11-26, push-preview, 영환님 지시 「미리보기 진행」)**: 알림 본문을 고정 문구 대신 SW가 로그인 세션으로 가져온 메시지 미리보기(`GET /api/messages/{id}/preview`, 평문 최대 100 code point)로 표시하고 실패하면 고정 문구로 폴백한다. payload는 식별자만 그대로(본문은 push service를 거치지 않음), 잠금 화면 노출은 앱 토글 없이 OS 설정으로 통제(THREAT_MODEL TM-PUSH-01, TRD §6-2).
 - **조건(사실)**: iOS/iPadOS 16.4+, 홈 화면 추가 + manifest `display: standalone`, 권한 요청은 사용자 동작에서만(https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/). 현 manifest는 standalone(`apps/web/public/manifest.webmanifest`).
 - **네트워크**: 서버가 push service(`*.push.apple.com`)로 **outbound HTTPS**를 처음으로 합니다. 인바운드 노출은 변하지 않습니다. tailnet 전용 origin에서 iOS 구독·수신이 되는지는 공식 근거 없음 → **확인 필요**(QA-FR-CLIENT-05 실기 시험을 H3 첫 작업으로).
 - **VAPID 키**: 로컬 명령 `vapid-keygen`으로 P-256 생성, 개인키는 저장소 밖 600 파일, 환경 변수로 경로만 주입, 미설정 시 푸시만 비활성. `sub`는 공백 없는 `mailto:` 실제 주소(Apple의 403 BadJwtToken 비공식 보고 — https://developer.apple.com/forums/thread/725473). 키 회전 = 전 구독 재등록(RFC 8292).
