@@ -7,7 +7,6 @@ import { MESSAGE_PREVIEW_MAX } from '../../shared.js';
  * 최대 `MESSAGE_PREVIEW_MAX` code point로 자른다(초과 시 `…`). 평문이 비면 null.
  */
 const FENCE_BLOCK = /^[ \t]*(```|~~~)[^\n]*\n([\s\S]*?)\n?^[ \t]*\1[ \t]*$/gm;
-const INLINE_CODE = /(`+)([\s\S]*?[^`])\1(?!`)/g;
 /** 닫히지 않은 펜스 줄(구분자만 남은 경우). */
 const FENCE_LINE = /^[ \t]*(```|~~~).*$/gm;
 const HEADER = /^[ \t]{0,3}#{1,6}(?:[ \t]+|$)/gm;
@@ -25,6 +24,45 @@ const SLOT_CLOSE = '\u{E001}';
 const SLOT_CHARS = /[\u{E000}\u{E001}]/gu;
 const SLOT = /\u{E000}(\d+)\u{E001}/gu;
 
+/** 길이가 정확히 `len`인 백틱 묶음의 시작 위치(`from` 이후). 없으면 -1. */
+function findTickRun(text: string, from: number, len: number): number {
+  let at = text.indexOf('`', from);
+  while (at !== -1) {
+    let end = at;
+    while (text[end] === '`') end += 1;
+    if (end - at === len) return at;
+    at = text.indexOf('`', end);
+  }
+  return -1;
+}
+
+/**
+ * 인라인 코드(같은 길이 백틱 묶음 사이)를 `keep`으로 바꾼다. 정규식 역추적 대신 한 번씩 훑는 스캐너 —
+ * 닫는 묶음이 없던 길이는 기억해 다시 찾지 않으므로 백틱만 수천 개인 입력도 선형에 가깝다(Codex r3).
+ */
+function maskInlineCode(text: string, keep: (content: string) => string): string {
+  const unclosed = new Set<number>();
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf('`', i);
+    if (open === -1) return out + text.slice(i);
+    let end = open;
+    while (text[end] === '`') end += 1;
+    const len = end - open;
+    const close = unclosed.has(len) ? -1 : findTickRun(text, end, len);
+    if (close === -1) {
+      unclosed.add(len);
+      out += text.slice(i, end);
+    } else {
+      out += text.slice(i, open) + keep(text.slice(end, close));
+      end = close + len;
+    }
+    i = end;
+  }
+  return out;
+}
+
 function stripMarkup(text: string): string {
   return text
     .replace(FENCE_LINE, '')
@@ -40,10 +78,8 @@ function stripMarkup(text: string): string {
 export function toPreviewText(body: string): string | null {
   const code: string[] = [];
   const keep = (content: string): string => `${SLOT_OPEN}${code.push(content) - 1}${SLOT_CLOSE}`;
-  const masked = body
-    .replace(SLOT_CHARS, '')
-    .replace(FENCE_BLOCK, (_m, _fence: string, content: string) => keep(content))
-    .replace(INLINE_CODE, (_m, _ticks: string, content: string) => keep(content));
+  const fenced = body.replace(SLOT_CHARS, '').replace(FENCE_BLOCK, (_m, _fence: string, content: string) => keep(content));
+  const masked = maskInlineCode(fenced, keep);
   const plain = stripMarkup(masked)
     .replace(SLOT, (_m, i: string) => code[Number(i)] ?? '')
     .replace(SPACES, ' ')

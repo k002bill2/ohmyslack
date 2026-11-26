@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toPreviewText } from '../../src/modules/messages/preview.js';
-import { codePointLength, MESSAGE_PREVIEW_MAX } from '../../src/shared.js';
+import { codePointLength, MESSAGE_BODY_MAX, MESSAGE_PREVIEW_MAX } from '../../src/shared.js';
 
 /** FR-CLIENT-05(TRD §6-2): SW가 세션으로 가져가는 알림 미리보기의 서버 평문화. 순수 함수. */
 const hasLoneSurrogate = (s: string): boolean =>
@@ -44,6 +44,21 @@ describe('FR-CLIENT-05 push 알림 미리보기 평문화(toPreviewText)', () =>
     const mixed = toPreviewText('한😀'.repeat(60)) ?? '';
     expect(codePointLength(mixed)).toBe(MESSAGE_PREVIEW_MAX + 1);
     expect(hasLoneSurrogate(mixed)).toBe(false);
+  });
+
+  it.each([
+    ['백틱만', '`'.repeat(MESSAGE_BODY_MAX)],
+    ['백틱 길이 섞임', Array.from({ length: 80 }, (_, i) => `${'`'.repeat(i + 1)}x`).join('').slice(0, MESSAGE_BODY_MAX)],
+    ['펜스 줄 반복', '```\n'.repeat(MESSAGE_BODY_MAX / 4)],
+    ['밑줄 강조 미완', '_a '.repeat(MESSAGE_BODY_MAX / 3)],
+    ['별 강조 미완', '*a '.repeat(MESSAGE_BODY_MAX / 3)],
+    ['링크 여는 괄호', '['.repeat(MESSAGE_BODY_MAX)],
+    ['링크 미완', '[a]('.repeat(MESSAGE_BODY_MAX / 4)],
+    ['인용 반복', '> '.repeat(MESSAGE_BODY_MAX / 2)],
+  ])('본문 상한 길이의 악성 입력(%s)도 빠르게 끝난다(이벤트 루프 점유 방지)', (_name, input) => {
+    const started = performance.now();
+    toPreviewText(input);
+    expect(performance.now() - started).toBeLessThan(100);
   });
 
   it.each(['', '   \n\t', '```\n```', '**  **', '> ', '[](https://example.test)', '#  '])('평문이 비면 null (%j)', (input) => {
