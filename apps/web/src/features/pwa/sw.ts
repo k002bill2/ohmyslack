@@ -9,7 +9,7 @@ import {
   type ExtendableEventLike,
   type FetchEventLike,
 } from './sw-routing.js';
-import { createPushHandlers, type ClientsLike, type NotificationClickEventLike, type PushEventLike } from './push-notify.js';
+import { createPreviewFetcher, createPushHandlers, type ClientsLike, type NotificationClickEventLike, type PushEventLike } from './push-notify.js';
 
 /** 빌드 후처리가 이 문자열 리터럴을 precache 배열 리터럴로 바꾼다(미치환이면 빈 목록). */
 const BUILD_MANIFEST: unknown = '__OMS_PRECACHE_MANIFEST__';
@@ -48,9 +48,10 @@ if ('ServiceWorkerGlobalScope' in globalThis) {
   scope.addEventListener('install', handlers.onInstall);
   scope.addEventListener('activate', handlers.onActivate);
   scope.addEventListener('fetch', handlers.onFetch);
-  // TRD §6-2: 알림 표시만 — payload·본문은 어디에도 저장하지 않는다.
+  // TRD §6-2: 알림 표시만 — payload·미리보기는 어디에도 저장하지 않는다. 미리보기는 같은 출처 세션으로 조회.
   const push = createPushHandlers({
     showNotification: (title, options) => scope.registration.showNotification(title, options),
+    fetchPreview: createPreviewFetcher((url, init) => fetch(url, init)),
     clients: scope.clients,
     origin: globalThis.location.origin,
   });

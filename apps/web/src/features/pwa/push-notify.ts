@@ -1,7 +1,8 @@
 /**
  * Web Push 서비스 워커 처리(순수 함수 + 주입 핸들러). 정본: TRD §6-2, UI_STATES §2-10 CMP-30.
- * payload는 식별자만 담는다(TR-SEC-15). 표시 문구는 고정이며 payload·본문을 어디에도 저장하지 않는다.
- * iOS는 silent push 금지 — payload가 없거나 잘못돼도 일반 알림을 반드시 띄운다.
+ * payload는 식별자만 담는다(TR-SEC-15). 알림 본문은 수신 뒤 로그인 세션으로 서버 미리보기를 가져와 쓰고,
+ * 실패(타임아웃·401/403/404·네트워크·null·형식 이상)하면 고정 문구로 폴백한다. 어느 쪽도 어디에도 저장하지 않는다.
+ * iOS는 silent push 금지 — payload가 없거나 잘못돼도, 미리보기가 실패해도 일반 알림을 반드시 1회 띄운다.
  */
 import type { PushPayload } from '../../../../../packages/shared/src/push.js';
 
@@ -9,7 +10,7 @@ import type { PushPayload } from '../../../../../packages/shared/src/push.js';
  * `sw.js`는 import 없는 단일 classic script여야 한다(vite.config.ts `swPlugin`). 앱 본체와 공유하는 모듈
  * (zod·`ui/copy.ts`·`app/route.ts`)을 값으로 import하면 공유 청크로 갈라져 빌드가 실패한다 — 그래서 이 모듈은
  * 타입만 import하고, 문구·검증·URL을 자체로 둔다. 일치는 테스트가 확인한다
- * (`PUSH_NOTIFICATION_COPY`(copy.ts)·`pushPayloadSchema`(shared)·`withThread`(route.ts)).
+ * (`PUSH_NOTIFICATION_COPY`(copy.ts)·`pushPayloadSchema`·`messagePreviewResponseSchema`(shared)·`withThread`(route.ts)).
  */
 
 /** 고정 문구 — `ui/copy.ts` `PUSH_NOTIFICATION_COPY`와 같아야 한다(테스트로 확인). */
@@ -75,12 +76,12 @@ export function pushTargetUrl(payload: PushPayload | null): string {
   return `${path}#message-${encodeURIComponent(payload.message_id)}`;
 }
 
-/** 고정 제목·본문(Q-H5 ★). 본문·대화 이름·작성자 이름을 쓰지 않는다. */
-export function notificationFor(payload: PushPayload | null): NotificationSpec {
+/** 제목은 고정(Q-H5 ★), 본문은 서버 미리보기가 있으면 그것, 없으면 고정 문구. 대화 이름·작성자 이름은 쓰지 않는다. */
+export function notificationFor(payload: PushPayload | null, preview: string | null = null): NotificationSpec {
   return {
     title: payload?.from_bot === true ? SW_PUSH_COPY.botTitle : SW_PUSH_COPY.title,
     options: {
-      body: SW_PUSH_COPY.body,
+      body: preview ?? SW_PUSH_COPY.body,
       tag: payload?.conversation_id ?? GENERIC_PUSH_TAG,
       data: { url: pushTargetUrl(payload) },
     },
@@ -113,8 +114,73 @@ export interface ClientsLike {
   openWindow(url: string): Promise<unknown>;
 }
 
+/** 미리보기 조회 상한(ms). 넘으면 abort하고 고정 문구로 폴백한다(TRD §6-2). */
+export const PREVIEW_TIMEOUT_MS = 3000;
+
+/** `messagePreviewResponseSchema`(strict, text: 비어 있지 않은 문자열 | null)와 같은 판정. 문자열이 아니면 null. */
+export function parsePreviewResponse(raw: unknown): string | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const keys = Object.keys(raw);
+  if (keys.length !== 1 || keys[0] !== 'text') return null;
+  const text = (raw as { text?: unknown }).text;
+  return typeof text === 'string' && text.length > 0 ? text : null;
+}
+
+/** SW `fetch` 중 미리보기 조회에 쓰는 부분. */
+export type PreviewFetchLike = (
+  url: string,
+  init: { readonly credentials: 'same-origin'; readonly cache: 'no-store'; readonly signal: AbortSignal },
+) => Promise<{ readonly status: number; json(): Promise<unknown> }>;
+
+/**
+ * 로그인 세션(같은 출처 쿠키)으로 `GET /api/messages/{id}/preview`를 부른다. 200 + 문자열만 성공이고,
+ * 그 외 상태·네트워크 오류·형식 이상·`timeoutMs` 초과는 null. fetch가 abort를 무시해도 타임아웃에 끝난다.
+ * 응답 평문은 알림 본문으로만 쓴다(HTML로 해석하거나 다른 곳에 넣지 않는다).
+ */
+export function createPreviewFetcher(fetchFn: PreviewFetchLike, timeoutMs: number = PREVIEW_TIMEOUT_MS): (messageId: string) => Promise<string | null> {
+  return async (messageId) => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve(null);
+      }, timeoutMs);
+    });
+    const attempt = (async (): Promise<string | null> => {
+      try {
+        const res = await fetchFn(`/api/messages/${encodeURIComponent(messageId)}/preview`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        return res.status === 200 ? parsePreviewResponse(await res.json()) : null;
+      } catch {
+        return null;
+      }
+    })();
+    try {
+      return await Promise.race([attempt, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+/** 미리보기 조회 실패(동기 throw 포함)는 모두 null — 알림 표시를 막지 않는다. */
+async function safePreview(fetchPreview: (messageId: string) => Promise<string | null>, payload: PushPayload | null): Promise<string | null> {
+  if (payload === null) return null;
+  try {
+    return await fetchPreview(payload.message_id);
+  } catch {
+    return null;
+  }
+}
+
 export interface PushHandlerDeps {
   readonly showNotification: (title: string, options: NotificationSpec['options']) => Promise<void>;
+  /** 메시지 ID → 서버 평문 미리보기(없으면 null). SW는 `createPreviewFetcher(fetch)`를 넣는다. */
+  readonly fetchPreview: (messageId: string) => Promise<string | null>;
   readonly clients: ClientsLike;
   readonly origin: string;
 }
@@ -153,8 +219,14 @@ async function openOrFocus(clients: ClientsLike, origin: string, path: string): 
 export function createPushHandlers(deps: PushHandlerDeps) {
   return {
     onPush(event: PushEventLike): void {
-      const spec = notificationFor(parsePushData(event.data));
-      event.waitUntil(deps.showNotification(spec.title, spec.options));
+      const payload = parsePushData(event.data);
+      // 미리보기 조회와 표시를 한 promise로 묶어 waitUntil에 넘긴다 — 조회가 실패해도 showNotification은 정확히 1회.
+      event.waitUntil(
+        (async () => {
+          const spec = notificationFor(payload, await safePreview(deps.fetchPreview, payload));
+          await deps.showNotification(spec.title, spec.options);
+        })(),
+      );
     },
     onNotificationClick(event: NotificationClickEventLike): void {
       event.notification.close();
