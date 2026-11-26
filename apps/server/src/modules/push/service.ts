@@ -129,11 +129,16 @@ export function createPushService(deps: PushServiceDeps): PushService {
     for (const target of targets) {
       if (target.userId === message.authorId) continue;
       const key = `${target.id}:${message.conversationId}`;
-      const last = lastSent.get(key);
-      if (last !== undefined && now - last < PUSH_COALESCE_WINDOW_MS) continue;
+      const coalesced = (): boolean => {
+        const last = lastSent.get(key);
+        return last !== undefined && now - last < PUSH_COALESCE_WINDOW_MS;
+      };
+      if (coalesced()) continue;
       // 전송은 대상별 순차라 그 사이 삭제될 수 있다 — 매 전송 직전 재확인, 삭제됐으면 남은 대상 모두 중단.
       // 묶음 맵은 실제 전송할 때만 갱신한다(건너뛴 대상이 60초 동안 막히지 않게).
       if (!(await store.isLive(message.id))) return;
+      // 재확인 await 사이 같은 대화의 다른 작업이 먼저 보냈을 수 있다 — 검사와 갱신 사이에는 await를 두지 않는다.
+      if (coalesced()) continue;
       lastSent.set(key, now);
       await deliver(target, body, message.conversationId, active);
     }
