@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { HttpError } from '../../http/errors.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
 import type { MessageEvents } from './events.js';
+import { toPreviewText } from './preview.js';
 import type { MessageLocator, MessageRecord, MessagesStore, Page, PageRequest, WriteResult } from './store.js';
 
 export interface MessagesServiceDeps {
@@ -37,6 +38,8 @@ export interface MessagesService {
   remove(actorId: string, messageId: string): Promise<WriteOutcome>;
   history(conversationId: string, page: PageRequest): Promise<Page>;
   replies(rootId: string, page: PageRequest): Promise<{ readonly root: MessageRecord; readonly page: Page }>;
+  /** 알림 미리보기 평문(TRD §6-2). 삭제·평문 없음이면 null. 접근 판정은 호출자의 messageGuard가 먼저 한다. */
+  preview(messageId: string): Promise<string | null>;
 }
 
 const notFound = (): HttpError => new HttpError(404, 'not_found');
@@ -104,6 +107,11 @@ export function createMessagesService(deps: MessagesServiceDeps): MessagesServic
       if (root === undefined) throw notFound();
       if (root.threadRootId !== null) throw new HttpError(400, 'invalid_thread_root');
       return { root, page: await store.replies(rootId, page) };
+    },
+    async preview(messageId) {
+      const message = await store.get(messageId);
+      if (message === undefined) throw notFound();
+      return message.deletedAt !== null || message.body === null ? null : toPreviewText(message.body);
     },
   };
 }
