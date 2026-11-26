@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChannel } from '../conversations/conv-int-harness.js';
 import { markRead } from '../sync/sync-int-harness.js';
+import { createPgPushStore } from '../../src/modules/push/index.js';
 import { as, decrypt, device, flush, req, sendAs, setupPushInt, subscribe, teardownPushInt, type PushIntContext, type Session } from './push-harness.js';
 
 /** FR-CLIENT-05(TRD §6-2): 채널 최상위 봇 게시 → 채널 사람 멤버 전원, 전송 전 삭제된 메시지는 보내지 않는다. */
@@ -105,6 +106,19 @@ describe('FR-CLIENT-05 Web Push — 전송 전 삭제', () => {
     await services.messages.remove(c.conv.ids.a, post);
     await flush(c);
     expect(c.received).toHaveLength(0);
+  });
+
+  it('대상 질의는 삭제된 메시지에 대해 0건을 돌려준다', async () => {
+    const { c, channel } = await subscribedChannel();
+    const post = await sendAs(c, c.botUserId, channel);
+    const store = createPgPushStore(c.conv.schema.pool);
+    const query = {
+      conversationId: channel, messageId: post, threadRootId: null, seq: await seqOf(c, post), everyone: true,
+      userIds: [], authorId: c.botUserId, keyId: c.config.keyId, now: new Date(c.now),
+    };
+    expect(await store.targets(query)).toHaveLength(2);
+    await removeAsBot(c, post);
+    expect(await store.targets(query)).toEqual([]);
   });
 
   it('대상 2개 중 첫 전송 뒤 삭제되면 두 번째는 보내지 않는다', async () => {
