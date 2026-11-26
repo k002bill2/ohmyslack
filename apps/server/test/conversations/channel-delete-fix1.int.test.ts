@@ -64,7 +64,7 @@ describe('FR-CONV-06 삭제 = 멤버십 종료', () => {
   });
 
   it('푸시 대상 쿼리에 삭제 채널 0', async () => {
-    const { cid } = await seedDeleted();
+    const { cid, msgId } = await seedDeleted();
     const pool = lc.conv.schema.pool;
     const sess = await pool.query<{ id: string }>('SELECT id FROM sessions WHERE user_id = $1 AND revoked_at IS NULL LIMIT 1', [lc.conv.ids.b]);
     await pool.query(
@@ -73,7 +73,7 @@ describe('FR-CONV-06 삭제 = 멤버십 종료', () => {
       [randomUUID(), lc.conv.ids.b, sess.rows[0]?.id],
     );
     const targets = await createPgPushStore(pool).targets({
-      conversationId: cid, threadRootId: null, seq: 999, everyone: true, userIds: [], authorId: lc.conv.ids.a, keyId: 'k1', now: new Date(),
+      conversationId: cid, messageId: msgId, threadRootId: null, seq: 999, everyone: true, userIds: [], authorId: lc.conv.ids.a, keyId: 'k1', now: new Date(),
     });
     expect(targets).toEqual([]);
   });

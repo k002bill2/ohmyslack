@@ -30,6 +30,8 @@ export interface PushIntContext {
   readonly botUserId: string;
   readonly botDm: string;
   now: number;
+  /** 각 전송 응답 직후 호출(테스트가 전송 사이 상태 변경을 끼워 넣는다). */
+  afterSend?: () => Promise<void>;
 }
 
 /** 경로에 `status-404`·`status-410`이 있으면 그 상태로, 아니면 201로 응답한다. */
@@ -84,13 +86,18 @@ export async function setupPushInt(options: { readonly enabled?: boolean } = {})
   const lazy: { pool?: pg.Pool } = {};
   const lazyPool = { query: (...args: unknown[]) => (lazy.pool as unknown as { query: (...a: unknown[]) => unknown }).query(...args) } as unknown as pg.Pool;
   const ctx = { now: Date.parse('2026-11-09T00:00:00Z') } as PushIntContext;
+  const local = localSend(() => (server.address() as AddressInfo).port);
   const conv = await setupConvInt({
     clock: () => ctx.now,
     logger: { log: (fields) => logs.push(JSON.stringify(fields)) },
     pushStore: createPgPushStore(lazyPool),
     push: {
       ...(options.enabled === false ? {} : { config }),
-      send: localSend(() => (server.address() as AddressInfo).port),
+      send: async (target, payload, opts) => {
+        const status = await local(target, payload, opts);
+        await ctx.afterSend?.();
+        return status;
+      },
       schedule: (task) => tasks.push(task),
     },
   });

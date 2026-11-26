@@ -235,6 +235,7 @@ flowchart LR
 | TM-PUSH-01 | I | 알림 미리보기(잠금 화면)·Apple 경유로 본문 노출 | payload에 본문·대화 이름 미포함, 고정 문구 「새 메시지가 있습니다」 + 대화 종류만(★) | L | `FR-CLIENT-05` 지정 테스트(payload 필드 allowlist, `TR-SEC-15`) |
 | TM-PUSH-02 | S | VAPID 개인키 유출로 임의 알림 발송 | 개인키는 600 파일·로그 금지, 회전 시 재구독 절차 | L | `TR-SEC-02` 표식에 VAPID 개인키 추가 |
 | TM-PUSH-03 | I | push endpoint를 SSRF 표적으로 등록(내부 주소로 POST 유도) | 구독 등록 시 endpoint 호스트 허용목록(`*.push.apple.com`, `fcm.googleapis.com`, `*.push.services.mozilla.com`) + https만 | L | `FR-CLIENT-05` 보조 `push-endpoint-allowlist.int.test.ts`(`TR-SEC-15`) |
+| TM-PUSH-04 | I | 생성 → 비동기 전송 사이 삭제된 메시지의 알림이 나감(대상별 순차 전송 창) | 대상 질의가 살아 있는 메시지만 대상으로 삼고, 매 전송 직전 삭제 여부 재확인 후 삭제되면 남은 전송 중단. 잔여: 이미 push service에 넘어간 알림은 회수 불가(payload 본문 없음) | L | `FR-CLIENT-05` `push-channel-root.int.test.ts`(전송 전 삭제) |
 
 ## 5. 6-3 누락 테스트 후보 (Jarvis 반환)
 

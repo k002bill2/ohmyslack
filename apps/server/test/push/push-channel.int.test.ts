@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChannel } from '../conversations/conv-int-harness.js';
+import { PUSH_COALESCE_WINDOW_MS } from '../../src/shared.js';
 import { markRead } from '../sync/sync-int-harness.js';
 import { as, decrypt, device, flush, req, sendAs, setupPushInt, subscribe, teardownPushInt, type PushIntContext, type Session } from './push-harness.js';
 
@@ -60,20 +61,14 @@ describe('FR-CLIENT-05 Web Push — 채널 스레드 봇 답글', () => {
     expect(c.received).toHaveLength(0);
   });
 
-  it('채널 최상위 봇 게시는 보내지 않는다', async () => {
-    const { c, a, b, channel } = await channelWithBot();
-    await subscribe(c, a, device('a'));
-    await subscribe(c, b, device('b'));
-    await sendAs(c, c.botUserId, channel);
-    await flush(c);
-    expect(c.received).toHaveLength(0);
-  });
-
   it('봇 원문에 봇이 단 답글은 보내지 않는다(원문 작성자가 봇)', async () => {
     const { c, a, b, channel } = await channelWithBot();
     await subscribe(c, a, device('a'));
     await subscribe(c, b, device('b'));
     const root = await sendAs(c, c.botUserId, channel);
+    await flush(c);
+    c.received.splice(0); // 봇 최상위 원문 자체 알림(채널 멤버 전원)은 push-channel-root.int에서 검사
+    c.now += PUSH_COALESCE_WINDOW_MS + 1_000; // 원문 알림이 채운 묶음 창 밖으로 — 답글 판정이 묶음에 가려지지 않게
     await sendAs(c, c.botUserId, channel, { threadRootId: root });
     await flush(c);
     expect(c.received).toHaveLength(0);
