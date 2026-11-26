@@ -358,6 +358,7 @@ describe('messages 라우트: 이력·답글', () => {
         'POST /api/conversations/:id/messages',
         'GET /api/conversations/:id/messages',
         'GET /api/messages/:id/replies',
+        'GET /api/messages/:id/preview',
         'PATCH /api/messages/:id',
         'DELETE /api/messages/:id',
       ]),

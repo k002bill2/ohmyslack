@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { messagePreviewResponseSchema } from '../../../../packages/shared/src/messages.js';
 import { PUSH_PAYLOAD_KEYS, pushPayloadSchema } from '../../../../packages/shared/src/push.js';
 import { withThread } from '../../src/app/route.js';
 import {
+  createPreviewFetcher,
   createPushHandlers,
   GENERIC_PUSH_TAG,
   notificationFor,
+  parsePreviewResponse,
+  PREVIEW_TIMEOUT_MS,
   pushTargetUrl,
   SW_PUSH_COPY,
   toPushPayload,
   type ClientsLike,
+  type PreviewFetchLike,
   type WindowClientLike,
 } from '../../src/features/pwa/push-notify.js';
 import { PUSH_NOTIFICATION_COPY } from '../../src/ui/copy.js';
@@ -23,14 +28,14 @@ function data(value: unknown) {
   return { json: () => value };
 }
 
-function setup(windows: WindowClientLike[] = []) {
+function setup(windows: WindowClientLike[] = [], fetchPreview: (messageId: string) => Promise<string | null> = vi.fn(async () => null)) {
   const showNotification = vi.fn(async (_title: string, _options: object) => undefined);
   const clients: ClientsLike & { openWindow: ReturnType<typeof vi.fn> } = {
     matchAll: vi.fn(async () => windows),
     openWindow: vi.fn(async () => null),
   };
-  const h = createPushHandlers({ showNotification, clients, origin: ORIGIN });
-  return { h, showNotification, clients };
+  const h = createPushHandlers({ showNotification, clients, origin: ORIGIN, fetchPreview });
+  return { h, showNotification, clients, fetchPreview };
 }
 
 function pushEvent(d: { json(): unknown } | null) {
@@ -46,6 +51,7 @@ function clickEvent(url: unknown) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('FR-CLIENT-05 SW push 이벤트가 항상 알림을 표시하고 본문을 저장하지 않음 — features/pwa push 핸들러(TRD §6-2, UI_STATES §2-10 CMP-30)', () => {
@@ -163,5 +169,124 @@ describe('FR-CLIENT-05 SW push 이벤트가 항상 알림을 표시하고 본문
     const parsed = toPushPayload({ ...PAYLOAD, thread_root_id: ROOT });
     expect(Object.keys(parsed ?? {}).every((k) => (PUSH_PAYLOAD_KEYS as readonly string[]).includes(k))).toBe(true);
     expect(pushTargetUrl(parsed)).toBe(`${withThread(`/c/${CONV}`, ROOT)}#message-${MSG}`);
+  });
+});
+
+/** 미리보기 fetch 응답 모양(Response 일부). */
+function response(status: number, body: unknown): Awaited<ReturnType<PreviewFetchLike>> {
+  return { status, json: async () => body };
+}
+
+describe('FR-CLIENT-05 SW 알림 본문 미리보기 — 세션으로 조회, 실패하면 고정 문구(TRD §6-2)', () => {
+  it('미리보기 성공: body = 서버 평문, 제목·tag·data.url은 기존 규칙, 조회는 payload의 message_id로', async () => {
+    const fetchPreview = vi.fn(async () => '안녕 문서 인용');
+    const { h, showNotification } = setup([], fetchPreview);
+    const { event, waits } = pushEvent(data({ ...PAYLOAD, from_bot: true }));
+    h.onPush(event);
+    expect(event.waitUntil).toHaveBeenCalledTimes(1);
+    await Promise.all(waits);
+    expect(fetchPreview).toHaveBeenCalledWith(MSG);
+    expect(showNotification).toHaveBeenCalledTimes(1);
+    expect(showNotification).toHaveBeenCalledWith('Jarvis', { body: '안녕 문서 인용', tag: CONV, data: { url: `/c/${CONV}#message-${MSG}` } });
+  });
+
+  it.each([
+    ['null(삭제·평문 없음)', async () => null],
+    ['조회 reject', async () => Promise.reject(new Error('offline'))],
+    ['조회 동기 throw', () => { throw new Error('boom'); }],
+  ])('미리보기 실패(%s)면 고정 문구로 정확히 1회 표시', async (_name, impl) => {
+    const { h, showNotification } = setup([], vi.fn(impl as (id: string) => Promise<string | null>));
+    const { event, waits } = pushEvent(data(PAYLOAD));
+    h.onPush(event);
+    await Promise.all(waits);
+    expect(showNotification).toHaveBeenCalledTimes(1);
+    expect(showNotification).toHaveBeenCalledWith('ohmyslack', { body: SW_PUSH_COPY.body, tag: CONV, data: { url: `/c/${CONV}#message-${MSG}` } });
+  });
+
+  it('payload를 읽지 못하면 미리보기를 조회하지 않고 고정 문구', async () => {
+    const fetchPreview = vi.fn(async () => '쓰이면 안 됨');
+    const { h, showNotification } = setup([], fetchPreview);
+    const { event, waits } = pushEvent(data({}));
+    h.onPush(event);
+    await Promise.all(waits);
+    expect(fetchPreview).not.toHaveBeenCalled();
+    expect(showNotification).toHaveBeenCalledWith('ohmyslack', { body: SW_PUSH_COPY.body, tag: GENERIC_PUSH_TAG, data: { url: '/' } });
+  });
+
+  it('waitUntil에 넘긴 promise는 미리보기 조회와 showNotification 완료까지 기다린다', async () => {
+    let releasePreview: (v: string | null) => void = () => undefined;
+    let releaseShow: () => void = () => undefined;
+    const fetchPreview = vi.fn(() => new Promise<string | null>((r) => { releasePreview = r; }));
+    const showNotification = vi.fn(() => new Promise<void>((r) => { releaseShow = r; }));
+    const clients: ClientsLike = { matchAll: async () => [], openWindow: async () => null };
+    const h = createPushHandlers({ showNotification, clients, origin: ORIGIN, fetchPreview });
+    const { event, waits } = pushEvent(data(PAYLOAD));
+    h.onPush(event);
+    let settled = false;
+    void waits[0]?.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(showNotification).not.toHaveBeenCalled();
+    releasePreview('본문');
+    await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
+    expect(settled).toBe(false);
+    releaseShow();
+    await waits[0];
+    expect(settled).toBe(true);
+  });
+
+  it('createPreviewFetcher: same-origin·no-store·AbortSignal로 /api/messages/<id>/preview를 부르고 200 + 문자열만 받는다', async () => {
+    const fetchFn = vi.fn<PreviewFetchLike>(async () => response(200, { text: '미리보기' }));
+    const fetchPreview = createPreviewFetcher(fetchFn);
+    expect(await fetchPreview(MSG)).toBe('미리보기');
+    const [url, init] = fetchFn.mock.calls[0] ?? [];
+    expect(url).toBe(`/api/messages/${MSG}/preview`);
+    expect(init).toMatchObject({ credentials: 'same-origin', cache: 'no-store' });
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each([
+    ['401', response(401, { error: { code: 'unauthorized' } })],
+    ['403', response(403, { error: { code: 'forbidden' } })],
+    ['404', response(404, { error: { code: 'not_found' } })],
+    ['200 text:null', response(200, { text: null })],
+    ['200 스키마 불일치(숫자)', response(200, { text: 1 })],
+    ['200 스키마 불일치(추가 키)', response(200, { text: 'x', body: 'y' })],
+    ['200 JSON 아님', { status: 200, json: async () => { throw new SyntaxError('html'); } }],
+  ])('createPreviewFetcher: %s → null', async (_name, res) => {
+    const fetchPreview = createPreviewFetcher(async () => res);
+    expect(await fetchPreview(MSG)).toBeNull();
+  });
+
+  it('createPreviewFetcher: 네트워크 오류 → null', async () => {
+    const fetchPreview = createPreviewFetcher(async () => { throw new TypeError('Failed to fetch'); });
+    expect(await fetchPreview(MSG)).toBeNull();
+  });
+
+  it('3초 타임아웃: 응답이 없으면 abort하고 고정 문구로 정확히 1회 표시', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    const fetchFn: PreviewFetchLike = (_url, init) => {
+      signal = init.signal;
+      return new Promise(() => undefined); // 신호도 무시하는 최악의 경우
+    };
+    const { h, showNotification } = setup([], createPreviewFetcher(fetchFn));
+    const { event, waits } = pushEvent(data(PAYLOAD));
+    h.onPush(event);
+    await vi.advanceTimersByTimeAsync(PREVIEW_TIMEOUT_MS - 1);
+    expect(showNotification).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.all(waits);
+    expect(PREVIEW_TIMEOUT_MS).toBe(3000);
+    expect(signal?.aborted).toBe(true);
+    expect(showNotification).toHaveBeenCalledTimes(1);
+    expect(showNotification).toHaveBeenCalledWith('ohmyslack', { body: SW_PUSH_COPY.body, tag: CONV, data: { url: `/c/${CONV}#message-${MSG}` } });
+  });
+
+  it('SW 응답 판정은 shared messagePreviewResponseSchema와 같다(sw.js 단일 스크립트라 복제)', () => {
+    const fixtures: unknown[] = [{ text: '본문' }, { text: null }, { text: '' }, { text: 1 }, { text: 'x', extra: 1 }, {}, null, [], 'str'];
+    for (const f of fixtures) {
+      const z = messagePreviewResponseSchema.safeParse(f);
+      expect(parsePreviewResponse(f)).toEqual(z.success ? z.data.text : null);
+    }
   });
 });
