@@ -73,7 +73,6 @@ export const READ_RETRY_MAX_MS = 30_000;
 
 type Summary = ConversationsResponse['conversations'][number];
 
-/** 구독 거절(`error` 프레임에 대화 ID가 실린 경우). */
 /**
  * send·edit 2xx 응답이 shared 계약(`messageWriteResponseSchema`)과 다르다. 서버는 이미 저장했을 수 있어 실패로 단정하지 않고
  * 응답 없는 실패와 같은 「확인 중」 경로로 보낸다(같은 client_message_id 재시도·sync로 수렴). 원시 응답은 담지 않는다(FR-OPS-03).
@@ -91,6 +90,7 @@ const parseWriteResponse = (body: unknown): MessageWriteResponse => {
   return parsed.data;
 };
 
+/** 구독 거절(`error` 프레임에 대화 ID가 실린 경우). */
 class SubscribeRejected extends Error {
   constructor(readonly code: string) {
     super('subscribe rejected');
