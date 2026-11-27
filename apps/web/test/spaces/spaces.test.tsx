@@ -120,7 +120,7 @@ describe('빈 DB 시나리오(회귀): owner, 대화 0개 → 채널 만들기 �
     server.on(`GET /api/conversations/${NEW_CH}/messages`, () => ({ status: 200, body: { messages: [], has_more: false } }));
     server.on(`POST /api/conversations/${NEW_CH}/messages`, (_u, init) => {
       const b = JSON.parse(String(init?.body)) as { client_message_id: string; body: string };
-      return { status: 201, body: { change_id: 1, message: message(1, { conversation_id: NEW_CH, author_id: ME, client_message_id: b.client_message_id, body: b.body }) } };
+      return { status: 201, body: { seq: 1, change_id: 1, mention_user_ids: [], message: message(1, { conversation_id: NEW_CH, author_id: ME, client_message_id: b.client_message_id, body: b.body }) } };
     });
     const { history } = mount(server);
     await settle();

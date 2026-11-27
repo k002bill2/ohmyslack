@@ -3,6 +3,8 @@ import { createSessionBus } from '../../src/features/sync';
 import { createHttpDataSource, type HttpDataSourceDeps } from '../../src/data/http-source.js';
 import type { SocketLike } from '../../src/data/realtime.js';
 import type { StorageLike } from '../../src/features/sync';
+import { afterEach } from 'vitest';
+import { messageWriteResponseSchema } from '../../../../packages/shared/src/messages.js';
 
 export const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 export const ME = U(1);
@@ -15,6 +17,7 @@ export function message(n: number, extra: Record<string, unknown> = {}) {
     conversation_id: CONV,
     seq: n,
     author_id: PEER,
+    author_kind: 'human',
     client_message_id: U(500 + n),
     thread_root_id: null,
     body: `m${n}`,
@@ -28,6 +31,24 @@ export function message(n: number, extra: Record<string, unknown> = {}) {
 }
 
 export type Reply = { status: number; body?: unknown } | 'network';
+
+/** 메시지 write(send·edit) 성공 응답 경로. 이 경로의 2xx 본문은 shared 계약 스키마를 통과해야 한다. */
+const WRITE_ROUTE = /^(POST \/api\/conversations\/[^/]+\/messages|PATCH \/api\/messages\/[^/]+)$/;
+
+/** 가짜 응답이 shared 계약과 어긋난 기록. 각 테스트 뒤 비어 있지 않으면 그 테스트를 실패시킨다. */
+const contractViolations: string[] = [];
+
+afterEach(() => {
+  const found = contractViolations.splice(0);
+  if (found.length > 0) throw new Error(`fake-server 응답이 shared 계약과 다르다:\n${found.join('\n')}`);
+});
+
+/** send/edit 성공 응답을 `messageWriteResponseSchema`로 검증한다(웹 단위 테스트가 서버 계약에 묶이도록). */
+export function checkWriteContract(route: string, reply: { status: number; body?: unknown }): string | null {
+  if (!WRITE_ROUTE.test(route) || reply.status < 200 || reply.status >= 300) return null;
+  const parsed = messageWriteResponseSchema.safeParse(reply.body);
+  return parsed.success ? null : `${route} ${reply.status}: ${parsed.error.message}`;
+}
 export type Handler = (url: URL, init: RequestInit | undefined) => Reply;
 
 export class MemoryStorage implements StorageLike {
@@ -110,6 +131,8 @@ export class FakeServer {
     this.log.push(`${route}${url.search}`);
     const reply = this.routes.get(route)?.(url, init) ?? { status: 404 };
     if (reply === 'network') return Promise.reject(new TypeError('Failed to fetch'));
+    const violation = checkWriteContract(route, reply);
+    if (violation !== null) contractViolations.push(violation);
     return Promise.resolve(new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status }));
   };
 
