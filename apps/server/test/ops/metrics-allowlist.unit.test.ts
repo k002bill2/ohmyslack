@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { METRIC_ALLOWLIST, metricRecordSchema, toMetricRecord } from '../../src/shared.js';
+import { bucketDurationMs, DURATION_BUCKETS_MS, METRIC_ALLOWLIST, metricRecordSchema, toMetricRecord } from '../../src/shared.js';
 
 /** FR-OPS-03 보조·TR-SEC-09: 계측은 PRD §10 표의 이벤트·필드만 허용한다. */
 const PRD_SECTION_10: Readonly<Record<string, readonly string[]>> = {
@@ -8,6 +8,8 @@ const PRD_SECTION_10: Readonly<Record<string, readonly string[]>> = {
   read_sync_result: ['outcome', 'duration_ms'],
   auth_denied: ['action', 'reason', 'count'],
   client_state: ['state', 'count'],
+  bot_delivery_result: ['direction', 'outcome', 'has_attachment', 'duration_ms'],
+  push_send_result: ['outcome'],
 };
 
 const VALID = Object.freeze({
@@ -16,6 +18,8 @@ const VALID = Object.freeze({
   read_sync_result: { event: 'read_sync_result', outcome: 'ok', duration_ms: 100 },
   auth_denied: { event: 'auth_denied', action: 'login', reason: 'bad_credentials', count: 1 },
   client_state: { event: 'client_state', state: 'offline', count: 2 },
+  bot_delivery_result: { event: 'bot_delivery_result', direction: 'in', outcome: 'ok', has_attachment: true, duration_ms: 50 },
+  push_send_result: { event: 'push_send_result', outcome: 'expired' },
 });
 
 /** PRD §10 "계측 필드로 넣지 않는" 항목들. */
@@ -65,5 +69,22 @@ describe('metrics allowlist (PRD §10)', () => {
     expect(toMetricRecord({ ...VALID.message_send_result, conv_kind: 'general' })).toBeUndefined();
     expect(toMetricRecord({ ...VALID.sync_result, trigger: 'carol' })).toBeUndefined();
     expect(toMetricRecord({ ...VALID.read_sync_result, outcome: 'dave' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.bot_delivery_result, direction: 'sideways' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.bot_delivery_result, outcome: 'sent' })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.push_send_result, outcome: 'https://push.example.test/ep' })).toBeUndefined();
+  });
+
+  it('PRD·TRD 정본의 enum 값(bot direction{in,out}, push outcome{sent,expired,failed})과 같다', () => {
+    for (const direction of ['in', 'out']) expect(toMetricRecord({ ...VALID.bot_delivery_result, direction })).toBeDefined();
+    for (const outcome of ['sent', 'expired', 'failed']) expect(toMetricRecord({ event: 'push_send_result', outcome })).toBeDefined();
+  });
+
+  it('duration_ms는 구간 하한값만 허용하고(원시 ms 거부) bucketDurationMs가 하한으로 내린다', () => {
+    expect(toMetricRecord({ ...VALID.message_send_result, duration_ms: 251 })).toBeUndefined();
+    expect(toMetricRecord({ ...VALID.bot_delivery_result, duration_ms: 7 })).toBeUndefined();
+    expect([0, 49.9, 50, 99, 250, 999, 1000, 9999, 10000, 1e9].map(bucketDurationMs)).toEqual([0, 0, 50, 50, 250, 500, 1000, 5000, 10000, 10000]);
+    expect([-1, Number.NaN, Number.POSITIVE_INFINITY].map(bucketDurationMs)).toEqual([undefined, undefined, undefined]);
+    for (const edge of DURATION_BUCKETS_MS) expect(bucketDurationMs(edge)).toBe(edge);
+    expect(Object.isFrozen(DURATION_BUCKETS_MS)).toBe(true);
   });
 });
