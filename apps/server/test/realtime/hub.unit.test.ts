@@ -770,4 +770,43 @@ describe('onMessageDelivered(봇 허브 bot_delivery_result in=봇 수신 신호
     await flush(a.conn);
     expect(signals).toEqual([false]);
   });
+
+  it('관찰자(계측)가 throw해도 전달 흐름은 그대로다: message.created는 나가고 sync.required는 없다(SEC R2)', async () => {
+    const t = setup(() => T0, { visibleMessageIds: async (_u, ids) => new Set(ids) }, () => {
+      throw new Error('observer down');
+    });
+    t.join(C1, ALICE);
+    const a = t.connect(ALICE);
+    t.hub.subscribe(a.conn, C1, 0);
+    await flush(a.conn);
+    const m = record(C1);
+    t.messageEvents.created({ changeId: 11, message: m });
+    t.messageEvents.created({ changeId: 12, message: record(C1, { seq: 2 }) });
+    await flush(a.conn);
+    expect(a.socket.sent.map((f) => f.type)).toEqual(['conversation.subscribed', 'message.created', 'message.created']);
+  });
+
+  it('소켓 전송 예외 + 관찰자 예외: 원래 전송 실패대로 sync.required 한 번(관찰자 예외가 바꾸지 않음)', async () => {
+    const t = setup(() => T0, { visibleMessageIds: async (_u, ids) => new Set(ids) }, () => {
+      throw new Error('observer down');
+    });
+    t.join(C1, ALICE);
+    const a = t.connect(ALICE);
+    t.hub.subscribe(a.conn, C1, 0);
+    await flush(a.conn);
+    const original = a.socket.send.bind(a.socket);
+    let failNext = true;
+    Object.assign(a.socket, {
+      send: (data: string) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('socket closed');
+        }
+        original(data);
+      },
+    });
+    t.messageEvents.created({ changeId: 11, message: record(C1) });
+    await flush(a.conn);
+    expect(a.socket.sent.map((f) => f.type)).toEqual(['conversation.subscribed', 'sync.required']);
+  });
 });

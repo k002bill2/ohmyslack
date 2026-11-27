@@ -46,7 +46,7 @@ export interface SecurityOptions {
 }
 
 /** 거부 신호 호출. 관찰자 예외는 응답 경로로 올리지 않는다. */
-function notifyDenied(onDenied: ((request: FastifyRequest, code: string) => void) | undefined, request: FastifyRequest, code: string): void {
+export function notifyDenied(onDenied: ((request: FastifyRequest, code: string) => void) | undefined, request: FastifyRequest, code: string): void {
   try {
     onDenied?.(request, code);
   } catch {

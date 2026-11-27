@@ -246,13 +246,21 @@ export function createHub(deps: HubDeps): Hub {
         if (sub === undefined || changeId <= sub.through) return;
         if (!((await deliverable(conn, conversationId)) && (await visibleTo(conn, messageId)))) return;
         const open = !conn.closed;
+        // 관찰자(계측) 예외는 전달 흐름에 끼어들지 않는다 — 여기서 새면 enqueue가 sync.required를 보낸다(SEC R2).
+        const observe = (delivered: boolean): void => {
+          try {
+            onSent?.(delivered);
+          } catch {
+            // 계측 실패는 전달 결과를 바꾸지 않는다.
+          }
+        };
         try {
           send(conn, frame());
         } catch (error) {
-          onSent?.(false);
+          observe(false);
           throw error;
         }
-        onSent?.(open);
+        observe(open);
       });
     }
   };

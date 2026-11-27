@@ -3,7 +3,7 @@ import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { registerAccessRegistry, type RegisteredRoute } from './http/access.js';
 import { errorBody, toHttpError } from './http/errors.js';
-import { frameworkErrorHandler, normalizeHost, registerRequestGuards, registerResponseHeaders } from './http/security.js';
+import { frameworkErrorHandler, normalizeHost, notifyDenied, registerRequestGuards, registerResponseHeaders } from './http/security.js';
 import { createAuthEvents, type AuthEvents } from './modules/auth/events.js';
 import { createLoginLimiter, type LoginLimiter } from './modules/auth/login-limiter.js';
 import { registerAuthRoutes } from './modules/auth/routes.js';
@@ -180,7 +180,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   app.setErrorHandler((error, request, reply) => {
     const httpError = toHttpError(error);
     if (httpError.statusCode >= 500) logger.log({ event: 'http_error', request_id: request.id, error_code: httpError.code });
-    else onDenied(request, httpError.code);
+    else notifyDenied(onDenied, request, httpError.code);
     return reply.code(httpError.statusCode).send(errorBody(request, httpError.code));
   });
   app.setNotFoundHandler((request, reply) => reply.code(404).send(errorBody(request, 'not_found')));
