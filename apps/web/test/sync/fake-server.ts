@@ -3,7 +3,7 @@ import { createSessionBus } from '../../src/features/sync';
 import { createHttpDataSource, type HttpDataSourceDeps } from '../../src/data/http-source.js';
 import type { SocketLike } from '../../src/data/realtime.js';
 import type { StorageLike } from '../../src/features/sync';
-import { afterAll, afterEach, expect } from 'vitest';
+import { afterAll, afterEach, expect, vi } from 'vitest';
 import { messageWriteResponseSchema } from '../../../../packages/shared/src/messages.js';
 import { createViolationLog } from './contract-guard.js';
 
@@ -50,7 +50,8 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await new Promise((r) => setTimeout(r, 0));
+  // 가짜 타이머가 남은 파일에서는 setTimeout이 돌지 않아 훅이 시간 초과된다 — 그때는 기다리지 않는다.
+  if (!vi.isFakeTimers()) await new Promise((r) => setTimeout(r, 0));
   const error = contractViolations.drain();
   if (error !== null) throw error;
 });
