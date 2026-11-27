@@ -108,6 +108,8 @@ export class FakeServer {
   readonly routes = new Map<string, Handler>();
   autoAck = true;
   autoOpen = true;
+  /** 계약 위반 응답을 의도적으로 보내는 테스트 한정 opt-out(서버 인스턴스는 테스트마다 새로 만든다). */
+  allowWriteContractViolation = false;
 
   constructor() {
     this.on('GET /api/me', () => ({ status: 200, body: { user: { id: ME, email: 'a@x', display_name: 'A', role: 'member' }, csrf_token: 'csrf-1' } }));
@@ -132,7 +134,7 @@ export class FakeServer {
     const reply = this.routes.get(route)?.(url, init) ?? { status: 404 };
     if (reply === 'network') return Promise.reject(new TypeError('Failed to fetch'));
     const violation = checkWriteContract(route, reply);
-    if (violation !== null) contractViolations.push(violation);
+    if (violation !== null && !this.allowWriteContractViolation) contractViolations.push(violation);
     return Promise.resolve(new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status }));
   };
 

@@ -26,6 +26,7 @@ import { createSendController, type PendingMessage, type PostResult } from '../f
 import { adoptAccount, clearCheckpoints, readCheckpoint, writeCheckpoint, type SessionBus, type StorageLike } from '../features/sync';
 import { pushSubscriptionCreatedSchema, pushSubscriptionCreateSchema, vapidPublicKeyResponseSchema } from '../../../../packages/shared/src/push.js';
 import { ATTACHMENT_FILENAME_HEADER } from '../../../../packages/shared/src/attachments.js';
+import { messageWriteResponseSchema } from '../../../../packages/shared/src/messages.js';
 import { createApi, HttpStatusError, isUnreachable, NetworkError, TimeoutError, type FetchLike } from './api.js';
 import { emptyFold, foldDeleted, foldMessage, orderedMessages, type FoldState } from './fold.js';
 import type { Account, ActionResult, ConnectionState, DataSource, ListState, Message, Snapshot, Space } from './index.js';
@@ -73,6 +74,23 @@ export const READ_RETRY_MAX_MS = 30_000;
 type Summary = ConversationsResponse['conversations'][number];
 
 /** 구독 거절(`error` 프레임에 대화 ID가 실린 경우). */
+/**
+ * send·edit 2xx 응답이 shared 계약(`messageWriteResponseSchema`)과 다르다. 서버는 이미 저장했을 수 있어 실패로 단정하지 않고
+ * 응답 없는 실패와 같은 「확인 중」 경로로 보낸다(같은 client_message_id 재시도·sync로 수렴). 원시 응답은 담지 않는다(FR-OPS-03).
+ */
+class ResponseContractError extends Error {
+  constructor() {
+    super('response_contract');
+  }
+}
+
+/** write 응답 런타임 검증 — 위반이면 `ResponseContractError`(고정 코드만). */
+const parseWriteResponse = (body: unknown): MessageWriteResponse => {
+  const parsed = messageWriteResponseSchema.safeParse(body);
+  if (!parsed.success) throw new ResponseContractError();
+  return parsed.data;
+};
+
 class SubscribeRejected extends Error {
   constructor(readonly code: string) {
     super('subscribe rejected');
@@ -485,13 +503,15 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       const mentionIds = mentionsFor.get(req.clientMessageId);
       const attachmentIds = attachmentsFor.get(req.clientMessageId);
       try {
-        const res = await api.post<MessageWriteResponse>(`/api/conversations/${encodeURIComponent(req.conversationId)}/messages`, {
+        const raw = await api.post<unknown>(`/api/conversations/${encodeURIComponent(req.conversationId)}/messages`, {
           client_message_id: req.clientMessageId,
           body: req.body,
           ...(rootId === undefined ? {} : { thread_root_id: rootId }),
           ...(mentionIds === undefined ? {} : { mention_user_ids: mentionIds }),
           ...(attachmentIds === undefined ? {} : { attachment_ids: attachmentIds }),
         });
+        // 계약 위반은 throw → 전송 컨트롤러가 응답 없는 실패와 같이 「확인 중」(unknown)으로 둔다.
+        const res = parseWriteResponse(raw);
         if (!ended) fold = foldView(res.change_id, res.message);
         return { ok: true, messageId: res.message.id };
       } catch (e) {
@@ -1078,6 +1098,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     } catch (e) {
       if (e instanceof TimeoutError) return { ok: false, status: 'network', timedOut: true };
       if (e instanceof NetworkError) return { ok: false, status: 'network' };
+      // 계약 위반 2xx: 서버 동작 여부를 확인하지 못했다(timedOut 문구) — 실패로 단정하지 않는다.
+      if (e instanceof ResponseContractError) return { ok: false, status: 'network', timedOut: true };
       if (e instanceof HttpStatusError) return e.code === undefined ? { ok: false, status: e.status } : { ok: false, status: e.status, code: e.code };
       throw e;
     }
@@ -1328,7 +1350,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     resume,
     editMessage: (messageId, body) =>
       attempt(async () => {
-        const res = await api.patch<MessageWriteResponse>(`/api/messages/${encodeURIComponent(messageId)}`, { body });
+        const res = parseWriteResponse(await api.patch<unknown>(`/api/messages/${encodeURIComponent(messageId)}`, { body }));
         if (!ended) {
           fold = foldView(res.change_id, res.message);
           emit();
