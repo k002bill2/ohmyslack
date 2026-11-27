@@ -40,8 +40,9 @@ export const METRIC_ENUMS = Object.freeze({
   client_state: Object.freeze(['online', 'offline', 'reconnecting', 'resync_error'] as const),
   bot_direction: Object.freeze(['in', 'out'] as const),
   /**
-   * 봇 송수신 결과. in(봇→서버 메시지 생성)은 사람 전송과 같은 sendAs 결과(201 ok·200 멱등 재시도 duplicate·4xx rejected·그 밖 failed),
-   * out(서버→봇 WS 전달)은 소켓 전달 ok·전달 중 예외 failed. 두 방향의 실제 결과 집합의 합집합이다.
+   * 봇 송수신 결과(방향은 봇 관점, ADR-001 "수신(사람→Jarvis)"). out(봇 발신: 봇→서버 메시지 생성)은 사람 전송과 같은 sendAs 결과
+   * (201 ok·200 멱등 재시도 duplicate·4xx rejected·그 밖 failed), in(봇 수신: 서버→봇 WS 전달)은 소켓 전달 ok·전달 중 예외 failed.
+   * 두 방향의 실제 결과 집합의 합집합이다.
    */
   bot_outcome: Object.freeze(['ok', 'duplicate', 'rejected', 'failed'] as const),
   /** push 서비스 응답: 2xx sent, 404·410 expired(구독 삭제), 그 밖·연결 실패 failed(push/service.ts deliver). */

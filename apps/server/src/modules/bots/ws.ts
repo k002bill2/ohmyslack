@@ -62,11 +62,14 @@ function revokeEvents(botEvents: BotEvents | undefined): Pick<AuthEvents, 'onSes
   };
 }
 
-/** 서버 → 봇 새 메시지 전달(out) 계측 입력. 지연 = 전달 시각 - 메시지 생성(커밋) 시각. 식별자·본문은 싣지 않는다. */
-export function botOutMetric(message: MessageRecord, delivered: boolean, now: number): Readonly<Record<string, unknown>> {
+/**
+ * 봇 수신(in: 서버 → 봇 WS 새 메시지 전달) 계측 입력. 방향은 봇 관점(ADR-001 "수신(사람→Jarvis)").
+ * 지연 = 전달 시각 - 메시지 생성(커밋) 시각. 식별자·본문은 싣지 않는다.
+ */
+export function botReceiveMetric(message: MessageRecord, delivered: boolean, now: number): Readonly<Record<string, unknown>> {
   return {
     event: 'bot_delivery_result',
-    direction: 'out',
+    direction: 'in',
     outcome: delivered ? 'ok' : 'failed',
     has_attachment: (message.attachments ?? []).length > 0,
     duration_ms: now - message.createdAt.getTime(),
@@ -78,7 +81,7 @@ export interface BotWsOptions {
   readonly conversations: ConversationsService;
   readonly clock: () => number;
   readonly realtime: BotRealtimeDeps;
-  /** 있으면 서버 → 봇 새 메시지 전달(out)을 `bot_delivery_result`로 기록한다. 지연 = 전달 시각 - 메시지 생성 시각. */
+  /** 있으면 서버 → 봇 새 메시지 전달(봇 수신, in)을 `bot_delivery_result`로 기록한다. 지연 = 전달 시각 - 메시지 생성 시각. */
   readonly metrics?: MetricsRecorder;
 }
 
@@ -103,7 +106,7 @@ export function registerBotRealtime(app: FastifyInstance, options: BotWsOptions)
     ...(metrics === undefined
       ? {}
       : {
-          onMessageDelivered: (message: MessageRecord, delivered: boolean) => metrics.record(botOutMetric(message, delivered, clock())),
+          onMessageDelivered: (message: MessageRecord, delivered: boolean) => metrics.record(botReceiveMetric(message, delivered, clock())),
         }),
   });
   const heartbeatMs = realtime.heartbeatMs ?? WS_HEARTBEAT_MS;

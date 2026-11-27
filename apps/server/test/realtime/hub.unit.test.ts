@@ -732,7 +732,7 @@ describe('FR-CONV-06 채널 삭제 이벤트', () => {
   });
 });
 
-describe('onMessageDelivered(봇 허브 bot_delivery_result out 신호)', () => {
+describe('onMessageDelivered(봇 허브 bot_delivery_result in=봇 수신 신호)', () => {
   it('message.created 프레임을 보내면 delivered=true 한 번, updated·deleted는 신호 없음', async () => {
     const signals: [string, boolean][] = [];
     const t = setup(() => T0, { visibleMessageIds: async (_u, ids) => new Set(ids) }, (m, delivered) => signals.push([m.id, delivered]));

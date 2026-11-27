@@ -3,7 +3,7 @@ import { generateVAPIDKeys } from 'web-push';
 import { describe, expect, it } from 'vitest';
 import { buildBotApp } from '../../src/modules/bots/listener.js';
 import type { BotService } from '../../src/modules/bots/service.js';
-import { botOutMetric } from '../../src/modules/bots/ws.js';
+import { botReceiveMetric } from '../../src/modules/bots/ws.js';
 import type { ConversationsService } from '../../src/modules/conversations/service.js';
 import type { MessageChange } from '../../src/modules/messages/events.js';
 import type { MessagesService, WriteOutcome } from '../../src/modules/messages/service.js';
@@ -13,7 +13,7 @@ import { createPushService, parsePushConfig, type PushSend, type PushStore } fro
 import { HttpError } from '../../src/http/errors.js';
 import type { SyncService } from '../../src/modules/sync/service.js';
 
-/** PRD §10 서버 관찰 이벤트 배선: push_send_result·bot_delivery_result(in/out). 기록기는 실제 검증·버킷팅 + 메모리 저장소. */
+/** PRD §10 서버 관찰 이벤트 배선: push_send_result·bot_delivery_result(봇 관점 in=수신·out=발신). 기록기는 실제 검증·버킷팅 + 메모리 저장소. */
 interface Stored {
   readonly event: string;
   readonly dims: MetricDims;
@@ -118,7 +118,7 @@ describe('bot_delivery_result 배선', () => {
     app.inject({ method: 'POST', url: `/api/bot/v1/conversations/${CONV}/messages`, headers: auth, payload });
   const body = { client_message_id: '00000000-0000-4000-8000-0000000000c1', body: 'OMS-CANARY-BODY-6f1c2a' };
 
-  it('in: 201 ok·200 duplicate·4xx rejected·5xx failed, has_attachment·처리시간 버킷, 본문·ID 없음', async () => {
+  it('out(봇 발신): 201 ok·200 duplicate·4xx rejected·5xx failed, has_attachment·처리시간 버킷, 본문·ID 없음', async () => {
     let now = 0;
     const clock = () => now;
     const { metrics, rows } = capture();
@@ -147,11 +147,11 @@ describe('bot_delivery_result 배선', () => {
     await metrics.idle();
     const dims = rows.map((r) => (r.event === 'bot_delivery_result' ? r.dims : r.event));
     expect(dims).toEqual([
-      { direction: 'in', outcome: 'ok', has_attachment: false, duration_ms: 100 },
-      { direction: 'in', outcome: 'duplicate', has_attachment: true, duration_ms: 0 },
-      { direction: 'in', outcome: 'rejected', has_attachment: false, duration_ms: 0 },
-      { direction: 'in', outcome: 'failed', has_attachment: false, duration_ms: 0 },
-      { direction: 'in', outcome: 'rejected', has_attachment: false, duration_ms: 0 },
+      { direction: 'out', outcome: 'ok', has_attachment: false, duration_ms: 100 },
+      { direction: 'out', outcome: 'duplicate', has_attachment: true, duration_ms: 0 },
+      { direction: 'out', outcome: 'rejected', has_attachment: false, duration_ms: 0 },
+      { direction: 'out', outcome: 'failed', has_attachment: false, duration_ms: 0 },
+      { direction: 'out', outcome: 'rejected', has_attachment: false, duration_ms: 0 },
     ]);
     expect(JSON.stringify(rows)).not.toContain('OMS-CANARY');
     expect(JSON.stringify(rows)).not.toContain(CONV);
@@ -171,15 +171,15 @@ describe('bot_delivery_result 배선', () => {
     expect(responses[0]?.status).toBe(201);
   });
 
-  it('out: botOutMetric는 전달 결과·첨부 유무·생성→전달 지연 버킷만 담는다', async () => {
+  it('in(봇 수신): botReceiveMetric는 전달 결과·첨부 유무·생성→전달 지연 버킷만 담는다', async () => {
     const { metrics, rows } = capture();
     const m = message({ createdAt: new Date(1000) });
-    metrics.record(botOutMetric(m, true, 1000 + 730));
-    metrics.record(botOutMetric({ ...m, attachments: [{} as NonNullable<MessageRecord['attachments']>[number]] }, false, 1000 + 12));
+    metrics.record(botReceiveMetric(m, true, 1000 + 730));
+    metrics.record(botReceiveMetric({ ...m, attachments: [{} as NonNullable<MessageRecord['attachments']>[number]] }, false, 1000 + 12));
     await metrics.idle();
     expect(rows).toEqual([
-      { event: 'bot_delivery_result', dims: { direction: 'out', outcome: 'ok', has_attachment: false, duration_ms: 500 } },
-      { event: 'bot_delivery_result', dims: { direction: 'out', outcome: 'failed', has_attachment: true, duration_ms: 0 } },
+      { event: 'bot_delivery_result', dims: { direction: 'in', outcome: 'ok', has_attachment: false, duration_ms: 500 } },
+      { event: 'bot_delivery_result', dims: { direction: 'in', outcome: 'failed', has_attachment: true, duration_ms: 0 } },
     ]);
   });
 });

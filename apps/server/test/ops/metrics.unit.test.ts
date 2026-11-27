@@ -121,7 +121,7 @@ describe('metrics recorder', () => {
     const store = fakeStore();
     const metrics = createMetricsRecorder({ store, clock: () => T0 });
     metrics.record({ event: 'auth_denied', action: 'api', reason: 'no_session', count: 1 });
-    metrics.record({ event: 'bot_delivery_result', direction: 'in', outcome: 'duplicate', has_attachment: true, duration_ms: 3 });
+    metrics.record({ event: 'bot_delivery_result', direction: 'out', outcome: 'duplicate', has_attachment: true, duration_ms: 3 });
     await metrics.idle();
     for (const row of store.rows) {
       const allowed = METRIC_ALLOWLIST[row.event as keyof typeof METRIC_ALLOWLIST];

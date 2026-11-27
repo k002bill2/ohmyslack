@@ -25,18 +25,21 @@ export interface BotRouteDeps {
   readonly clock?: () => number;
   /** 테스트 전용 관측·배리어(운영 주입 없음). 경쟁 순서를 sleep 없이 고정한다. */
   readonly uploadProbe?: BotUploadProbe;
-  /** 있으면 봇 메시지 생성 결과를 `bot_delivery_result`(direction=in)로 기록한다(PRD §10). */
+  /** 있으면 봇 메시지 생성(봇 발신) 결과를 `bot_delivery_result`(direction=out)로 기록한다(PRD §10). */
   readonly metrics?: MetricsRecorder;
 }
 
-/** 봇 → 서버 수신(in) 계측. 가드(토큰·접근·속도 제한) 전 거부는 sendAs에 닿지 않아 기록하지 않는다. */
-function botInObserver(deps: BotRouteDeps): SendObserver | undefined {
+/**
+ * 봇 발신(out: 봇 → 서버 메시지 생성) 계측. 방향은 봇 관점이다(ADR-001 "수신(사람→Jarvis)", 어댑터 inbound/outbound와 같은 기준).
+ * 가드(토큰·접근·속도 제한) 전 거부는 sendAs에 닿지 않아 기록하지 않는다.
+ */
+function botSendObserver(deps: BotRouteDeps): SendObserver | undefined {
   const metrics = deps.metrics;
   if (metrics === undefined) return undefined;
   return {
     clock: deps.clock ?? Date.now,
     observe: (o) =>
-      metrics.record({ event: 'bot_delivery_result', direction: 'in', outcome: o.outcome, has_attachment: o.hasAttachment, duration_ms: o.durationMs }),
+      metrics.record({ event: 'bot_delivery_result', direction: 'out', outcome: o.outcome, has_attachment: o.hasAttachment, duration_ms: o.durationMs }),
   };
 }
 
@@ -326,7 +329,7 @@ export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): voi
   app.post(
     `${p}conversations/:id/messages`,
     { config, preHandler: [...guarded('conversation', 'write'), threadRootGuard(deps), rateGuard(deps.limiter, 'create')] },
-    (request, reply) => sendAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body, reply, botInObserver(deps)),
+    (request, reply) => sendAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body, reply, botSendObserver(deps)),
   );
   app.patch(`${p}messages/:id`, { config, preHandler: [...guarded('message', 'write'), visibleTargetGuard(deps), rateGuard(deps.limiter, 'edit')] }, (request) =>
     editAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body),
