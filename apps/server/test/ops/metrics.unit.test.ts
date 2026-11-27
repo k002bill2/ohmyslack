@@ -193,7 +193,8 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
     const metrics = createMetricsRecorder({ store, clock: () => T0 });
     for (let i = 0; i < 10_000; i += 1) {
       metrics.record(PUSH(OUTCOMES[i % OUTCOMES.length] ?? 'sent'));
-      if (i % 2500 === 0) await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS);
+      // 첫 주기 flush 시점에 버퍼 키가 3개(sent·expired·failed)여야 행 순차 drain을 판별한다.
+      if (i % 2500 === 2499) await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS);
     }
     void metrics.idle();
     await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 3);
