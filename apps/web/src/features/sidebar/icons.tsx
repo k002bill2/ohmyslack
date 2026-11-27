@@ -101,7 +101,7 @@ export function SettingsIcon() {
   );
 }
 
-/** 내비게이션 접기·펼치기(Lucide `panel-left` 형태). */
+/** 사이드바 접기·펼치기(Lucide `panel-left` 형태). */
 export function PanelLeftIcon() {
   return (
     <svg {...BASE}>

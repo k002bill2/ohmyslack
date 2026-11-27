@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Space } from '../../src/data';
 import { Sidebar } from '../../src/features/sidebar';
 import { CONNECTION_TEXT, ConnectionBanner } from '../../src/features/sync';
-import { APP_NAME } from '../../src/ui/copy.js';
+import { APP_NAME, SIDEBAR_TOGGLE_COPY } from '../../src/ui/copy.js';
 
 afterEach(cleanup);
 
@@ -29,6 +29,15 @@ describe('사이드바 셸(시안 01·04)', () => {
     // 선택 항목 aria-current, 새 답글 표시는 접근 이름 유지.
     expect(within(channels).getByRole('button', { current: 'page' }).dataset['spaceId']).toBe('dev');
     expect(within(channels).getByRole('img', { name: '새 답글 있는 스레드 1개' })).toBeTruthy();
+  });
+
+  it('접기/펼치기 토글의 접근 이름은 정본 「사이드바 접기」/「사이드바 펼치기」(G-31)', () => {
+    const { rerender } = render(<Sidebar spaces={spaces} selectedId={null} collapsed={false} onSelect={() => {}} onToggleCollapse={() => {}} />);
+    expect(screen.getByRole('button', { name: SIDEBAR_TOGGLE_COPY.collapse })).toBeTruthy();
+    expect(SIDEBAR_TOGGLE_COPY.collapse).toBe('사이드바 접기');
+    rerender(<Sidebar spaces={spaces} selectedId={null} collapsed onSelect={() => {}} onToggleCollapse={() => {}} />);
+    expect(screen.getByRole('button', { name: SIDEBAR_TOGGLE_COPY.expand })).toBeTruthy();
+    expect(SIDEBAR_TOGGLE_COPY.expand).toBe('사이드바 펼치기');
   });
 
   it('계정 카드: 표시 이름 + 역할(관리자), 이니셜은 장식(aria-hidden, 텍스트 노드 없음)', () => {

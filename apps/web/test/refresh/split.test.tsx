@@ -105,11 +105,11 @@ describe('셸 통합', () => {
     expect(shell()?.dataset['sidebar']).toBe('expanded');
   });
 
-  it('사이드바 「내비게이션 접기」 → 레일 + 「내비게이션 펼치기」로 복귀', async () => {
+  it('사이드바 「사이드바 접기」 → 레일 + 「사이드바 펼치기」로 복귀', async () => {
     const user = await wide(false);
-    await user.click(screen.getByRole('button', { name: '내비게이션 접기' }));
+    await user.click(screen.getByRole('button', { name: '사이드바 접기' }));
     expect(shell()?.dataset['sidebar']).toBe('collapsed');
-    await user.click(screen.getByRole('button', { name: '내비게이션 펼치기' }));
+    await user.click(screen.getByRole('button', { name: '사이드바 펼치기' }));
     expect(shell()?.dataset['sidebar']).toBe('expanded');
   });
 

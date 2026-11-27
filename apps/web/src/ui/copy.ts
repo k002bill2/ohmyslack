@@ -118,7 +118,7 @@ export const mentionCountLabel = (count: number, cap: number): string =>
 /** G-36 접힌 사이드바 항목 이름 구분자(쉼표+공백). */
 export const COLLAPSED_LABEL_SEPARATOR = ', ';
 
-/** CMP-02 사이드바 토글(G-31). 토글 컴포넌트 미구현 — 상수만. */
+/** CMP-02 사이드바 토글(G-31). Sidebar 헤더·레일 토글이 사용(정본). */
 export const SIDEBAR_TOGGLE_COPY = { collapse: '사이드바 접기', expand: '사이드바 펼치기' } as const;
 
 /** CMP-18 Dialog 제목(G-26) 및 확인 Dialog(G-23·G-24·G-25·G-27). Dialog 미구현 — 상수만. */

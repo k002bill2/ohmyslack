@@ -2,7 +2,7 @@ import { useId, type ReactNode } from 'react';
 import type { Account, ListState, Space } from '../../data';
 import { BotBadge, withBotLabel } from '../../ui/BotBadge.js';
 import { isSplitName, NameParts } from '../../ui/NameParts.js';
-import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, PREFERENCES_COPY, SESSION_LIST_COPY, SIDEBAR_COPY } from '../../ui/copy.js';
+import { APP_NAME, COLLAPSED_LABEL_SEPARATOR, ERROR_COPY, LEFT_CHANNEL_COPY, MEMBER_ADMIN_COPY, PREFERENCES_COPY, SESSION_LIST_COPY, SIDEBAR_COPY, SIDEBAR_TOGGLE_COPY } from '../../ui/copy.js';
 import { ErrorState } from '../../ui/ErrorState.js';
 import { SIDEBAR_SHELL_COPY } from './copy.js';
 import { AppMark, HashIcon, LogOutIcon, MessageSquareIcon, PanelLeftIcon, PlusIcon, SearchIcon, SettingsIcon, UsersIcon } from './icons.js';
@@ -29,7 +29,7 @@ export interface SidebarProps {
   readonly onCreateChannel?: () => void;
   /** R4 「이동…」 버튼 → 공간 전환기(D §7-3 Ctrl/⌘+K). 없으면(compact) 렌더하지 않는다. */
   readonly onOpenSwitcher?: () => void;
-  /** R4 내비게이션 접기/펼치기(wide, §5-2 자동 접힘 중이 아닐 때만). */
+  /** R4 사이드바 접기/펼치기(wide, §5-2 자동 접힘 중이 아닐 때만). */
   readonly onToggleCollapse?: () => void;
   /** 오류 상태 「다시 시도」. */
   readonly onRetryList?: () => void;
@@ -196,7 +196,7 @@ export function Sidebar(props: SidebarProps) {
           <span className={collapsed ? 'visually-hidden' : 'sidebar-app-name'}>{APP_NAME}</span>
         )}
         {props.onToggleCollapse && !collapsed && (
-          <IconAction label={SIDEBAR_SHELL_COPY.collapseNav} onClick={props.onToggleCollapse}>
+          <IconAction label={SIDEBAR_TOGGLE_COPY.collapse} onClick={props.onToggleCollapse}>
             <PanelLeftIcon />
           </IconAction>
         )}
@@ -237,7 +237,7 @@ export function Sidebar(props: SidebarProps) {
       <SpaceListBody {...props} />
       {props.onToggleCollapse && collapsed && (
         <div className="sidebar-expand">
-          <IconAction label={SIDEBAR_SHELL_COPY.expandNav} onClick={props.onToggleCollapse}>
+          <IconAction label={SIDEBAR_TOGGLE_COPY.expand} onClick={props.onToggleCollapse}>
             <PanelLeftIcon />
           </IconAction>
         </div>
