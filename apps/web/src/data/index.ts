@@ -89,7 +89,7 @@ export interface Snapshot {
 }
 
 /** 서버 요청 실패: HTTP 상태(+오류 code) 또는 네트워크 오류. */
-/** `timedOut`: 응답 없음 중 시간 상한 초과(REQUEST_TIMEOUT_MS) — 서버 동작 여부를 확인하지 못했다(`ERROR_COPY.timeout`). */
+/** `timedOut`: 응답 없음 중 시간 상한 초과(REQUEST_TIMEOUT_MS) — 서버 동작 여부를 확인하지 못했다(`ERROR_COPY.timeout`). 또는 2xx 응답이 shared 계약과 달라 결과를 확인하지 못함(`response_contract`). */
 export type ActionFailure = { readonly status: number; readonly code?: string } | { readonly status: 'network'; readonly timedOut?: true };
 
 /** 첨부 업로드 옵션: 문서·텍스트는 원 파일명(`X-Attachment-Filename`, 퍼센트 인코딩)·선언 형식, `signal`은 취소. */
