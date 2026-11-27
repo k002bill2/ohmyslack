@@ -381,8 +381,8 @@ describe('messages 라우트: message_send_result 계측(PRD §10)', () => {
     const rows: MetricDims[] = [];
     const metrics = createMetricsRecorder({
       store: {
-        async increment(_day, event, dims) {
-          if (event === 'message_send_result') rows.push(dims);
+        async add(_day, event, dims, n) {
+          if (event === 'message_send_result') rows.push({ ...dims, n });
         },
         pruneBefore: async () => 0,
       },
@@ -415,11 +415,11 @@ describe('messages 라우트: message_send_result 계측(PRD §10)', () => {
     await metrics.idle();
     const base = { conv_kind: 'channel', duration_ms: 0 };
     expect(rows).toEqual([
-      { ...base, outcome: 'ok', has_thread: false },
-      { ...base, outcome: 'duplicate', has_thread: false },
-      { ...base, outcome: 'rejected', has_thread: false },
-      { ...base, outcome: 'ok', has_thread: true },
-      { ...base, outcome: 'rejected', has_thread: false },
+      { ...base, outcome: 'ok', has_thread: false, n: 1 },
+      { ...base, outcome: 'duplicate', has_thread: false, n: 1 },
+      // 409·400 거부는 같은 dims라 메모리에서 한 행(+2)으로 합산된다.
+      { ...base, outcome: 'rejected', has_thread: false, n: 2 },
+      { ...base, outcome: 'ok', has_thread: true, n: 1 },
     ]);
     expect(JSON.stringify(rows)).not.toContain('OMS-CANARY');
   });

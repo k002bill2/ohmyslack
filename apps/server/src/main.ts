@@ -33,9 +33,9 @@ const pool = createPool({ connectionString: required('DATABASE_URL') }, logger);
 const syncStore = createPgSyncStore(pool);
 // PUSH_VAPID_KEY_FILE·PUSH_VAPID_SUBJECT 미설정·형식 위반이면 push만 비활성(기동 계속, TRD §6-2).
 const pushConfig = loadPushConfig(process.env, logger);
-// 로컬 계측(PRD §10): metric_daily 일 단위 집계. 마이그레이션 0009 전이면 기록·삭제가 실패해도 코드만 로그하고 요청은 그대로다.
+// 로컬 계측(PRD §10): 메모리 합산 → 주기 flush로 metric_daily 일 단위 집계. 마이그레이션 0009 전이면 기록·삭제가 실패해도 코드만 로그하고 요청은 그대로다.
 const metricsStore = createPgMetricsStore(pool);
-const metrics = createMetricsRecorder({ store: metricsStore, clock: Date.now, onError: () => logger.log({ event: 'metric_error', error_code: 'metric_write_failed' }) });
+const metrics = createMetricsRecorder({ store: metricsStore, clock: Date.now, onError: (code) => logger.log({ event: 'metric_error', error_code: code }) });
 const stopMetricRetention = startMetricRetention(metricsStore, Date.now, () => logger.log({ event: 'metric_retention_error', error_code: 'metric_retention_failed' }));
 const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: createPgAuthStore(pool),
   membersStore: createPgMembersStore(pool),
@@ -86,6 +86,8 @@ async function shutdown(): Promise<void> {
   stopRetention?.();
   stopMetricRetention();
   await Promise.allSettled([app.close(), botApp?.close()]);
+  // 남은 요청이 기록한 증분까지 마지막 flush(상한 METRIC_CLOSE_TIMEOUT_MS) — pool을 닫기 전에.
+  await metrics.close();
   await pool.end();
 }
 // 종료 동작을 "close 후 즉시 exit"로 한정한다 — 남은 타이머가 있어도 프로세스가 매달리지 않게(기존 기본 종료와 같은 결과).

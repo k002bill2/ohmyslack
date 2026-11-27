@@ -9,8 +9,8 @@ function capture() {
   const rows: MetricDims[] = [];
   const metrics = createMetricsRecorder({
     store: {
-      async increment(_day, event, dims) {
-        if (event === 'auth_denied') rows.push(dims);
+      async add(_day, event, dims, n) {
+        if (event === 'auth_denied') rows.push({ ...dims, n });
       },
       pruneBefore: async () => 0,
     },
@@ -45,11 +45,11 @@ describe('auth_denied 배선', () => {
     await scenario(metrics);
     await metrics.idle();
     expect(rows).toEqual([
-      { action: 'login', reason: 'bad_credentials', count: 1 },
-      { action: 'session', reason: 'no_session', count: 1 },
-      { action: 'session', reason: 'session_expired', count: 1 },
-      { action: 'session', reason: 'host_not_allowed', count: 1 },
-      { action: 'login', reason: 'origin_rejected', count: 1 },
+      { action: 'login', reason: 'bad_credentials', count: 1, n: 1 },
+      { action: 'session', reason: 'no_session', count: 1, n: 1 },
+      { action: 'session', reason: 'session_expired', count: 1, n: 1 },
+      { action: 'session', reason: 'host_not_allowed', count: 1, n: 1 },
+      { action: 'login', reason: 'origin_rejected', count: 1, n: 1 },
     ]);
     expect(JSON.stringify(rows)).not.toContain('OMS-CANARY');
   });
