@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { markConversationGuard } from '../../http/access.js';
-import { HttpError } from '../../http/errors.js';
+import { HttpError, toHttpError } from '../../http/errors.js';
 import {
   historyQuerySchema,
   HISTORY_LIMIT_MAX,
@@ -20,6 +20,7 @@ import { accountGuard, requireAuth } from '../auth/guards.js';
 import type { AuthService } from '../auth/service.js';
 import { conversationGuard } from '../conversations/routes.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
+import type { MetricsRecorder } from '../ops/metrics.js';
 import type { MessagesService, WriteOutcome } from './service.js';
 import type { MessageRecord, PageRequest } from './store.js';
 
@@ -27,6 +28,25 @@ export interface MessageRouteDeps {
   readonly auth: AuthService;
   readonly conversations: ConversationsService;
   readonly messages: MessagesService;
+  /** 있으면 전송 결과를 `message_send_result`로 기록한다(PRD §10). */
+  readonly metrics?: MetricsRecorder;
+  readonly clock?: () => number;
+}
+
+/** 전송 결과 분류(사람·봇 공용): 201 ok, 200 멱등 재시도 duplicate, 4xx rejected, 그 밖 failed. */
+export type SendOutcome = 'ok' | 'duplicate' | 'rejected' | 'failed';
+
+export interface SendObservation {
+  readonly outcome: SendOutcome;
+  readonly hasThread: boolean;
+  readonly hasAttachment: boolean;
+  readonly durationMs: number;
+}
+
+/** sendAs 결과 관찰자(계측용). observe의 예외는 삼켜 요청 결과를 바꾸지 않는다. */
+export interface SendObserver {
+  readonly clock: () => number;
+  observe(observation: SendObservation): void;
 }
 
 const idParams = z.object({ id: z.uuid() });
@@ -107,8 +127,38 @@ function pageRequest(q: PageQuery): PageRequest {
  * 메시지 처리 본문(사람·봇 라우트 공용, TRD §5-2 6항 "같은 스키마·같은 서비스"). 행위자 id는 호출자가 인증 경계에서 정해 넘긴다.
  * 대화·메시지 접근은 호출자의 assertAccess 가드가 먼저 판정한다.
  */
-export async function sendAs(messages: MessagesService, authorId: string, conversationId: string, rawBody: unknown, reply: FastifyReply): Promise<MessageWriteResponse> {
-  const body = parseOr400(messageCreateRequestSchema, rawBody);
+export async function sendAs(
+  messages: MessagesService,
+  authorId: string,
+  conversationId: string,
+  rawBody: unknown,
+  reply: FastifyReply,
+  observer?: SendObserver,
+): Promise<MessageWriteResponse> {
+  const startedAt = observer?.clock() ?? 0;
+  let flags = { hasThread: false, hasAttachment: false };
+  const report = (outcome: SendOutcome): void => {
+    try {
+      observer?.observe({ outcome, ...flags, durationMs: observer.clock() - startedAt });
+    } catch {
+      // 계측 실패는 전송 결과를 바꾸지 않는다(PRD §10).
+    }
+  };
+  try {
+    const body = parseOr400(messageCreateRequestSchema, rawBody);
+    flags = { hasThread: (body.thread_root_id ?? null) !== null, hasAttachment: (body.attachment_ids ?? []).length > 0 };
+    const response = await sendParsed(messages, authorId, conversationId, body, reply);
+    report(reply.statusCode === 201 ? 'ok' : 'duplicate');
+    return response;
+  } catch (error) {
+    report(toHttpError(error).statusCode < 500 ? 'rejected' : 'failed');
+    throw error;
+  }
+}
+
+type MessageCreateBody = ReturnType<typeof messageCreateRequestSchema.parse>;
+
+async function sendParsed(messages: MessagesService, authorId: string, conversationId: string, body: MessageCreateBody, reply: FastifyReply): Promise<MessageWriteResponse> {
   const outcome = await messages.send(authorId, conversationId, {
     clientMessageId: body.client_message_id,
     body: body.body,
@@ -139,8 +189,25 @@ export async function editAs(messages: MessagesService, editorId: string, messag
   return writeResponse(await messages.edit(editorId, messageId, body.body, body.mention_user_ids ?? []));
 }
 
+/** 사람 전송 계측: conv_kind는 conversationGuard가 판정한 접근 행에서 읽는다(추가 질의 없음). 가드 전 거부는 conv_kind를 몰라 기록하지 않는다. */
+function sendObserver(deps: MessageRouteDeps, request: FastifyRequest): SendObserver | undefined {
+  const metrics = deps.metrics;
+  if (metrics === undefined) return undefined;
+  return {
+    clock: deps.clock ?? Date.now,
+    observe: (o) =>
+      metrics.record({
+        event: 'message_send_result',
+        outcome: o.outcome,
+        conv_kind: request.conversationAccess?.kind,
+        has_thread: o.hasThread,
+        duration_ms: o.durationMs,
+      }),
+  };
+}
+
 const send = (deps: MessageRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<MessageWriteResponse> =>
-  sendAs(deps.messages, requireAuth(request).user.id, pathId(request), request.body, reply);
+  sendAs(deps.messages, requireAuth(request).user.id, pathId(request), request.body, reply, sendObserver(deps, request));
 const history = (deps: MessageRouteDeps, request: FastifyRequest): Promise<HistoryResponse> => historyOf(deps.messages, pathId(request), request.query);
 const replies = (deps: MessageRouteDeps, request: FastifyRequest): Promise<RepliesResponse> => repliesOf(deps.messages, pathId(request), request.query);
 const edit = (deps: MessageRouteDeps, request: FastifyRequest): Promise<MessageWriteResponse> =>

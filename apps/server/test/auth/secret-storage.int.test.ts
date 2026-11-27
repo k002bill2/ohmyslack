@@ -46,7 +46,13 @@ describe('TR-SEC-02 secret storage', () => {
     expect(await bots.verifyToken(botToken)).toBeDefined();
     expect((await c.app.inject({ method: 'GET', url: '/api/me', headers: { host: 'ohmy.test', authorization: `Bearer ${botToken}` } })).statusCode).toBe(401);
 
+    // SEC R3: 401 거부가 metric_daily(auth_denied)에 실제로 기록된 뒤 덤프한다 — 빈 테이블로 통과하지 않게.
+    await c.metrics.idle();
+    const metricRows = await c.schema.pool.query<{ row: string }>('SELECT t::text AS row FROM metric_daily t');
+    expect(metricRows.rows.length).toBeGreaterThanOrEqual(1);
+    expect(metricRows.rows.map((r) => r.row).join('\n')).not.toContain(EMAIL);
     const dump = await dumpAllRows(c.schema.pool);
+    expect(dump).toContain('metric_daily:');
     const logs = c.logs.join('\n');
     for (const marker of [SECRET, token, csrf, INVITE, botToken]) {
       expect(dump).not.toContain(marker);

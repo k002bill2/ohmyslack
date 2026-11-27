@@ -5,8 +5,9 @@ import { HttpError } from '../../http/errors.js';
 import { ATTACHMENT_DOC_MAX_BYTES, historyQuerySchema, messageCreateRequestSchema, readStateRequestSchema, type BotMe, type HistoryResponse, type RepliesResponse, type SnapshotResponse, type SyncResponse } from '../../shared.js';
 import { attachmentCspOnSend, attachmentPathId, downloadAs, registerUploadRoute, uploadAs, type AttachmentsService, type InTxCheck } from '../attachments/index.js';
 import type { AccessAction, ConversationsService } from '../conversations/service.js';
-import { editAs, historyOf, repliesOf, sendAs } from '../messages/routes.js';
+import { editAs, historyOf, repliesOf, sendAs, type SendObserver } from '../messages/routes.js';
 import type { MessagesService } from '../messages/service.js';
+import type { MetricsRecorder } from '../ops/metrics.js';
 import { conversationRefOf, markReadAs, snapshotOf, syncAs } from '../sync/routes.js';
 import type { SyncService } from '../sync/service.js';
 import type { BotRateKind, BotRateLimiter, RateDecision } from './rate-limit.js';
@@ -24,6 +25,22 @@ export interface BotRouteDeps {
   readonly clock?: () => number;
   /** 테스트 전용 관측·배리어(운영 주입 없음). 경쟁 순서를 sleep 없이 고정한다. */
   readonly uploadProbe?: BotUploadProbe;
+  /** 있으면 봇 메시지 생성(봇 발신) 결과를 `bot_delivery_result`(direction=out)로 기록한다(PRD §10). */
+  readonly metrics?: MetricsRecorder;
+}
+
+/**
+ * 봇 발신(out: 봇 → 서버 메시지 생성) 계측. 방향은 봇 관점이다(ADR-001 "수신(사람→Jarvis)", 어댑터 inbound/outbound와 같은 기준).
+ * 가드(토큰·접근·속도 제한) 전 거부는 sendAs에 닿지 않아 기록하지 않는다.
+ */
+function botSendObserver(deps: BotRouteDeps): SendObserver | undefined {
+  const metrics = deps.metrics;
+  if (metrics === undefined) return undefined;
+  return {
+    clock: deps.clock ?? Date.now,
+    observe: (o) =>
+      metrics.record({ event: 'bot_delivery_result', direction: 'out', outcome: o.outcome, has_attachment: o.hasAttachment, duration_ms: o.durationMs }),
+  };
 }
 
 /** 봇 업로드 단계 신호: 입장(onRequest) 통과 → 재판정(preHandler) 완료 → 저장 트랜잭션 안 잠금 획득. */
@@ -312,7 +329,7 @@ export function registerBotRoutes(app: FastifyInstance, deps: BotRouteDeps): voi
   app.post(
     `${p}conversations/:id/messages`,
     { config, preHandler: [...guarded('conversation', 'write'), threadRootGuard(deps), rateGuard(deps.limiter, 'create')] },
-    (request, reply) => sendAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body, reply),
+    (request, reply) => sendAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body, reply, botSendObserver(deps)),
   );
   app.patch(`${p}messages/:id`, { config, preHandler: [...guarded('message', 'write'), visibleTargetGuard(deps), rateGuard(deps.limiter, 'edit')] }, (request) =>
     editAs(deps.messages, requireBot(request).botUserId, pathId(request), request.body),
