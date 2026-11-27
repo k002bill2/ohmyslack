@@ -40,7 +40,7 @@ describe('http-source: 업로드·결속', () => {
     let posted: Record<string, unknown> | undefined;
     server.on(`POST /api/conversations/${CONV}/messages`, (_u, init) => {
       posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return { status: 201, body: { change_id: 1, message: { ...message(1, { author_id: ME, client_message_id: posted.client_message_id, body: posted.body }), author_kind: 'human', attachments: [a] } } };
+      return { status: 201, body: { seq: 1, change_id: 1, mention_user_ids: [], message: { ...message(1, { author_id: ME, client_message_id: posted.client_message_id, body: posted.body }), author_kind: 'human', attachments: [a] } } };
     });
     ds.open?.(CONV);
     await ds.resume?.();

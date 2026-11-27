@@ -6,7 +6,7 @@ import type { UserRecord } from '../../src/modules/auth/store.js';
 import type { ConversationsStore } from '../../src/modules/conversations/store.js';
 import type { MessageChange, MessageDeleted } from '../../src/modules/messages/events.js';
 import type { MessageRecord, MessagesStore, NewMessage, PageRequest } from '../../src/modules/messages/store.js';
-import { HISTORY_LIMIT_MAX, MESSAGE_BODY_MAX, type MessageView } from '../../src/shared.js';
+import { HISTORY_LIMIT_MAX, MESSAGE_BODY_MAX, messageWriteResponseSchema, type MessageView } from '../../src/shared.js';
 import { createMemoryAuthStore, HOST, login, ORIGIN, sessionCookie, testApp } from '../support/auth-app.js';
 
 /** messages 라우트의 HTTP 분기(메모리 저장소). 실DB 트랜잭션·동시성·멱등은 int 테스트가 본다. */
@@ -190,7 +190,8 @@ describe('messages 라우트: 전송', () => {
     const mention = randomUUID();
     const first = await post(app, conv, alice, { client_message_id: key, body: 'hi', mention_user_ids: [mention] });
     expect(first.statusCode).toBe(201);
-    const body = first.json<{ message: MessageView; seq: number; change_id: number; mention_user_ids: string[] }>();
+    // 계약 고정: 201 본문은 웹이 읽는 shared 스키마 그대로여야 한다(DB 없는 단위 테스트에서도).
+    const body = messageWriteResponseSchema.parse(first.json());
     expect(body.message).toMatchObject({
       conversation_id: conv,
       author_id: aliceId,
@@ -206,7 +207,9 @@ describe('messages 라우트: 전송', () => {
     expect(events.created).toHaveLength(1);
     const again = await post(app, conv, alice, { client_message_id: key, body: 'hi', mention_user_ids: [mention] });
     expect(again.statusCode).toBe(200);
-    expect(again.json<{ message: MessageView }>().message.id).toBe(body.message.id);
+    const replayed = messageWriteResponseSchema.parse(again.json());
+    expect(replayed.message.id).toBe(body.message.id);
+    expect(replayed).toMatchObject({ seq: body.seq, mention_user_ids: [mention] });
     expect(events.created).toHaveLength(1);
     expect(fx.msgs.size).toBe(1);
   });
@@ -268,10 +271,10 @@ describe('messages 라우트: 수정·삭제', () => {
     const mention = randomUUID();
     const res = await call(app, 'PATCH', `/api/messages/${m.id}`, alice, { body: 'edited', mention_user_ids: [mention] });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ message: { id: m.id, body: 'edited', edited_at: T0.toISOString() }, mention_user_ids: [mention] });
+    expect(messageWriteResponseSchema.parse(res.json())).toMatchObject({ message: { id: m.id, body: 'edited', edited_at: T0.toISOString() }, mention_user_ids: [mention] });
     expect(events.updated).toHaveLength(1);
     const noMentions = await call(app, 'PATCH', `/api/messages/${m.id}`, alice, { body: 'again' });
-    expect(noMentions.json<{ mention_user_ids: string[] }>().mention_user_ids).toEqual([]);
+    expect(messageWriteResponseSchema.parse(noMentions.json()).mention_user_ids).toEqual([]);
     const forbidden = await call(app, 'PATCH', `/api/messages/${m.id}`, bob, { body: 'x' });
     expect(forbidden.statusCode).toBe(403);
     expect(code(forbidden)).toBe('forbidden');
