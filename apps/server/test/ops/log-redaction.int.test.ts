@@ -9,6 +9,8 @@ import { createPgConversationsStore } from '../../src/modules/conversations/inde
 import { createPgMembersStore } from '../../src/modules/members/index.js';
 import { createPgMessagesStore } from '../../src/modules/messages/index.js';
 import { LOG_ALLOWED_FIELDS, createOpsLogger, type OpsLogger } from '../../src/modules/ops/logger.js';
+import { createMetricsRecorder, type PendingMetricsRecorder } from '../../src/modules/ops/metrics.js';
+import { createPgMetricsStore } from '../../src/modules/ops/metrics-store.js';
 import { createPgSyncStore } from '../../src/modules/sync/index.js';
 import { METRIC_ALLOWLIST } from '../../src/shared.js';
 import { addUser, signIn } from '../auth/members-int-harness.js';
@@ -26,14 +28,17 @@ import { buildZip, docxEntries } from '../attachments/fixtures/zip-builder.js';
  */
 let schema: TestSchema | undefined;
 let app: FastifyInstance | undefined;
+let metrics: PendingMetricsRecorder | undefined;
 const clients: WsClient[] = [];
 
 afterEach(async () => {
   closeAll(clients.splice(0));
   vi.restoreAllMocks();
   await app?.close();
+  await metrics?.close();
   await schema?.drop();
   app = undefined;
+  metrics = undefined;
   schema = undefined;
 });
 
@@ -73,7 +78,10 @@ async function setup(lines: string[]): Promise<{ base: string }> {
   await addUser(schema, 'b@example.test', 'member');
   const port = await freePort();
   const logger = createOpsLogger((line) => lines.push(line));
+  // SEC R3: 운영과 같은 pg 계측 기록기 — 같은 카나리아 흐름이 metric_daily에도 0건인지 함께 판정한다.
+  metrics = createMetricsRecorder({ store: createPgMetricsStore(schema.pool), clock: Date.now });
   app = testApp({
+    metrics,
     extraHosts: [`127.0.0.1:${port}`],
     logger,
     authStore: createPgAuthStore(schema.pool),
@@ -174,6 +182,14 @@ describe('FR-OPS-03 로그 redaction', () => {
       payload: buildZip(docxEntries()),
     });
     expect(mismatch.statusCode).toBe(415);
+
+    // 판정: metric_daily — 거부(auth_denied)·전송(message_send_result)이 실제로 쌓였고 카나리아 0건.
+    await (metrics as PendingMetricsRecorder).idle();
+    const metricRows = (await (schema as TestSchema).pool.query<{ row: string }>('SELECT t::text AS row FROM metric_daily t')).rows.map((r) => r.row);
+    expect(metricRows.some((row) => row.includes('auth_denied'))).toBe(true);
+    expect(metricRows.some((row) => row.includes('message_send_result'))).toBe(true);
+    const metricLeaks = metricRows.flatMap((row) => Object.entries(CANARY).filter(([, value]) => row.includes(value)).map(([kind]) => `${kind}: ${row.slice(0, 120)}`));
+    expect(metricLeaks).toEqual([]);
 
     // 판정: 로그가 실제로 기록됐고, 카나리아 0건, 허용 키만.
     expect(lines.length).toBeGreaterThan(10);

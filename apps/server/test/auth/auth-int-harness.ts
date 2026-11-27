@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import { createPgAuthStore } from '../../src/modules/auth/index.js';
 import { hashPassword } from '../../src/modules/auth/password.js';
 import { createOpsLogger } from '../../src/modules/ops/logger.js';
+import { createMetricsRecorder, type PendingMetricsRecorder } from '../../src/modules/ops/metrics.js';
+import { createPgMetricsStore } from '../../src/modules/ops/metrics-store.js';
 import type { TestSchema } from '../support/test-db.js';
 import { testApp } from '../support/auth-app.js';
 import { migratedSchema } from './bootstrap-harness.js';
@@ -13,6 +15,8 @@ export interface AuthIntContext {
   readonly app: FastifyInstance;
   readonly userId: string;
   readonly logs: string[];
+  /** 운영과 같은 pg 계측 기록기(SEC R3: metric_daily도 카나리아 덤프 대상). 덤프 전에 idle()로 flush한다. */
+  readonly metrics: PendingMetricsRecorder;
   now: number;
 }
 
@@ -25,8 +29,10 @@ export async function setupAuthInt(email: string, secret: string): Promise<AuthI
   );
   const logs: string[] = [];
   const stdout = createOpsLogger();
-  const ctx: AuthIntContext = { schema, userId, logs, now: Date.now(), app: undefined as unknown as FastifyInstance };
+  const metrics = createMetricsRecorder({ store: createPgMetricsStore(schema.pool), clock: Date.now });
+  const ctx: AuthIntContext = { schema, userId, logs, metrics, now: Date.now(), app: undefined as unknown as FastifyInstance };
   const app = testApp({
+    metrics,
     authStore: createPgAuthStore(schema.pool),
     clock: () => ctx.now,
     logger: { log: (fields) => (stdout.log(fields), createOpsLogger((line) => logs.push(line)).log(fields)) },
@@ -36,5 +42,6 @@ export async function setupAuthInt(email: string, secret: string): Promise<AuthI
 
 export async function teardownAuthInt(ctx: AuthIntContext | undefined): Promise<void> {
   await ctx?.app.close();
+  await ctx?.metrics.close();
   await ctx?.schema.drop();
 }
