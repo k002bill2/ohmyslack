@@ -9,6 +9,7 @@ import type { AttachmentsService } from '../attachments/index.js';
 import type { ConversationsService } from '../conversations/service.js';
 import type { MessagesService } from '../messages/service.js';
 import type { OpsLogger } from '../ops/logger.js';
+import { guardedRecorder, type MetricsRecorder } from '../ops/metrics.js';
 import type { SyncService } from '../sync/service.js';
 import { createBotRateLimiter, type BotRateLimiter } from './rate-limit.js';
 import { registerBotRoutes, type BotUploadProbe } from './routes.js';
@@ -35,6 +36,8 @@ export interface BotAppOptions {
   readonly realtime?: BotRealtimeDeps;
   /** 테스트 전용 업로드 단계 신호(운영 주입 없음). */
   readonly uploadProbe?: BotUploadProbe;
+  /** 있으면 봇 송수신 결과를 `bot_delivery_result`로 기록한다(PRD §10). 메인 앱과 같은 기록기. */
+  readonly metrics?: MetricsRecorder;
 }
 
 declare module 'fastify' {
@@ -101,6 +104,7 @@ export function buildBotApp(options: BotAppOptions): FastifyInstance {
     return reply.code(httpError.statusCode).send(errorBody(request, httpError.code));
   });
   app.setNotFoundHandler((request, reply) => reply.code(404).send(errorBody(request, 'not_found')));
+  const metrics = options.metrics === undefined ? undefined : guardedRecorder(options.metrics);
   registerBotRoutes(app, {
     bots: options.bots,
     conversations: options.conversations,
@@ -110,9 +114,16 @@ export function buildBotApp(options: BotAppOptions): FastifyInstance {
     clock,
     ...(options.attachments === undefined ? {} : { attachments: options.attachments }),
     ...(options.uploadProbe === undefined ? {} : { uploadProbe: options.uploadProbe }),
+    ...(metrics === undefined ? {} : { metrics }),
   });
   if (options.realtime !== undefined) {
-    registerBotRealtime(app, { bots: options.bots, conversations: options.conversations, clock, realtime: options.realtime });
+    registerBotRealtime(app, {
+      bots: options.bots,
+      conversations: options.conversations,
+      clock,
+      realtime: options.realtime,
+      ...(metrics === undefined ? {} : { metrics }),
+    });
   }
   return app;
 }

@@ -7,6 +7,7 @@ import type { ConversationsStore } from '../../src/modules/conversations/store.j
 import type { MessageChange, MessageDeleted } from '../../src/modules/messages/events.js';
 import type { MessageRecord, MessagesStore, NewMessage, PageRequest } from '../../src/modules/messages/store.js';
 import { HISTORY_LIMIT_MAX, MESSAGE_BODY_MAX, messageWriteResponseSchema, type MessageView } from '../../src/shared.js';
+import { createMetricsRecorder, type MetricDims, type MetricsRecorder } from '../../src/modules/ops/metrics.js';
 import { createMemoryAuthStore, HOST, login, ORIGIN, sessionCookie, testApp } from '../support/auth-app.js';
 
 /** messages 라우트의 HTTP 분기(메모리 저장소). 실DB 트랜잭션·동시성·멱등은 int 테스트가 본다. */
@@ -141,7 +142,7 @@ async function signIn(app: App, email: string): Promise<Sess> {
   return { token: sessionCookie(res) ?? '', csrf: res.json<{ csrf_token: string }>().csrf_token };
 }
 
-async function setup() {
+async function setup(metrics?: MetricsRecorder) {
   const auth = createMemoryAuthStore();
   const aliceId = randomUUID();
   const bobId = randomUUID();
@@ -155,7 +156,13 @@ async function setup() {
   const conv = randomUUID();
   const members = new Map([[conv, new Set([aliceId, bobId])]]);
   const fx = memoryMessages(members);
-  const app = testApp({ authStore: auth, conversationsStore: memoryConversations(members), messagesStore: fx.store, clock: () => T0.getTime() });
+  const app = testApp({
+    authStore: auth,
+    conversationsStore: memoryConversations(members),
+    messagesStore: fx.store,
+    clock: () => T0.getTime(),
+    ...(metrics === undefined ? {} : { metrics }),
+  });
   const events = { created: [] as MessageChange[], updated: [] as MessageChange[], deleted: [] as MessageDeleted[] };
   app.messageEvents.on('created', (e) => events.created.push(e));
   app.messageEvents.on('updated', (e) => events.updated.push(e));
@@ -366,5 +373,65 @@ describe('messages 라우트: 이력·답글', () => {
         'DELETE /api/messages/:id',
       ]),
     );
+  });
+});
+
+describe('messages 라우트: message_send_result 계측(PRD §10)', () => {
+  function capture() {
+    const rows: MetricDims[] = [];
+    const metrics = createMetricsRecorder({
+      store: {
+        async increment(_day, event, dims) {
+          if (event === 'message_send_result') rows.push(dims);
+        },
+        pruneBefore: async () => 0,
+      },
+      clock: () => T0.getTime(),
+    });
+    return { metrics, rows };
+  }
+
+  async function sends(metrics?: MetricsRecorder) {
+    const t = await setup(metrics);
+    const url = `/api/conversations/${t.conv}/messages`;
+    const key = randomUUID();
+    const first = await call(t.app, 'POST', url, t.alice, { client_message_id: key, body: 'OMS-CANARY-BODY-6f1c2a' });
+    const rootId = first.json<{ message: MessageView }>().message.id;
+    const results = [
+      first,
+      await call(t.app, 'POST', url, t.alice, { client_message_id: key, body: 'OMS-CANARY-BODY-6f1c2a' }),
+      await call(t.app, 'POST', url, t.alice, { client_message_id: key, body: 'other' }),
+      await call(t.app, 'POST', url, t.alice, { client_message_id: randomUUID(), body: 'reply', thread_root_id: rootId }),
+      await call(t.app, 'POST', url, t.alice, { client_message_id: randomUUID(), body: '' }),
+      await call(t.app, 'POST', url, t.eve, { client_message_id: randomUUID(), body: 'x' }),
+    ];
+    await t.app.close();
+    return results.map((r) => ({ status: r.statusCode, code: r.statusCode >= 400 ? code(r) : 'ok' }));
+  }
+
+  it('201 ok·200 duplicate·409/400 rejected, conv_kind·has_thread·duration 버킷, 가드 전 거부(비참여자 404)는 기록 없음', async () => {
+    const { metrics, rows } = capture();
+    await sends(metrics);
+    await metrics.idle();
+    const base = { conv_kind: 'channel', duration_ms: 0 };
+    expect(rows).toEqual([
+      { ...base, outcome: 'ok', has_thread: false },
+      { ...base, outcome: 'duplicate', has_thread: false },
+      { ...base, outcome: 'rejected', has_thread: false },
+      { ...base, outcome: 'ok', has_thread: true },
+      { ...base, outcome: 'rejected', has_thread: false },
+    ]);
+    expect(JSON.stringify(rows)).not.toContain('OMS-CANARY');
+  });
+
+  it('계측 기록기가 throw해도 전송 응답 상태·오류 code는 계측 없을 때와 같다', async () => {
+    const throwing: MetricsRecorder = {
+      record() {
+        throw new Error('metrics down');
+      },
+    };
+    const baseline = await sends();
+    expect(await sends(throwing)).toEqual(baseline);
+    expect(baseline.map((r) => r.status)).toEqual([201, 200, 409, 201, 400, 404]);
   });
 });

@@ -2,6 +2,7 @@ import { HttpError } from '../../http/errors.js';
 import { isAllowedPushEndpoint, PUSH_COALESCE_WINDOW_MS, PUSH_TTL_SECONDS, pushPayloadSchema, type PushPayload, type PushSubscriptionCreate } from '../../shared.js';
 import type { MessageChange } from '../messages/events.js';
 import type { OpsLogger } from '../ops/logger.js';
+import type { MetricsRecorder } from '../ops/metrics.js';
 import type { PushConfig } from './config.js';
 import type { PushContext, PushStore, PushTarget } from './repo.js';
 import { topicOf, vapidDetailsOf, webPushSend, type PushSend } from './sender.js';
@@ -19,6 +20,8 @@ export interface PushServiceDeps extends PushOptions {
   readonly store: PushStore;
   readonly logger: OpsLogger;
   readonly clock: () => number;
+  /** 있으면 전송 결과를 `push_send_result`(outcome만)로 기록한다(PRD §10, endpoint 미기록). */
+  readonly metrics?: MetricsRecorder;
 }
 
 export interface PushService {
@@ -96,6 +99,7 @@ export function createPushService(deps: PushServiceDeps): PushService {
     }
     // endpoint·키·payload는 싣지 않는다(허용 필드만: error_code=결과, status_code=응답 코드).
     logger.log({ event: 'push_send_result', error_code: outcome, status_code: status });
+    deps.metrics?.record({ event: 'push_send_result', outcome });
   };
 
   const notify = async (event: MessageChange, active: PushConfig): Promise<void> => {

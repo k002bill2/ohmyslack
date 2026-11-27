@@ -38,6 +38,22 @@ export function retentionCutoff(now: number): string {
   return metricDay(now - (METRIC_RETENTION_DAYS - 1) * DAY_MS);
 }
 
+/**
+ * 주입된 기록기를 감싸 record의 예외를 삼킨다. 앱·봇 리스너는 받은 기록기를 항상 이것으로 감싼다 —
+ * 어떤 기록기를 주입해도 요청 결과(상태·본문)가 바뀌지 않게(TR-SEC-09 "계측 실패가 메시지 처리를 막지 않음").
+ */
+export function guardedRecorder(recorder: MetricsRecorder): MetricsRecorder {
+  return Object.freeze({
+    record(input: Readonly<Record<string, unknown>>) {
+      try {
+        recorder.record(input);
+      } catch {
+        // 계측 실패는 호출자에게 올리지 않는다.
+      }
+    },
+  });
+}
+
 /** 계측을 끈 기록기(저장소 없는 골격·테스트 기본값). */
 export const noopMetrics: MetricsRecorder = Object.freeze({ record: () => undefined });
 

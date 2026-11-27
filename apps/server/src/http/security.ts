@@ -41,6 +41,17 @@ export interface SecurityOptions {
   readonly allowedOrigin: string;
   /** 정규화된 허용 Host 목록(NC-04). */
   readonly allowedHosts: readonly string[];
+  /** 가드 거부 신호(오류 code: `host_not_allowed`·`origin_rejected`). 계측용 — 응답은 바꾸지 않는다. */
+  readonly onDenied?: (request: FastifyRequest, code: string) => void;
+}
+
+/** 거부 신호 호출. 관찰자 예외는 응답 경로로 올리지 않는다. */
+function notifyDenied(onDenied: ((request: FastifyRequest, code: string) => void) | undefined, request: FastifyRequest, code: string): void {
+  try {
+    onDenied?.(request, code);
+  } catch {
+    // 계측 실패는 응답을 바꾸지 않는다.
+  }
 }
 
 function headerValue(request: FastifyRequest, name: string): string | undefined {
@@ -53,9 +64,13 @@ export function registerRequestGuards(app: FastifyInstance, options: SecurityOpt
   const hosts = new Set(options.allowedHosts);
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
     const host = normalizeHost(headerValue(request, 'host'));
-    if (host === undefined || !hosts.has(host)) return sendError(request, reply, 400, 'host_not_allowed');
+    if (host === undefined || !hosts.has(host)) {
+      notifyDenied(options.onDenied, request, 'host_not_allowed');
+      return sendError(request, reply, 400, 'host_not_allowed');
+    }
     // 등록되지 않은 경로는 Origin과 무관하게 404(라우트 존재를 Origin 검사가 드러내지 않게).
     if (!request.is404 && isStateChanging(request.method) && !isAllowedOrigin(headerValue(request, 'origin'), options.allowedOrigin)) {
+      notifyDenied(options.onDenied, request, 'origin_rejected');
       return sendError(request, reply, 403, 'origin_rejected');
     }
     return undefined;
@@ -115,11 +130,13 @@ export function registerResponseHeaders(app: FastifyInstance): void {
  * Fastify 프레임워크 오류(`FST_ERR_BAD_URL` 등) 처리기(F-5). 이 경로는 onRequest 가드·onSend 훅보다 앞에서 응답되므로
  * Host 허용 목록(NC-04)과 S6 헤더를 여기서 직접 적용한다. 본문은 TRD §3 형식이고 원문 경로·메시지를 싣지 않는다.
  */
-export function frameworkErrorHandler(allowedHosts: readonly string[]) {
+export function frameworkErrorHandler(allowedHosts: readonly string[], onDenied?: (request: FastifyRequest, code: string) => void) {
   const hosts = new Set(allowedHosts);
   return (_error: unknown, request: FastifyRequest, reply: FastifyReply): void => {
     const host = normalizeHost(headerValue(request, 'host'));
     applyResponseHeaders(request, reply);
-    void sendError(request, reply, 400, host !== undefined && hosts.has(host) ? 'invalid_request' : 'host_not_allowed');
+    const code = host !== undefined && hosts.has(host) ? 'invalid_request' : 'host_not_allowed';
+    if (code === 'host_not_allowed') notifyDenied(onDenied, request, code);
+    void sendError(request, reply, 400, code);
   };
 }

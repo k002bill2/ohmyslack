@@ -8,6 +8,8 @@ import { createPgConversationsStore } from './modules/conversations/index.js';
 import { createPgMembersStore } from './modules/members/index.js';
 import { createPgMessagesStore } from './modules/messages/index.js';
 import { createOpsLogger } from './modules/ops/logger.js';
+import { createMetricsRecorder, startMetricRetention } from './modules/ops/metrics.js';
+import { createPgMetricsStore } from './modules/ops/metrics-store.js';
 import { createPgPushStore, loadPushConfig } from './modules/push/index.js';
 import { createPgSyncStore } from './modules/sync/index.js';
 import { resolveWebDistDir } from './static/index.js';
@@ -31,6 +33,10 @@ const pool = createPool({ connectionString: required('DATABASE_URL') }, logger);
 const syncStore = createPgSyncStore(pool);
 // PUSH_VAPID_KEY_FILE·PUSH_VAPID_SUBJECT 미설정·형식 위반이면 push만 비활성(기동 계속, TRD §6-2).
 const pushConfig = loadPushConfig(process.env, logger);
+// 로컬 계측(PRD §10): metric_daily 일 단위 집계. 마이그레이션 0009 전이면 기록·삭제가 실패해도 코드만 로그하고 요청은 그대로다.
+const metricsStore = createPgMetricsStore(pool);
+const metrics = createMetricsRecorder({ store: metricsStore, clock: Date.now, onError: () => logger.log({ event: 'metric_error', error_code: 'metric_write_failed' }) });
+const stopMetricRetention = startMetricRetention(metricsStore, Date.now, () => logger.log({ event: 'metric_retention_error', error_code: 'metric_retention_failed' }));
 const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: createPgAuthStore(pool),
   membersStore: createPgMembersStore(pool),
   conversationsStore: createPgConversationsStore(pool),
@@ -40,6 +46,7 @@ const app = buildApp({ allowedOrigin: required('ALLOWED_ORIGIN'), authStore: cre
   pushStore: createPgPushStore(pool),
   push: pushConfig === undefined ? {} : { config: pushConfig },
   logger,
+  metrics,
   ...(webDistDir === undefined ? {} : { webDistDir }),
 });
 await listenLoopback(app, process.env, port);
@@ -54,6 +61,7 @@ const botApp =
         bots: createBotService({ pool, events: botEvents }),
         ...services,
         logger,
+        metrics,
         realtime: {
           syncStore,
           conversationEvents: app.conversationEvents,
@@ -76,6 +84,7 @@ async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
   stopRetention?.();
+  stopMetricRetention();
   await Promise.allSettled([app.close(), botApp?.close()]);
   await pool.end();
 }

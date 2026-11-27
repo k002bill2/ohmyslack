@@ -42,6 +42,8 @@ export interface HubDeps {
    * 멤버십 변화를 `membership.changed`로 그 사용자 연결에 보낸다. 사람 허브는 주지 않는다(동작 변화 0).
    */
   readonly botScope?: { visibleMessageIds(userId: string, messageIds: readonly string[]): Promise<ReadonlySet<string>> };
+  /** 새 메시지(message.created) 프레임 전달 결과 신호(봇 허브 계측용). 닫힌 연결·전송 예외는 delivered=false. */
+  readonly onMessageDelivered?: (message: MessageRecord, delivered: boolean) => void;
 }
 
 interface Subscription {
@@ -230,13 +232,27 @@ export function createHub(deps: HubDeps): Hub {
   const visibleTo = async (conn: Connection, messageId: string): Promise<boolean> =>
     deps.botScope === undefined || (await deps.botScope.visibleMessageIds(conn.userId, [messageId])).has(messageId);
 
-  const fanoutMessage = (conversationId: string, changeId: number, messageId: string, frame: () => WsServerFrame): void => {
+  const fanoutMessage = (
+    conversationId: string,
+    changeId: number,
+    messageId: string,
+    frame: () => WsServerFrame,
+    onSent?: (delivered: boolean) => void,
+  ): void => {
     for (const conn of conns) {
       if (!conn.subs.has(conversationId)) continue;
       enqueue(conn, async () => {
         const sub = conn.subs.get(conversationId);
         if (sub === undefined || changeId <= sub.through) return;
-        if ((await deliverable(conn, conversationId)) && (await visibleTo(conn, messageId))) send(conn, frame());
+        if (!((await deliverable(conn, conversationId)) && (await visibleTo(conn, messageId)))) return;
+        const open = !conn.closed;
+        try {
+          send(conn, frame());
+        } catch (error) {
+          onSent?.(false);
+          throw error;
+        }
+        onSent?.(open);
       });
     }
   };
@@ -266,7 +282,13 @@ export function createHub(deps: HubDeps): Hub {
 
   const unsubscribers = [
     deps.messageEvents.on('created', (e: MessageChange) =>
-      fanoutMessage(e.message.conversationId, e.changeId, e.message.id, () => messageFrame('message.created', e.changeId, e.message)),
+      fanoutMessage(
+        e.message.conversationId,
+        e.changeId,
+        e.message.id,
+        () => messageFrame('message.created', e.changeId, e.message),
+        deps.onMessageDelivered === undefined ? undefined : (delivered) => deps.onMessageDelivered?.(e.message, delivered),
+      ),
     ),
     deps.messageEvents.on('updated', (e: MessageChange) =>
       fanoutMessage(e.message.conversationId, e.changeId, e.message.id, () => messageFrame('message.updated', e.changeId, e.message)),

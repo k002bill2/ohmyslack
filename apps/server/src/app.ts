@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import cookie from '@fastify/cookie';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { registerAccessRegistry, type RegisteredRoute } from './http/access.js';
 import { errorBody, toHttpError } from './http/errors.js';
 import { frameworkErrorHandler, normalizeHost, registerRequestGuards, registerResponseHeaders } from './http/security.js';
@@ -24,7 +24,10 @@ import { createReadEvents, type ReadEvents } from './modules/sync/events.js';
 import { registerSyncRoutes } from './modules/sync/routes.js';
 import { createSyncService, type SyncService } from './modules/sync/service.js';
 import type { SyncStore } from './modules/sync/store.js';
+import { authDeniedMetric } from './modules/ops/auth-denied.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
+import { guardedRecorder, noopMetrics, type MetricsRecorder } from './modules/ops/metrics.js';
+import { SESSION_COOKIE } from './modules/auth/guards.js';
 import { createPushService, registerPushRoutes, type PushOptions, type PushService, type PushStore } from './modules/push/index.js';
 import { registerRealtime, type RealtimeOptions } from './modules/realtime/index.js';
 import { registerStatic } from './static/index.js';
@@ -57,6 +60,8 @@ export interface AppOptions {
   readonly limiter?: LoginLimiter;
   readonly authEvents?: AuthEvents;
   readonly logger?: OpsLogger;
+  /** 로컬 계측 기록기(PRD §10). 없으면 계측하지 않는다(골격·테스트). */
+  readonly metrics?: MetricsRecorder;
   /** WS 설정 주입(heartbeat 등). syncStore가 있을 때 `/api/ws`를 등록한다. */
   readonly realtime?: RealtimeOptions;
   /** 웹 빌드 산출물 디렉터리(절대 경로). 주어지면 같은 출처로 정적 셸·SPA fallback을 서빙한다(TRD §6). */
@@ -81,6 +86,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'limiter',
   'authEvents',
   'logger',
+  'metrics',
   'realtime',
   'webDistDir',
 ]);
@@ -143,6 +149,12 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   const allowedOrigin = checkOptions(options);
   const clock = options.clock ?? Date.now;
   const logger = options.logger ?? createOpsLogger();
+  const metrics = options.metrics === undefined ? noopMetrics : guardedRecorder(options.metrics);
+  // auth_denied: 등록 라우트 패턴 + 오류 code만 본다(원시 URL·쿠키 값 미사용). 쿠키는 존재 여부만.
+  const onDenied = (request: FastifyRequest, code: string): void => {
+    const input = authDeniedMetric(code, request.routeOptions.url, request.cookies?.[SESSION_COOKIE] !== undefined);
+    if (input !== undefined) metrics.record(input);
+  };
   const authEvents = options.authEvents ?? createAuthEvents();
   const conversationEvents = options.conversationEvents ?? createConversationEvents();
   const messageEvents = options.messageEvents ?? createMessageEvents();
@@ -153,7 +165,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     logger: false,
     genReqId: () => randomUUID(),
     bodyLimit: 64 * 1024,
-    frameworkErrors: frameworkErrorHandler(allowedHosts),
+    frameworkErrors: frameworkErrorHandler(allowedHosts, onDenied),
   });
   const routes = registerAccessRegistry(app);
   app.decorate('accessRoutes', routes);
@@ -162,12 +174,13 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   app.decorate('messageEvents', messageEvents);
   app.decorate('readEvents', readEvents);
   registerLogging(app, logger, clock);
-  registerRequestGuards(app, { allowedOrigin, allowedHosts });
+  registerRequestGuards(app, { allowedOrigin, allowedHosts, onDenied });
   registerResponseHeaders(app);
 
   app.setErrorHandler((error, request, reply) => {
     const httpError = toHttpError(error);
     if (httpError.statusCode >= 500) logger.log({ event: 'http_error', request_id: request.id, error_code: httpError.code });
+    else onDenied(request, httpError.code);
     return reply.code(httpError.statusCode).send(errorBody(request, httpError.code));
   });
   app.setNotFoundHandler((request, reply) => reply.code(404).send(errorBody(request, 'not_found')));
@@ -199,7 +212,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   const push =
     options.authStore === undefined || options.pushStore === undefined
       ? undefined
-      : createPushService({ store: options.pushStore, logger, clock, ...options.push });
+      : createPushService({ store: options.pushStore, logger, clock, metrics, ...options.push });
   app.decorate('pushService', push);
   if (push !== undefined) {
     // 커밋 후 이벤트에서 예약만 한다(메시지 생성 경로는 전송을 기다리지 않는다). 세션 폐기 시 그 기기의 구독을 지운다.
@@ -222,7 +235,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       if (conversations !== undefined) {
         registerConversationRoutes(scope, { auth, conversations });
         if (messages !== undefined) {
-          registerMessageRoutes(scope, { auth, conversations, messages });
+          registerMessageRoutes(scope, { auth, conversations, messages, metrics, clock });
           if (attachments !== undefined) registerAttachmentRoutes(scope, { auth, conversations, attachments, clock });
           if (sync !== undefined && syncStore !== undefined) {
             registerSyncRoutes(scope, { auth, conversations, sync });

@@ -6,6 +6,8 @@ import type { AuthEvents } from '../auth/events.js';
 import type { ConversationEvents } from '../conversations/events.js';
 import type { ConversationsService } from '../conversations/service.js';
 import type { MessageEvents } from '../messages/events.js';
+import type { MessageRecord } from '../messages/store.js';
+import type { MetricsRecorder } from '../ops/metrics.js';
 import { createHub, serveSocket, type Hub, type HubAuth } from '../realtime/index.js';
 import type { ReadEvents } from '../sync/events.js';
 import type { SyncStore } from '../sync/store.js';
@@ -60,11 +62,24 @@ function revokeEvents(botEvents: BotEvents | undefined): Pick<AuthEvents, 'onSes
   };
 }
 
+/** 서버 → 봇 새 메시지 전달(out) 계측 입력. 지연 = 전달 시각 - 메시지 생성(커밋) 시각. 식별자·본문은 싣지 않는다. */
+export function botOutMetric(message: MessageRecord, delivered: boolean, now: number): Readonly<Record<string, unknown>> {
+  return {
+    event: 'bot_delivery_result',
+    direction: 'out',
+    outcome: delivered ? 'ok' : 'failed',
+    has_attachment: (message.attachments ?? []).length > 0,
+    duration_ms: now - message.createdAt.getTime(),
+  };
+}
+
 export interface BotWsOptions {
   readonly bots: BotService;
   readonly conversations: ConversationsService;
   readonly clock: () => number;
   readonly realtime: BotRealtimeDeps;
+  /** 있으면 서버 → 봇 새 메시지 전달(out)을 `bot_delivery_result`로 기록한다. 지연 = 전달 시각 - 메시지 생성 시각. */
+  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -72,7 +87,7 @@ export interface BotWsOptions {
  * (전달 직전 토큰·멤버십 재확인, 멤버십 종료 시 구독 종료, sweep). Origin·Cookie 동봉 업그레이드는 리스너 onRequest가 400.
  */
 export function registerBotRealtime(app: FastifyInstance, options: BotWsOptions): Hub {
-  const { bots, conversations, clock, realtime } = options;
+  const { bots, conversations, clock, realtime, metrics } = options;
   const hub = createHub({
     auth: tokenAuth(bots),
     conversations,
@@ -85,6 +100,11 @@ export function registerBotRealtime(app: FastifyInstance, options: BotWsOptions)
     sweepMs: realtime.sweepMs ?? BOT_WS_SWEEP_MS,
     endReason: BOT_WS_END_REASON,
     botScope: { visibleMessageIds: (userId, ids) => bots.visibleMessageIds(userId, ids) },
+    ...(metrics === undefined
+      ? {}
+      : {
+          onMessageDelivered: (message: MessageRecord, delivered: boolean) => metrics.record(botOutMetric(message, delivered, clock())),
+        }),
   });
   const heartbeatMs = realtime.heartbeatMs ?? WS_HEARTBEAT_MS;
   app.addHook('onClose', async () => hub.dispose());
