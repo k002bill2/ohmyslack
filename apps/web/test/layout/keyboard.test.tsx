@@ -19,10 +19,10 @@ describe('FR-CLIENT-01 키보드', () => {
       const user = userEvent.setup();
       render(<App dataSource={memory()} />);
 
-      // R4: wide는 사이드바 헤더 「내비게이션 접기」가 첫 정류장, 그다음 「이동…」(전환기), 그다음 첫 공간 → Enter.
+      // R4: wide는 사이드바 헤더 「사이드바 접기」가 첫 정류장, 그다음 「이동…」(전환기), 그다음 첫 공간 → Enter.
       await user.tab();
       if (width === 1280) {
-        expect(document.activeElement).toBe(screen.getByRole('button', { name: '내비게이션 접기' }));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: '사이드바 접기' }));
         await user.tab();
       }
       expect(document.activeElement).toBe(screen.getByRole('button', { name: '공간 이동 (Ctrl/⌘+K)' }));

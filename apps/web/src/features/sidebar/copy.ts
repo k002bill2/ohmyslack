@@ -12,7 +12,4 @@ export const SIDEBAR_SHELL_COPY = Object.freeze({
   jump: '이동…',
   jumpKeys: 'Ctrl/⌘ K',
   jumpLabel: '공간 이동 (Ctrl/⌘+K)',
-  /** R4 내비게이션 접기(헤더)·펼치기(레일 아래). */
-  collapseNav: '내비게이션 접기',
-  expandNav: '내비게이션 펼치기',
 });
