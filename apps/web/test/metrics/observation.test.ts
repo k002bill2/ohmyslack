@@ -89,6 +89,49 @@ describe('FR-OPS-03 sync_result 관찰 지점', () => {
     expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'failed', caught_up_count: 0, duration_ms: 0 }]);
   });
 
+  it('서버 불가 1회 뒤 재시도 성공: resume 1번에 sync_result 1건(ok), 소요 시간은 첫 시도부터 잰다', async () => {
+    const r = recorder();
+    let t = 0;
+    let calls = 0;
+    const { server, ds, storage } = setup({ metrics: r.metrics, now: () => t });
+    writeCheckpoint(ME, 0, storage);
+    server.on('GET /api/sync', () => {
+      calls += 1;
+      t = calls * 300;
+      return calls === 1 ? 'network' : syncPage(0);
+    });
+    expect(await ds.resume()).toBe(true);
+    expect(calls).toBe(2);
+    // 시도별로 재면 250(300ms 구간), 첫 시도부터 재면 600ms → 500 구간.
+    expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'ok', caught_up_count: 0, duration_ms: 500 }]);
+  });
+
+  it('서버 불가가 재시도까지 이어지면: resume 1번에 sync_result 1건(failed)', async () => {
+    const r = recorder();
+    const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
+    writeCheckpoint(ME, 0, storage);
+    let calls = 0;
+    server.on('GET /api/sync', () => {
+      calls += 1;
+      return 'network';
+    });
+    expect(await ds.resume()).toBe(false);
+    expect(calls).toBe(2);
+    expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'failed', caught_up_count: 0, duration_ms: 0 }]);
+  });
+
+  it('첫 시도 sync 실패 뒤 재시도가 /api/me에서 실패해도 첫 시도 결과 1건(failed)을 남긴다', async () => {
+    const r = recorder();
+    const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
+    writeCheckpoint(ME, 0, storage);
+    server.on('GET /api/sync', () => {
+      server.on('GET /api/me', () => 'network');
+      return 'network';
+    });
+    expect(await ds.resume()).toBe(false);
+    expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'failed', caught_up_count: 0, duration_ms: 0 }]);
+  });
+
   it('복귀 계기: 전경 복귀 foreground, 「다시 시도」 manual, 1008 재연결 reconnect', async () => {
     const r = recorder();
     const life = lifecycle();

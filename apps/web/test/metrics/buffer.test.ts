@@ -2,8 +2,8 @@
  * 클라이언트 계측 버퍼(PRD §10 2단계, `POST /api/metrics`): 합산·상한·주기/이탈 전송·실패 재합산·메모리 전용.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CLIENT_METRIC_MAX_N, CLIENT_METRIC_MAX_RECORDS } from '../../../../packages/shared/src/metrics.js';
-import { createMetricsBuffer, METRIC_FLUSH_MS, METRIC_MAX_KEYS, type MetricsLifecycle } from '../../src/data/metrics.js';
+import { CLIENT_METRIC_BODY_LIMIT_BYTES, CLIENT_METRIC_MAX_N, CLIENT_METRIC_MAX_RECORDS } from '../../../../packages/shared/src/metrics.js';
+import { createMetricsBuffer, METRIC_FLUSH_MS, METRIC_HIDDEN_BATCHES, METRIC_MAX_KEYS, type MetricsLifecycle } from '../../src/data/metrics.js';
 
 type Call = { readonly url: string; readonly init: RequestInit };
 
@@ -26,6 +26,12 @@ function harness(reply: () => Promise<Response> = () => Promise.resolve(new Resp
 }
 
 const OK_SYNC = { trigger: 'connect', outcome: 'ok', caught_up_count: 2, duration_ms: 100 } as const;
+/** 서로 다른 sync_result dims 조합(4×9×11 = 396개). */
+const SYNC_COMBOS = ['connect', 'reconnect', 'foreground', 'manual'].flatMap((trigger) =>
+  [0, 50, 100, 250, 500, 1000, 2500, 5000, 10000].flatMap((duration_ms) =>
+    [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].map((caught_up_count) => ({ trigger, outcome: 'ok', caught_up_count, duration_ms })),
+  ),
+);
 const settle = async () => {
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
 };
@@ -126,6 +132,50 @@ describe('FR-OPS-03 계측 전송(POST /api/metrics)', () => {
     await settle();
     expect(h.calls).toHaveLength(2);
     expect(h.bodies()[1]).toEqual({ records: [{ event: 'client_state', dims: { state: 'online', count: 1 }, n: 1 }] });
+    dispose();
+  });
+
+  it('pagehide는 키 상한(64키)을 32개씩 2배치로 한꺼번에 keepalive 전송한다 — 각 본문 8KB 이하, 64키 모두 나간다', async () => {
+    const h = harness();
+    const dispose = h.buffer.start(h.lifecycle);
+    const combos = SYNC_COMBOS.slice(0, METRIC_MAX_KEYS);
+    for (const dims of combos) for (let i = 0; i < CLIENT_METRIC_MAX_N; i += 1) h.buffer.record('sync_result', dims);
+    h.win.dispatchEvent(new Event('pagehide'));
+    // 두 요청 모두 이벤트 처리 안에서 시작한다(앞 응답을 기다리지 않음 — 이탈 뒤에도 뒤 배치가 나가게).
+    expect(h.calls).toHaveLength(METRIC_HIDDEN_BATCHES);
+    await settle();
+    expect(h.calls).toHaveLength(2);
+    for (const call of h.calls) {
+      expect(call.init).toMatchObject({ keepalive: true, credentials: 'same-origin' });
+      expect(new TextEncoder().encode(String(call.init.body)).length).toBeLessThanOrEqual(CLIENT_METRIC_BODY_LIMIT_BYTES);
+    }
+    const sent = h.bodies().map((b) => b.records);
+    expect(sent.map((records) => records.length)).toEqual([CLIENT_METRIC_MAX_RECORDS, CLIENT_METRIC_MAX_RECORDS]);
+    expect(sent.flat().map((rec) => rec.dims)).toEqual(combos);
+    expect(sent.flat().every((rec) => rec.n === CLIENT_METRIC_MAX_N)).toBe(true);
+    expect(h.buffer.pending()).toEqual([]);
+    dispose();
+  });
+
+  it('숨김 전송은 배치마다 결과를 따른다 — 5xx 배치만 다시 합치고 성공 배치는 비운다, 4xx 배치는 버린다', async () => {
+    const h = harness();
+    const dispose = h.buffer.start(h.lifecycle);
+    const combos = SYNC_COMBOS.slice(0, METRIC_MAX_KEYS);
+    for (const dims of combos) h.buffer.record('sync_result', dims);
+    const statuses = [503, 202];
+    h.respond.next = () => Promise.resolve(new Response(null, { status: statuses.shift() ?? 202 }));
+    h.doc.visibilityState = 'hidden';
+    h.doc.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+    expect(h.calls).toHaveLength(2);
+    expect(h.buffer.pending().map((p) => p.dims)).toEqual(combos.slice(0, CLIENT_METRIC_MAX_RECORDS));
+    const more = [202, 400];
+    h.respond.next = () => Promise.resolve(new Response(null, { status: more.shift() ?? 202 }));
+    for (const dims of combos.slice(CLIENT_METRIC_MAX_RECORDS)) h.buffer.record('sync_result', dims);
+    h.win.dispatchEvent(new Event('pagehide'));
+    await settle();
+    expect(h.calls).toHaveLength(4);
+    expect(h.buffer.pending()).toEqual([]);
     dispose();
   });
 

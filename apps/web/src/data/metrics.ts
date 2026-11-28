@@ -1,6 +1,6 @@
 /**
- * 클라이언트 계측 버퍼(PRD §10 2단계, TRD `POST /api/metrics`). 같은 (event, dims)를 메모리에서 합산했다가 주기·페이지 이탈 때
- * 한 배치로 보낸다. 디스크(localStorage·IndexedDB 등)에는 전혀 두지 않는다(PRD §10 메모리 전용, B7).
+ * 클라이언트 계측 버퍼(PRD §10 2단계, TRD `POST /api/metrics`). 같은 (event, dims)를 메모리에서 합산했다가 주기(1배치)·페이지 이탈(최대 2배치) 때
+ * 배치로 보낸다. 디스크(localStorage·IndexedDB 등)에는 전혀 두지 않는다(PRD §10 메모리 전용, B7).
  * 기록·전송은 어떤 경우에도 예외를 내지 않는다 — 계측이 sync·전송·화면 결과를 바꾸지 못하게.
  */
 import {
@@ -28,6 +28,11 @@ export const METRIC_FLUSH_MS = 60_000;
  * 넘는 새 키는 버린다 — 메모리가 무한히 늘지 않게.
  */
 export const METRIC_MAX_KEYS = 64;
+/**
+ * 숨김·pagehide 때 한꺼번에 보내는 배치 수: 키 상한 전부(64 = 32×2)가 한 번에 나간다. 배치마다 본문 8KB 이하라
+ * keepalive 동시 전송 합산 한도(64KB) 안이다. 주기 전송은 1배치씩(남은 것은 다음 주기).
+ */
+export const METRIC_HIDDEN_BATCHES = Math.ceil(METRIC_MAX_KEYS / CLIENT_METRIC_MAX_RECORDS);
 
 export interface MetricsLifecycle {
   readonly doc: EventTarget & { readonly visibilityState: string };
@@ -45,7 +50,7 @@ export interface MetricsBufferDeps {
 export interface MetricsBuffer extends MetricsRecorder {
   /** 최대 CLIENT_METRIC_MAX_RECORDS개를 보낸다. 실패(네트워크·5xx)면 다시 합치고 4xx는 버린다. 예외 없음. */
   flush(): Promise<void>;
-  /** 주기 전송·pagehide·visibility hidden 전송을 건다. 반환값은 해제 함수. */
+  /** 주기 전송(1배치)·pagehide·visibility hidden 전송(최대 METRIC_HIDDEN_BATCHES배치)을 건다. 반환값은 해제 함수. */
   start(lifecycle?: MetricsLifecycle): () => void;
   /** 현재 버퍼(테스트·진단용 복사본). */
   pending(): readonly ClientMetricWire[];
@@ -101,18 +106,28 @@ export function createMetricsBuffer(deps: MetricsBufferDeps): MetricsBuffer {
     }
   };
 
-  const flush = async (): Promise<void> => {
+  /**
+   * 최대 `batches`개 배치(각 CLIENT_METRIC_MAX_RECORDS개)를 보낸다. 페이지가 곧 사라질 수 있으므로 모든 요청을 await 전에 함께
+   * 시작한다(앞 응답을 기다렸다 다음을 보내면 이탈 때 뒤 배치가 나가지 못한다). 실패한 배치만 다시 합친다.
+   */
+  const sendBatches = async (batches: number): Promise<void> => {
     try {
       const token = deps.csrfToken();
       if (token === null || buffer.size === 0) return;
-      const all = [...buffer.entries()];
-      const batch = all.slice(0, CLIENT_METRIC_MAX_RECORDS);
-      buffer = new Map(all.slice(CLIENT_METRIC_MAX_RECORDS));
-      if (!(await send(batch.map(([, e]) => e), token))) buffer = mergeInto(buffer, batch.map(([, e]) => e));
+      const all = [...buffer.values()];
+      const taken = all.slice(0, CLIENT_METRIC_MAX_RECORDS * batches);
+      buffer = new Map([...buffer.entries()].slice(taken.length));
+      const chunks = Array.from({ length: Math.ceil(taken.length / CLIENT_METRIC_MAX_RECORDS) }, (_, i) =>
+        taken.slice(i * CLIENT_METRIC_MAX_RECORDS, (i + 1) * CLIENT_METRIC_MAX_RECORDS),
+      );
+      const results = await Promise.all(chunks.map((chunk) => send(chunk, token)));
+      for (const [i, delivered] of results.entries()) if (!delivered) buffer = mergeInto(buffer, chunks[i] ?? []);
     } catch {
       // 계측 실패는 삼킨다.
     }
   };
+  const flush = (): Promise<void> => sendBatches(1);
+  const flushHidden = (): Promise<void> => sendBatches(METRIC_HIDDEN_BATCHES);
 
   return {
     record(event, dims) {
@@ -134,9 +149,9 @@ export function createMetricsBuffer(deps: MetricsBufferDeps): MetricsBuffer {
         if (active) timer = setTimer(tick, METRIC_FLUSH_MS);
       };
       timer = setTimer(tick, METRIC_FLUSH_MS);
-      const onHide = () => void flush();
+      const onHide = () => void flushHidden();
       const onVisibility = () => {
-        if (lifecycle?.doc.visibilityState === 'hidden') void flush();
+        if (lifecycle?.doc.visibilityState === 'hidden') void flushHidden();
       };
       lifecycle?.win.addEventListener('pagehide', onHide);
       lifecycle?.doc.addEventListener('visibilitychange', onVisibility);
