@@ -154,13 +154,13 @@ export interface ClientMetric {
 }
 
 /**
- * 레코드 1개 검증: 클라이언트 3종·n 범위·dims가 toMetricRecord allowlist(키·enum·구간값)를 통과해야 한다.
+ * 레코드 1개 검증: 클라이언트 3종(clientMetricShape의 event enum이 유일한 제한 지점)·n 범위·dims가 toMetricRecord allowlist(키·enum·구간값)를 통과해야 한다.
  * dims에 event 키가 있으면 거부한다(바깥 event를 덮어써 서버 이벤트를 위조하지 못하게). 위반은 undefined. 입력 불변.
  */
 export function toClientMetric(input: unknown): ClientMetric | undefined {
   const shape = clientMetricShape.safeParse(input);
   if (!shape.success || 'event' in shape.data.dims) return undefined;
   const record = toMetricRecord({ ...shape.data.dims, event: shape.data.event });
-  if (record === undefined || !(CLIENT_METRIC_EVENTS as readonly string[]).includes(record.event)) return undefined;
+  if (record === undefined) return undefined;
   return { record, n: shape.data.n };
 }
