@@ -2,7 +2,7 @@ import { Readable, Writable } from 'node:stream';
 import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
 import type pg from 'pg';
 import { migrate } from '../../src/db/migrate.js';
-import { createTestSchema, withClient, type TestSchema } from '../support/test-db.js';
+import { createTestSchema, withClient, type TestSchema, type TestSchemaOptions } from '../support/test-db.js';
 import type { CliIo } from '../../bin/lib/cli.js';
 
 /** bootstrap·reset-password 통합 테스트 공통: 마이그레이션된 실행 스키마 + 캡처되는 CLI 입출력. */
@@ -33,8 +33,8 @@ export function pipedIo(stdinText: string): CapturedIo {
   };
 }
 
-export async function migratedSchema(): Promise<TestSchema> {
-  const schema = await createTestSchema();
+export async function migratedSchema(options: TestSchemaOptions = {}): Promise<TestSchema> {
+  const schema = await createTestSchema(options);
   await withClient(schema.pool, (client) => migrate(client));
   return schema;
 }

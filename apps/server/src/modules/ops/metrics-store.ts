@@ -9,7 +9,7 @@ import { METRIC_STATEMENT_TIMEOUT_MS, type MetricDims, type MetricsStore } from 
  * 쓰기 상한(QA-REPORT-2 v1_hang): 각 쿼리는 자기 트랜잭션 안에서 `statement_timeout`(트랜잭션 로컬, set_config)을
  * 기록기 상한(METRIC_WRITE_TIMEOUT_MS)보다 짧게 건다 — 잠금 대기·느린 문장은 DB가 취소(57014)하므로 기록기가 포기한 행이
  * 나중에 커밋되지 않는다. pool 전역 설정은 바꾸지 않는다(일반 요청 경로 불변).
- * 연결 획득(pool.connect) 대기는 pg 쪽 상한이 없으므로 기록기 상한이 끊고, 늦게 연결을 얻으면 signal을 보고 쓰기 전에 포기한다.
+ * 앱 pool은 connectionTimeoutMillis(5초)로 대기를 끊고, 기록기 상한(5초)도 함께 건다(늦게 연결을 얻으면 signal을 보고 쓰기 전에 포기).
  * 남는 경합: 기록기 상한(연결 대기 포함 5초, METRIC_WRITE_TIMEOUT_MS)이 COMMIT 왕복과 겹치면 — 쿼리 뒤 signal 확인이 상한 전에
  * 통과하고 COMMIT 응답이 상한 뒤에 오면(연결 대기가 길었다면 빠른 COMMIT이어도) — 그 flush의 1행(+n)이 커밋되면서 재합산분과
  * 겹쳐 과대 집계될 수 있다(상한 초과 flush마다 최대 1행).

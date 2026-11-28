@@ -11,7 +11,7 @@ import { createPgSyncStore } from '../../src/modules/sync/index.js';
 import { addUser, signIn, type Session } from '../auth/members-int-harness.js';
 import { migratedSchema } from '../auth/bootstrap-harness.js';
 import { HOST, ORIGIN, testApp } from '../support/auth-app.js';
-import type { TestSchema } from '../support/test-db.js';
+import type { TestSchema, TestSchemaOptions } from '../support/test-db.js';
 
 /** 대화 int 테스트 공통: 워크스페이스 + owner A + 멤버 B·C·L·D, 세 저장소를 모두 연결한 앱. */
 export interface ConvIntContext {
@@ -24,8 +24,11 @@ export interface ConvIntContext {
 export type Method = 'GET' | 'POST' | 'DELETE' | 'HEAD' | 'PUT' | 'PATCH';
 
 /** extra: WS 테스트가 실제 포트 Host·heartbeat를 주입할 때만 쓴다. */
-export async function setupConvInt(extra: Pick<AppOptions, 'extraHosts' | 'realtime' | 'clock' | 'pushStore' | 'push' | 'logger'> = {}): Promise<ConvIntContext> {
-  const schema = await migratedSchema();
+export async function setupConvInt(
+  extra: Pick<AppOptions, 'extraHosts' | 'realtime' | 'clock' | 'pushStore' | 'push' | 'logger'> = {},
+  schemaOptions: TestSchemaOptions = {},
+): Promise<ConvIntContext> {
+  const schema = await migratedSchema(schemaOptions);
   await schema.pool.query("INSERT INTO workspaces (id, name, created_at) VALUES ($1, 'Home', now())", [randomUUID()]);
   const ids = {
     a: await addUser(schema, 'a@example.test', 'owner'),
