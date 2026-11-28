@@ -27,6 +27,20 @@ async function rows(s: TestSchema): Promise<DailyRow[]> {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HUNG = Object.freeze({ code: 'test_bound_exceeded' });
+
+/** 테스트측 상한(기록기 상한 METRIC_WRITE_TIMEOUT_MS보다 짧게): 넘기면 HUNG을 돌려준다. */
+async function bounded<T>(work: Promise<T>, ms = METRIC_WRITE_TIMEOUT_MS / 2): Promise<T | typeof HUNG> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<typeof HUNG>((resolve) => {
+    timer = setTimeout(() => resolve(HUNG), ms);
+  });
+  try {
+    return await Promise.race([work, cap]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const T0 = Date.UTC(2026, 10, 28, 9);
 
 describe('metric_daily (Postgres)', () => {
@@ -83,14 +97,13 @@ describe('metric_daily (Postgres)', () => {
       await locker.query('BEGIN');
       await locker.query("SELECT count FROM metric_daily WHERE event = 'push_send_result' FOR UPDATE");
       // 직접 호출: 잠금 대기가 DB에서 취소된다(기록기 상한 METRIC_WRITE_TIMEOUT_MS보다 훨씬 전에).
-      const started = Date.now();
-      const error: unknown = await store.add('2026-11-28', 'push_send_result', { outcome: 'sent' }, 1).catch((e: unknown) => e);
-      expect((error as { code?: unknown }).code).toBe('57014');
-      expect(Date.now() - started).toBeLessThan(METRIC_WRITE_TIMEOUT_MS);
+      // 테스트측 상한으로 감싸 statement_timeout이 없어도 매달리지 않고 단언으로 실패하게 한다(finally 정리 보장).
+      const error = await bounded(store.add('2026-11-28', 'push_send_result', { outcome: 'sent' }, 1).catch((e: unknown) => e));
+      expect((error as { code?: unknown } | typeof HUNG).code).toBe('57014');
       // 기록기 경로: 실패 → 재합산 + metric_write_failed.
       metrics.record({ event: 'push_send_result', outcome: 'sent' });
       metrics.record({ event: 'push_send_result', outcome: 'sent' });
-      await metrics.idle();
+      expect(await bounded(metrics.idle())).not.toBe(HUNG);
       expect(onError).toHaveBeenCalledWith('metric_write_failed');
     } finally {
       await locker.query('ROLLBACK').catch(() => undefined);
