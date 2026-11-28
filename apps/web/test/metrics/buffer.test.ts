@@ -157,6 +157,16 @@ describe('계측 전송(POST /api/metrics)', () => {
     expect(h.buffer.pending()).toEqual([]);
   });
 
+  it('401·403(세션 만료·CSRF 거부)은 다시 합치지 않고 버린다 — 만료 세션으로 매 주기 재전송하지 않게', async () => {
+    const h = harness();
+    for (const status of [401, 403]) {
+      h.buffer.record('client_state', { state: 'offline', count: 1 });
+      h.respond.next = () => Promise.resolve(new Response(null, { status }));
+      await h.buffer.flush();
+      expect(h.buffer.pending()).toEqual([]);
+    }
+  });
+
   it('재합산도 n 상한(100)을 지킨다', async () => {
     const h = harness(() => Promise.reject(new TypeError('Failed to fetch')));
     for (let i = 0; i < 80; i += 1) h.buffer.record('client_state', { state: 'online', count: 1 });

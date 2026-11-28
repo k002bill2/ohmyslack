@@ -43,7 +43,7 @@ export interface MetricsBufferDeps {
 }
 
 export interface MetricsBuffer extends MetricsRecorder {
-  /** 최대 CLIENT_METRIC_MAX_RECORDS개를 보낸다. 실패(네트워크·400 외 비2xx)면 다시 합친다. 예외 없음. */
+  /** 최대 CLIENT_METRIC_MAX_RECORDS개를 보낸다. 실패(네트워크·5xx)면 다시 합치고 4xx는 버린다. 예외 없음. */
   flush(): Promise<void>;
   /** 주기 전송·pagehide·visibility hidden 전송을 건다. 반환값은 해제 함수. */
   start(lifecycle?: MetricsLifecycle): () => void;
@@ -93,8 +93,9 @@ export function createMetricsBuffer(deps: MetricsBufferDeps): MetricsBuffer {
         headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': token },
         body: JSON.stringify({ records: batch }),
       });
-      // 400: 형식 거부 — 다시 보내도 같다(재전송 루프 방지)이므로 버린다.
-      return res.ok || res.status === 400;
+      // 4xx(400 형식 거부·401 세션 없음·403 CSRF/Origin 거부·413)는 다시 보내도 같다 — 버린다(재전송 루프 방지).
+      // 다시 합치는 것은 네트워크 실패·5xx뿐이다.
+      return res.ok || (res.status >= 400 && res.status < 500);
     } catch {
       return false;
     }
