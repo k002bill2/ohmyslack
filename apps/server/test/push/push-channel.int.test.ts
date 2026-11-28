@@ -89,7 +89,7 @@ describe('FR-CLIENT-05 Web Push — 채널 스레드 봇 답글', () => {
     expect(c.received[0]?.path).toContain('-a-');
   });
 
-  it('봇 원문에 봇이 단 답글은 보내지 않는다(원문 작성자가 봇)', async () => {
+  it('봇 원문에 봇이 단 일반 답글은 보내지 않는다(원문 작성자가 봇, 결정·보고 표식 없음)', async () => {
     const { c, a, b, channel } = await channelWithBot();
     await subscribe(c, a, device('a'));
     await subscribe(c, b, device('b'));
@@ -97,7 +97,7 @@ describe('FR-CLIENT-05 Web Push — 채널 스레드 봇 답글', () => {
     await flush(c);
     c.received.splice(0); // 봇 최상위 원문 자체 알림(채널 멤버 전원)은 push-channel-root.int에서 검사
     c.now += PUSH_COALESCE_WINDOW_MS + 1_000; // 원문 알림이 채운 묶음 창 밖으로 — 답글 판정이 묶음에 가려지지 않게
-    await sendAs(c, c.botUserId, channel, { threadRootId: root, body: APPROVAL });
+    await sendAs(c, c.botUserId, channel, { threadRootId: root, body: '💻 Running git status' });
     await flush(c);
     expect(c.received).toHaveLength(0);
   });
