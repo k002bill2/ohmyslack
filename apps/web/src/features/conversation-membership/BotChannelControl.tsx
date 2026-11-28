@@ -4,7 +4,7 @@ import { settleAction, type ActionFailure, type ActionResult, type Account, type
 import { BOT_CHANNEL_COPY, CANCEL_LABEL } from '../../ui/copy.js';
 import { Dialog } from '../../ui/Dialog.js';
 import { ErrorState } from '../../ui/ErrorState.js';
-import { failureText } from '../spaces';
+import { failureText, prefixedFailureText } from '../spaces';
 
 export interface ChannelBot {
   readonly id: string;
@@ -121,7 +121,7 @@ export function useBotChannelMenu(control: BotChannelControlProps | undefined, s
             ? { key: `bot-remove-${bot.id}`, label: BOT_CHANNEL_COPY.title(bot.displayName), onSelect: () => setRemoving(bot) }
             : { key: `bot-add-${bot.id}`, label: BOT_CHANNEL_COPY.add(bot.displayName), onSelect: () => void add(bot) },
         );
-  const failure = addFailure === null ? null : <ErrorState message={`${BOT_CHANNEL_COPY.addFailed} ${failureText(addFailure)}`} />;
+  const failure = addFailure === null ? null : <ErrorState message={prefixedFailureText(BOT_CHANNEL_COPY.addFailed, BOT_CHANNEL_COPY.addUnconfirmed, addFailure)} />;
   const title = removing === null ? '' : BOT_CHANNEL_COPY.title(removing.displayName);
   const dialog =
     removing === null

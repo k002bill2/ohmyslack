@@ -344,6 +344,8 @@ export const BOT_CHANNEL_COPY = {
   confirm: '제거',
   /** G-47 추가 실패 — 뒤에 원인 1문장(`failureText`)을 붙인다. */
   addFailed: '봇을 추가하지 못했습니다.',
+  /** G-79 시간 초과(결과 미확인) — 단정 접두 대신 이 한 문장만. */
+  addUnconfirmed: '봇 추가 결과를 확인하지 못했습니다.',
 } as const;
 
 /**
@@ -370,6 +372,8 @@ export const ATTACHMENT_COPY = {
   macroExtension: '매크로가 들어 있는 문서입니다. .docm·.xlsm·.pptm 확장자로 저장해 다시 보내 주세요.',
   /** 네트워크·5xx 실패(G-57) — 뒤에 원인 1문장(`failureText`)을 붙인다. */
   uploadFailed: '업로드하지 못했습니다.',
+  /** G-79 시간 초과(결과 미확인) — 단정 접두 대신 이 한 문장만. */
+  uploadUnconfirmed: '업로드 결과를 확인하지 못했습니다.',
   /** 본문 없이 이미지만 보낼 때 채우는 본문(서버는 첨부 메시지도 본문 필수). */
   imageOnlyBody: '[이미지]',
   /** 본문 없이 문서만 보낼 때(G-58). 섞이면 첫 첨부의 형식 문구. */
@@ -480,6 +484,8 @@ export const SESSION_LIST_COPY = {
   confirm: '로그아웃',
   /** G-70 실패 첫 문장(뒤에 원인 1문장). */
   failed: '로그아웃하지 못했습니다.',
+  /** G-79 시간 초과(결과 미확인) — 단정 접두 대신 이 한 문장만. */
+  unconfirmed: '로그아웃 결과를 확인하지 못했습니다.',
   /** G-71 완료 알림(StatusRegion). */
   done: (label: string): string => `${label} 기기를 로그아웃했습니다`,
 } as const;

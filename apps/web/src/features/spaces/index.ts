@@ -2,4 +2,4 @@
 export { ChannelBrowser, type ChannelBrowserProps } from './ChannelBrowser.js';
 export { CreateChannelForm, type CreateChannelFormProps } from './CreateChannelForm.js';
 export { DmStarter, type DmStarterProps } from './DmStarter.js';
-export { failureText, isRetryable } from './failure.js';
+export { failureText, isRetryable, prefixedFailureText } from './failure.js';
