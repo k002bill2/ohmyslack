@@ -1,6 +1,6 @@
 import { buildApp } from './app.js';
 import { listenLoopback, parsePort, resolveListenHost } from './bind.js';
-import { createPool } from './db/pool.js';
+import { appPoolConfig, createPool } from './db/pool.js';
 import { createPgAttachmentsStore, startRetentionTimer } from './modules/attachments/index.js';
 import { createPgAuthStore } from './modules/auth/index.js';
 import { buildBotApp, createBotEvents, createBotService, listenBot, resolveBotPort } from './modules/bots/index.js';
@@ -29,7 +29,8 @@ const botPort = resolveBotPort(process.env, port);
 const webDistDir = resolveWebDistDir(process.env);
 const logger = createOpsLogger();
 // 'error' 처리기 포함: 유휴 연결이 끊겨도(57P01 등) 프로세스를 유지하고 다음 요청은 새 연결을 쓴다.
-const pool = createPool({ connectionString: required('DATABASE_URL') }, logger);
+// 상한(db/pool.ts): 연결 대기·접속 5초, 서버측 idle_in_transaction 30초, TCP keepalive. 전역 statement_timeout 없음.
+const pool = createPool(appPoolConfig({ connectionString: required('DATABASE_URL') }), logger);
 const syncStore = createPgSyncStore(pool);
 // PUSH_VAPID_KEY_FILE·PUSH_VAPID_SUBJECT 미설정·형식 위반이면 push만 비활성(기동 계속, TRD §6-2).
 const pushConfig = loadPushConfig(process.env, logger);

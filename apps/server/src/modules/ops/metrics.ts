@@ -63,7 +63,7 @@ export const METRIC_STATEMENT_TIMEOUT_MS = 3000;
  * 붙잡는다. 검사는 호출 시작 때만 하므로, 기동 시·24시간마다 retention 호출이 겹치면 최대 3개다.
  * 트레이드오프(의도): 포기된 호출이 끝내 정착하지 않으면(RST 없는 죽은 소켓) 2개가 찬 뒤 계측 쓰기가 정지한다. 풀 슬롯 보호를
  * 계측 지속보다 우선한 것이며, 정지 중에도 주기마다 metric_write_failed가 나와 관측된다. 정착하는 순간 다음 주기에 재개한다.
- * 해소책은 pool connectionTimeoutMillis·keepalive 결정(PM 결정 사항)이다. 카운터는 저장소 객체별로 기록기·retention이 공유한다.
+ * 해소: 앱 pool connectionTimeoutMillis(5초, db/pool.ts)로 대기자를 정리하고 keepalive가 죽은 소켓을 끊는다. 카운터는 저장소 객체별로 기록기·retention이 공유한다.
  */
 export const METRIC_MAX_ABANDONED = 2;
 
