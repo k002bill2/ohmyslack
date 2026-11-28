@@ -54,7 +54,7 @@ export const INSTALL_COPY = {
 /** CMP-17 ErrorState 원인 1문장(G-19). */
 export const ERROR_COPY = {
   network: '서버에 연결하지 못했습니다.',
-  timeout: '서버 응답이 늦어 확인하지 못했습니다.',
+  timeout: '처리 결과를 확인하지 못했습니다.',
   server: '서버에 문제가 생겨 처리하지 못했습니다.',
   rateLimited: '요청이 많아 잠시 처리할 수 없습니다.',
   badRequest: '입력 내용을 처리할 수 없습니다. 내용을 확인해 주세요.',
