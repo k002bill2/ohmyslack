@@ -30,7 +30,7 @@ const settle = async () => {
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
 };
 
-describe('계측 버퍼 기록(메모리 합산)', () => {
+describe('FR-OPS-03 계측 버퍼 기록(메모리 합산)', () => {
   it('같은 event+dims는 키 순서와 무관하게 한 레코드로 n을 더하고, 다른 dims는 따로 둔다', () => {
     const { buffer } = harness();
     buffer.record('sync_result', OK_SYNC);
@@ -79,7 +79,7 @@ describe('계측 버퍼 기록(메모리 합산)', () => {
   });
 });
 
-describe('계측 전송(POST /api/metrics)', () => {
+describe('FR-OPS-03 계측 전송(POST /api/metrics)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });

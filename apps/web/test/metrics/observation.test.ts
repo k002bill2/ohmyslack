@@ -38,7 +38,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('sync_result 관찰 지점', () => {
+describe('FR-OPS-03 sync_result 관찰 지점', () => {
   it('첫 연결 catch-up 성공: trigger connect·outcome ok·caught_up_count는 적용한 변경 수의 구간값', async () => {
     const r = recorder();
     const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
@@ -106,7 +106,7 @@ describe('sync_result 관찰 지점', () => {
   });
 });
 
-describe('read_sync_result 관찰 지점', () => {
+describe('FR-OPS-03 read_sync_result 관찰 지점', () => {
   function readWorld(reply: () => unknown) {
     const r = recorder();
     const life = lifecycle();
@@ -147,7 +147,7 @@ describe('read_sync_result 관찰 지점', () => {
   });
 });
 
-describe('client_state 관찰 지점', () => {
+describe('FR-OPS-03 client_state 관찰 지점', () => {
   it('전이마다 1회: online → reconnecting → offline → online(catching-up은 기록하지 않음)', async () => {
     const r = recorder();
     const life = lifecycle();
@@ -171,7 +171,7 @@ describe('client_state 관찰 지점', () => {
   });
 });
 
-describe('계측 격리', () => {
+describe('FR-OPS-03 계측 격리', () => {
   it('기록기가 예외를 던져도 sync 결과·데이터 적용·연결 상태는 그대로다', async () => {
     const record = vi.fn(() => {
       throw new Error('recorder broken');
