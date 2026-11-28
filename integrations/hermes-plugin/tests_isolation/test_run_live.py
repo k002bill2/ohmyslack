@@ -233,6 +233,27 @@ def test_live_e2e_uses_wrapper_not_direct_pytest():
     assert not re.search(r"^\s*export\s+OHMYSLACK_", text, re.M)
 
 
+def test_live_e2e_disables_xtrace_first():
+    """Issue #67-2: live-e2e.sh 는 맨 앞에서 xtrace 를 끈다(정적). 런타임 실측은 사람 --run-live 몫."""
+    with open(LIVE_E2E, encoding="utf-8") as fh:
+        lines = _code_lines(fh.read())
+    unset = [i for i, line in enumerate(lines) if line.strip().startswith("builtin unset BASH_XTRACEFD")]
+    off = [i for i, line in enumerate(lines) if line.strip().startswith(XTRACE_OFF)]
+    assert len(unset) == 1, unset
+    assert len(off) == 1, off
+    assert off[0] == unset[0] + 1, (unset, off)
+    # 첫 실행 구문이 이 두 줄: 앞선 줄은 (shebang·주석 제거 후) 빈 줄뿐.
+    assert all(not line.strip() or line.startswith("#!") for line in lines[:unset[0]])
+    off_i = off[0]
+    after = lines[off_i + 1:]
+    assert _xtrace_on_hits(after) == []
+    for pattern in (r"\bset -a\b", r"BOT_TOKEN=", r"LIVE_COOKIE=", r"LIVE_CSRF=",
+                    r'/bin/bash "\$PLUGIN/scripts/isolated-pytest\.sh" --run-live'):
+        hits = [i for i, line in enumerate(lines) if re.search(pattern, line)]
+        assert hits, pattern
+        assert min(hits) > off_i, (pattern, hits, off_i)
+
+
 def test_live_tests_read_secret_files_and_spawn_nothing():
     """정적: live 두 파일은 토큰을 `_secret`(env 또는 *_FILE)로 읽고, sandbox 에서 막히는 subprocess 를 쓰지 않는다."""
     for name in ("test_live_e2e.py", "test_live_standalone.py"):
