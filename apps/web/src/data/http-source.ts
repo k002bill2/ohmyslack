@@ -510,6 +510,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       // 계측 실패는 무시한다.
     }
   };
+  /** sync_result 전용: dims 계산(구간화·시계)까지 격리 안에서 한다 — 계측 코드가 던져도 sync 흐름은 그대로. */
+  const recordSyncMetric = (trigger: SyncTrigger, outcome: SyncOutcome, changes: number, elapsedMs: () => number) => {
+    try {
+      recorder?.record('sync_result', syncDims(trigger, outcome, changes, elapsedMs()));
+    } catch {
+      // 계측 실패는 무시한다.
+    }
+  };
   let stopMetrics = () => undefined as void;
 
   /**
@@ -933,7 +941,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       if (gen === generation && !syncRecorded) {
         syncRecorded = true;
         syncReport = null;
-        recordMetric('sync_result', syncDims(trigger, outcome, changesApplied, now() - startedAt));
+        recordSyncMetric(trigger, outcome, changesApplied, () => now() - startedAt);
       }
       return watermark;
     } catch (e) {
@@ -1128,7 +1136,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         // 실패 결과는 마지막 시도에서만 기록한다 — 재시도가 세대를 올리므로 앞선 시도의 finally는 여기 오지 않는다.
         const report = syncReport;
         syncReport = null;
-        if (report !== null && !syncRecorded) recordMetric('sync_result', syncDims(trigger, report.outcome, report.changes, report.endedAt - report.startedAt));
+        if (report !== null && !syncRecorded) recordSyncMetric(trigger, report.outcome, report.changes, () => report.endedAt - report.startedAt);
       }
     }
   };

@@ -93,6 +93,22 @@ describe('FR-OPS-03 sync_result 관찰 지점', () => {
     expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'ok', caught_up_count: 0, duration_ms: 0 }]);
   });
 
+  it('sync 성공 뒤 목록 502 → 재시도 sync가 네트워크 오류여도 sync_result는 ok 1건뿐(failed 추가 없음)', async () => {
+    const r = recorder();
+    const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
+    writeCheckpoint(ME, 0, storage);
+    let syncs = 0;
+    server.on('GET /api/sync', () => {
+      syncs += 1;
+      return syncs === 1 ? syncPage(0) : 'network';
+    });
+    server.on('GET /api/conversations', () => ({ status: 502, body: {} }));
+    await ds.resume();
+    await settle();
+    expect(syncs).toBe(2);
+    expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'ok', caught_up_count: 0, duration_ms: 0 }]);
+  });
+
   it('410 → snapshot 재초기화: outcome resync_required', async () => {
     const r = recorder();
     const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
@@ -287,6 +303,21 @@ describe('FR-OPS-03 계측 격리', () => {
     ds.open?.(CONV);
     expect(await ds.resume()).toBe(true);
     expect(record).toHaveBeenCalled();
+    expect(ds.getSnapshot().connection).toBe('connected');
+    expect(ds.getSnapshot().messages.map((m) => m.body)).toEqual(['m1', 'm2']);
+  });
+
+  it('dims 계산(시계)이 던져도 sync 결과·데이터 적용·연결 상태는 그대로다', async () => {
+    const r = recorder();
+    let calls = 0;
+    // 첫 호출(시작 시각)만 정상 — 이후 호출은 BigInt라 `now() - startedAt`이 TypeError. 기록 쪽에서 삼켜져야 한다.
+    const now = (() => (calls++ === 0 ? 0 : (10n as unknown as number))) as () => number;
+    const { server, ds, storage } = setup({ metrics: r.metrics, now });
+    writeCheckpoint(ME, 0, storage);
+    server.on('GET /api/sync', () => syncPage(2));
+    ds.open?.(CONV);
+    expect(await ds.resume()).toBe(true);
+    expect(r.of('sync_result')).toEqual([]);
     expect(ds.getSnapshot().connection).toBe('connected');
     expect(ds.getSnapshot().messages.map((m) => m.body)).toEqual(['m1', 'm2']);
   });
