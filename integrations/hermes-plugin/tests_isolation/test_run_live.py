@@ -241,7 +241,7 @@ def test_live_e2e_disables_xtrace_first():
     off = [i for i, line in enumerate(lines) if line.strip().startswith(XTRACE_OFF)]
     assert len(unset) == 1, unset
     assert len(off) == 1, off
-    assert unset[0] < off[0]
+    assert off[0] == unset[0] + 1, (unset, off)
     # 첫 실행 구문이 이 두 줄: 앞선 줄은 (shebang·주석 제거 후) 빈 줄뿐.
     assert all(not line.strip() or line.startswith("#!") for line in lines[:unset[0]])
     off_i = off[0]

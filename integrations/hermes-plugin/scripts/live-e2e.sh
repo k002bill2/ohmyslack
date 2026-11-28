@@ -8,7 +8,8 @@
 # 비밀(토큰·비밀번호·쿠키·CSRF)은 출력하지 않고 argv에도 싣지 않는다(env·0600 파일만). 호출자 xtrace는 맨 앞에서 끈다.
 # 선택 env: PYTHON(기본 플러그인 .venv/bin/python — 포트·비밀번호 생성 보조용. 테스트 인터프리터·Hermes 경로는 래퍼가 고정).
 # 호출자의 SHELLOPTS=xtrace·BASH_XTRACEFD 가 .env.test 적재·토큰/쿠키 대입을 stderr 에 찍지 않게 맨 앞에서 끈다.
-# unset 이 먼저인 이유는 래퍼(isolated-pytest.sh)와 같다: xtrace 출력 fd 를 먼저 없애 끄는 구문 자체가 새지 않게 한다.
+# unset 이 먼저인 이유는 래퍼(isolated-pytest.sh)와 같다: xtrace 출력 fd 를 먼저 되돌려, 비밀 없는 이 두 줄 이후로는 아무것도 찍히지 않게 한다.
+# 한계(래퍼와 같은 시작 시점 한계): 호출자 BASH_ENV·`builtin`/`unset` 이름의 export 함수·시작 시점 trace 는 되돌릴 수 없다(래퍼와 달리 `unset -f` 정리 없음).
 builtin unset BASH_XTRACEFD 2>/dev/null || true
 builtin set +x +o xtrace 2>/dev/null || true
 set -euo pipefail
