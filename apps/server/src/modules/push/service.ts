@@ -49,8 +49,10 @@ function recipientsOf(event: MessageChange, ctx: PushContext): { readonly everyo
   const message = event.message;
   const userIds = new Set<string>(message.mentionUserIds);
   const fromBot = message.authorKind === 'bot';
-  const notifiesRootAuthor = (ctx.botDm && !fromBot) || (fromBot && isDecisionRequest(message.body));
-  if (notifiesRootAuthor && message.threadRootId !== null && ctx.rootAuthorId !== null) userIds.add(ctx.rootAuthorId);
+  // 결정 요청 판정(본문 스캔)은 스레드 답글일 때만 한다.
+  const isReply = message.threadRootId !== null && ctx.rootAuthorId !== null;
+  const notifiesRootAuthor = isReply && ((ctx.botDm && !fromBot) || (fromBot && isDecisionRequest(message.body)));
+  if (notifiesRootAuthor && ctx.rootAuthorId !== null) userIds.add(ctx.rootAuthorId);
   userIds.delete(message.authorId);
   const everyone = message.threadRootId === null && (ctx.botDm || (ctx.channel && fromBot));
   return { everyone, userIds: [...userIds] };
