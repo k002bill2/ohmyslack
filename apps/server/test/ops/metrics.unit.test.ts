@@ -4,6 +4,7 @@ import {
   METRIC_CLOSE_TIMEOUT_MS,
   METRIC_FLUSH_INTERVAL_MS,
   METRIC_MAX_ABANDONED,
+  METRIC_MAX_CLIENT_KEYS,
   METRIC_MAX_KEYS,
   METRIC_STATEMENT_TIMEOUT_MS,
   METRIC_WRITE_TIMEOUT_MS,
@@ -16,7 +17,17 @@ import {
   type MetricDims,
   type MetricsStore,
 } from '../../src/modules/ops/metrics.js';
-import { METRIC_ALLOWLIST } from '../../src/shared.js';
+import { COUNT_BUCKETS, DURATION_BUCKETS_MS, METRIC_ALLOWLIST, METRIC_ENUMS } from '../../src/shared.js';
+
+/** 서로 다른 sync_result 조합(최대 1980개, SEC V1 카디널리티). */
+function distinctSyncResults(count: number): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const trigger of METRIC_ENUMS.sync_trigger)
+    for (const outcome of METRIC_ENUMS.sync_outcome)
+      for (const caught_up_count of COUNT_BUCKETS)
+        for (const duration_ms of DURATION_BUCKETS_MS) out.push({ event: 'sync_result', trigger, outcome, caught_up_count, duration_ms });
+  return out.slice(0, count);
+}
 
 /** FR-OPS-03·TR-SEC-09: 기록기는 허용 레코드만 버킷팅해 저장하고, 어떤 실패도 호출자에게 올리지 않는다. */
 interface Row {
@@ -388,6 +399,52 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
       { day: '2026-11-28', event: 'push_send_result', dims: { outcome: 'expired' }, n: 1 },
     ]);
     expect(METRIC_MAX_KEYS).toBeGreaterThan(2);
+  });
+
+  it('클라이언트 키로 상한을 채워도 서버 이벤트 새 키는 기록된다(SEC V1·R1)', async () => {
+    const onError = vi.fn();
+    const store = fakeStore();
+    const metrics = createMetricsRecorder({ store, clock: () => T0, onError });
+    for (const r of distinctSyncResults(METRIC_MAX_KEYS + 10)) metrics.record(r);
+    metrics.record({ event: 'auth_denied', action: 'login', reason: 'bad_credentials', count: 1 });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith('metric_client_buffer_full');
+    await metrics.idle();
+    expect(store.rows.filter((r) => r.event === 'sync_result')).toHaveLength(METRIC_MAX_CLIENT_KEYS);
+    expect(store.rows.filter((r) => r.event === 'auth_denied')).toEqual([
+      { day: '2026-11-28', event: 'auth_denied', dims: { action: 'login', reason: 'bad_credentials', count: 1 }, n: 1 },
+    ]);
+    expect(METRIC_MAX_CLIENT_KEYS).toBeLessThan(METRIC_MAX_KEYS);
+  });
+
+  it('DB 장애 중 재합산도 클라이언트 상한을 지켜 서버 이벤트 새 키 자리가 남고, 다음 주기에 클라이언트 몫이 다시 열린다', async () => {
+    const onError = vi.fn();
+    let down = true;
+    const store = fakeStore();
+    const flaky = fakeStore({
+      add: async (day, event, dims, n) => {
+        if (down) throw new Error('db down');
+        await store.add(day, event, dims, n);
+      },
+    });
+    const metrics = createMetricsRecorder({ store: flaky, clock: () => T0, onError });
+    const combos = distinctSyncResults(METRIC_MAX_KEYS + 200);
+    // 장애 중 여러 주기에 걸쳐 클라이언트 새 키를 계속 넣는다(실패분은 재합산돼 버퍼에 남음).
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      for (const r of combos.slice(cycle * 240, cycle * 240 + 240)) metrics.record(r);
+      await metrics.idle();
+    }
+    metrics.record({ event: 'auth_denied', action: 'session', reason: 'forbidden', count: 1 });
+    expect(onError).toHaveBeenCalledWith('metric_client_buffer_full');
+    expect(onError).not.toHaveBeenCalledWith('metric_buffer_full');
+    down = false;
+    await metrics.idle();
+    expect(store.rows.filter((r) => r.event === 'sync_result')).toHaveLength(METRIC_MAX_CLIENT_KEYS);
+    expect(store.rows.filter((r) => r.event === 'auth_denied')).toHaveLength(1);
+    // flush로 버퍼가 비면 클라이언트 키 카운터도 0 — 새 주기에 다시 받는다.
+    metrics.record(combos[METRIC_MAX_KEYS + 100] ?? {});
+    await metrics.idle();
+    expect(store.rows.filter((r) => r.event === 'sync_result')).toHaveLength(METRIC_MAX_CLIENT_KEYS + 1);
   });
 
   it('close: 주기 flush를 멈추고 남은 버퍼를 마지막으로 flush한다', async () => {

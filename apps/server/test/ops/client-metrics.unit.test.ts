@@ -10,8 +10,16 @@ import {
   createClientMetricLimiter,
 } from '../../src/modules/ops/client-metrics.js';
 import { createOpsLogger } from '../../src/modules/ops/logger.js';
-import type { MetricsRecorder } from '../../src/modules/ops/metrics.js';
-import { CLIENT_METRIC_BODY_LIMIT_BYTES, CLIENT_METRIC_MAX_N, CLIENT_METRIC_MAX_RECORDS, meResponseSchema } from '../../src/shared.js';
+import { createMetricsRecorder, METRIC_MAX_KEYS, type MetricsRecorder, type MetricsStore } from '../../src/modules/ops/metrics.js';
+import {
+  CLIENT_METRIC_BODY_LIMIT_BYTES,
+  CLIENT_METRIC_MAX_N,
+  CLIENT_METRIC_MAX_RECORDS,
+  COUNT_BUCKETS,
+  DURATION_BUCKETS_MS,
+  METRIC_ENUMS,
+  meResponseSchema,
+} from '../../src/shared.js';
 import { createMemoryAuthStore, HOST, login, ORIGIN, sessionCookie, testApp } from '../support/auth-app.js';
 import { SESSION_COOKIE } from '../../src/modules/auth/guards.js';
 
@@ -174,5 +182,109 @@ describe('createClientMetricLimiter', () => {
     expect(limiter.take('u', CLIENT_METRIC_MAX_PER_MINUTE - 10)).toBe(CLIENT_METRIC_MAX_PER_MINUTE - 10);
     expect(limiter.take('u', 25)).toBe(10);
     expect(limiter.take('u', 1)).toBe(0);
+  });
+});
+
+/** 서로 다른 sync_result dims(최대 1980개). */
+const SYNC_DIMS: readonly Record<string, unknown>[] = METRIC_ENUMS.sync_trigger.flatMap((trigger) =>
+  METRIC_ENUMS.sync_outcome.flatMap((outcome) =>
+    COUNT_BUCKETS.flatMap((caught_up_count) => DURATION_BUCKETS_MS.map((duration_ms) => ({ trigger, outcome, caught_up_count, duration_ms }))),
+  ),
+);
+
+interface Probe {
+  readonly app: FastifyInstance;
+  readonly users: { readonly token: string; readonly csrf: string }[];
+  readonly rows: { readonly event: string }[];
+  readonly metrics: ReturnType<typeof createMetricsRecorder>;
+  readonly clock: { now: number };
+  readonly store: { down: boolean };
+}
+
+/** SEC 프로브 축약판: 실제 기록기(주기 flush 1시간 — 한 세대를 결정적으로 재현) + 사용자 여러 명. */
+async function setupProbe(userCount: number): Promise<Probe> {
+  const authStore = createMemoryAuthStore();
+  for (let i = 0; i < userCount; i += 1) {
+    const id = `33333333-3333-4333-8333-${String(i).padStart(12, '0')}`;
+    authStore.users.set(id, { id, emailNorm: `p${i}@ohmy.test`, displayName: `P${i}`, kind: 'human', passwordHash: hash, status: 'active', role: 'member' });
+  }
+  const rows: { event: string }[] = [];
+  const state = { down: false };
+  const metricsStore: MetricsStore = {
+    async add(_day, event) {
+      if (state.down) throw new Error('db down');
+      rows.push({ event });
+    },
+    async pruneBefore() {
+      return 0;
+    },
+  };
+  const clock = { now: Date.UTC(2026, 10, 28, 9) };
+  const metrics = createMetricsRecorder({ store: metricsStore, clock: () => clock.now, flushIntervalMs: 60 * 60 * 1000 });
+  app = testApp({ authStore, clock: () => clock.now, metrics });
+  const users: { token: string; csrf: string }[] = [];
+  for (let i = 0; i < userCount; i += 1) {
+    const res = await login(app, `p${i}@ohmy.test`, SECRET);
+    expect(res.statusCode).toBe(200);
+    users.push({ token: sessionCookie(res) ?? '', csrf: meResponseSchema.parse(res.json()).csrf_token });
+  }
+  await metrics.idle();
+  rows.length = 0;
+  return { app, users, rows, metrics, clock, store: state };
+}
+
+function probePost(p: Probe, user: { token: string; csrf: string }, records: unknown[], csrf = user.csrf) {
+  return p.app.inject({
+    method: 'POST',
+    url: '/api/metrics',
+    headers: { host: HOST, origin: ORIGIN, cookie: `${SESSION_COOKIE}=${user.token}`, 'x-csrf-token': csrf, 'content-type': 'application/json' },
+    payload: JSON.stringify({ records }),
+  });
+}
+
+/** 사용자 한 명이 한 창에 서로 다른 키 64개(n=1)를 32개씩 두 번 보낸다. */
+async function sendKeys(p: Probe, user: { token: string; csrf: string }, dims: readonly Record<string, unknown>[]): Promise<void> {
+  for (let i = 0; i < dims.length; i += CLIENT_METRIC_MAX_RECORDS) {
+    const res = await probePost(p, user, dims.slice(i, i + CLIENT_METRIC_MAX_RECORDS).map((d) => ({ event: 'sync_result', dims: d, n: 1 })));
+    expect(res.statusCode).toBe(202);
+  }
+}
+
+describe('SEC V1 프로브(클라이언트 계측이 서버 auth_denied 자리를 빼앗지 못함)', () => {
+  it('A: 여러 사용자가 한 flush 세대에 상한보다 많은 새 키를 보내도 뒤이은 auth_denied는 기록된다', async () => {
+    const p = await setupProbe(3);
+    let next = 0;
+    for (let w = 0; w < 6; w += 1) {
+      for (const user of p.users) {
+        await sendKeys(p, user, SYNC_DIMS.slice(next, next + 64));
+        next += 64;
+      }
+      p.clock.now += CLIENT_METRIC_WINDOW_MS;
+    }
+    expect(next).toBeGreaterThan(METRIC_MAX_KEYS);
+    const first = p.users[0];
+    if (first === undefined) throw new Error('no user');
+    expect((await probePost(p, first, [], `${first.csrf}x`)).statusCode).toBe(403);
+    await p.metrics.idle();
+    expect(p.rows.filter((r) => r.event === 'auth_denied')).toHaveLength(1);
+  });
+
+  it('B: DB 장애 중 버퍼를 채운 뒤 복구돼도 장애 중 auth_denied는 기록된다', async () => {
+    const p = await setupProbe(1);
+    const user = p.users[0];
+    if (user === undefined) throw new Error('no user');
+    p.store.down = true;
+    let next = 0;
+    for (let w = 0; w < 18; w += 1) {
+      await sendKeys(p, user, SYNC_DIMS.slice(next, next + 64));
+      next += 64;
+      p.clock.now += CLIENT_METRIC_WINDOW_MS;
+      await p.metrics.idle();
+    }
+    expect(next).toBeGreaterThan(METRIC_MAX_KEYS);
+    expect((await probePost(p, user, [], `${user.csrf}x`)).statusCode).toBe(403);
+    p.store.down = false;
+    await p.metrics.idle();
+    expect(p.rows.filter((r) => r.event === 'auth_denied')).toHaveLength(1);
   });
 });
