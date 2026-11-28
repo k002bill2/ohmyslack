@@ -4,7 +4,7 @@ import type { MessageChange } from '../messages/events.js';
 import type { OpsLogger } from '../ops/logger.js';
 import type { MetricsRecorder } from '../ops/metrics.js';
 import type { PushConfig } from './config.js';
-import { isDecisionRequest } from './decision.js';
+import { shouldPushBotReply } from './decision.js';
 import type { PushContext, PushStore, PushTarget } from './repo.js';
 import { topicOf, vapidDetailsOf, webPushSend, type PushSend } from './sender.js';
 
@@ -41,7 +41,8 @@ type Outcome = 'sent' | 'expired' | 'failed';
 
 /**
  * ① Jarvis DM 새 원문 → 모든 멤버, Jarvis DM 사람 답글 → 원문 작성자 ② 채널 최상위 봇 게시 → 채널 사람 멤버 전원
- * ③ 봇 스레드 답글(DM·채널) → 결정 요청(isDecisionRequest)일 때만 원문 작성자 ④ 멘션 대상.
+ * ③ 봇 스레드 답글(DM·채널) → 결정 요청·브리핑·점검 보고(shouldPushBotReply)일 때만: 원문 작성자가 사람이면 그 사람,
+ *   봇(날짜별 브리핑 스레드)이면 대화 사람 멤버 전원 ④ 멘션 대상.
  * 사람이 채널에 쓴 글(최상위·답글)은 멘션만. 진행 표시·일반 답변 같은 봇 답글은 멘션이 없으면 보내지 않는다.
  * 작성자·봇 원문 작성자는 저장소 질의에서 제외한다.
  */
@@ -49,12 +50,14 @@ function recipientsOf(event: MessageChange, ctx: PushContext): { readonly everyo
   const message = event.message;
   const userIds = new Set<string>(message.mentionUserIds);
   const fromBot = message.authorKind === 'bot';
-  // 결정 요청 판정(본문 스캔)은 스레드 답글일 때만 한다.
+  // 결정·보고 판정(본문 스캔)은 봇 스레드 답글일 때만 한다.
   const isReply = message.threadRootId !== null && ctx.rootAuthorId !== null;
-  const notifiesRootAuthor = isReply && ((ctx.botDm && !fromBot) || (fromBot && isDecisionRequest(message.body)));
+  const notableBotReply = isReply && fromBot && shouldPushBotReply(message.body);
+  const botRoot = ctx.rootAuthorKind === 'bot';
+  const notifiesRootAuthor = isReply && ((ctx.botDm && !fromBot) || (notableBotReply && !botRoot));
   if (notifiesRootAuthor && ctx.rootAuthorId !== null) userIds.add(ctx.rootAuthorId);
   userIds.delete(message.authorId);
-  const everyone = message.threadRootId === null && (ctx.botDm || (ctx.channel && fromBot));
+  const everyone = message.threadRootId === null ? ctx.botDm || (ctx.channel && fromBot) : notableBotReply && botRoot;
   return { everyone, userIds: [...userIds] };
 }
 

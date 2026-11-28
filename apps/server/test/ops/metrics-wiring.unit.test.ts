@@ -64,7 +64,7 @@ describe('push_send_result 배선(push/service deliver)', () => {
     if (config === undefined) throw new Error('VAPID 설정 생성 실패');
     const target = { id: randomUUID(), userId: randomUUID(), endpoint: 'https://web.push.apple.com/OMS-CANARY-PUSHEP-2a9c71', p256dh: 'p', auth: 'a' };
     const store = {
-      context: () => Promise.resolve({ botDm: false, channel: true, rootAuthorId: null }),
+      context: () => Promise.resolve({ botDm: false, channel: true, rootAuthorId: null, rootAuthorKind: null }),
       targets: () => Promise.resolve([target]),
       isLive: () => Promise.resolve(true),
       markSuccess: () => Promise.resolve(),
