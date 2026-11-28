@@ -37,7 +37,8 @@ function intLogFreshness(reportsDir: string): string | undefined {
   const logPath = join(reportsDir, relative('reports', INT_LOG_FILE));
   if (!existsSync(logPath)) return `${INT_LOG_FILE} 가 없습니다(test:int 로그 없음)`;
   const resultPath = join(reportsDir, relative('reports', INT_RESULT_FILE));
-  if (existsSync(resultPath) && statSync(resultPath).mtimeMs > statSync(logPath).mtimeMs) {
+  if (!existsSync(resultPath)) return `마지막 int 실행 결과(${INT_RESULT_FILE})가 없어 로그 신선도를 판정할 수 없습니다`;
+  if (statSync(resultPath).mtimeMs > statSync(logPath).mtimeMs) {
     return `${INT_LOG_FILE} 가 마지막 int 실행(${INT_RESULT_FILE})보다 오래됐습니다`;
   }
   return undefined;

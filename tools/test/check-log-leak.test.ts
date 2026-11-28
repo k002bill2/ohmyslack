@@ -7,9 +7,10 @@ import { run } from '../check-log-leak.ts';
 import { captureCtx } from './helpers.ts';
 
 /** reports/int 아래 로그를 만든다. test:int 래퍼 로그(test-int.log)는 따로 주지 않으면 깨끗한 내용으로 둔다. */
-function reportsRoot(logs: Record<string, string> | null, withIntLog = true): string {
+function reportsRoot(logs: Record<string, string> | null, withIntLog = true, withResult = true): string {
   const root = mkdtempSync(join(tmpdir(), 'logleak-'));
   mkdirSync(join(root, 'reports'));
+  if (withResult) writeFileSync(join(root, 'reports/vitest-int.json'), '{}'); // 로그보다 먼저 써서 로그가 더 새롭다
   const all = withIntLog ? { 'test-int.log': 'GET /api/healthz 200\n[test:int] exit=0\n', ...logs } : logs;
   if (all !== null) {
     for (const [rel, body] of Object.entries(all)) {
@@ -55,6 +56,12 @@ describe('check-log-leak', () => {
     const ctx = captureCtx(reportsRoot(null, false), {});
     expect(await run([], ctx)).toBe(1);
     expect(ctx.lines.join('\n')).toContain('reports/int/test-int.log 가 없습니다');
+  });
+
+  it('fails (1) when the int result file is missing (freshness undeterminable)', async () => {
+    const ctx = captureCtx(reportsRoot(null, true, false), {});
+    expect(await run([], ctx)).toBe(1);
+    expect(ctx.lines.join('\n')).toContain('로그 신선도를 판정할 수 없습니다');
   });
 
   it('fails (1) when only other logs exist (test:int wrapper log missing)', async () => {
