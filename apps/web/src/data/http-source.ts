@@ -34,6 +34,8 @@ import { createRealtimeClient, type SocketLike } from './realtime.js';
 import { probeMark } from '../measure/hook.js';
 import { AUTHOR_NAME_COPY } from '../ui/copy.js';
 import { lookupUserNames } from './user-names.js';
+import { bucketCount, bucketDurationMs, type METRIC_ENUMS } from '../../../../packages/shared/src/metrics.js';
+import { createMetricsBuffer, type MetricDims, type MetricsRecorder } from './metrics.js';
 
 export interface HttpDataSourceDeps {
   readonly fetch: FetchLike;
@@ -47,6 +49,10 @@ export interface HttpDataSourceDeps {
   readonly clearTimer?: (handle: unknown) => void;
   /** 전경 복귀(`visibilitychange`)·`online`/`offline` 이벤트 대상. 없으면 수동 resume만. */
   readonly lifecycle?: { readonly doc: EventTarget & { readonly visibilityState: string }; readonly win: EventTarget };
+  /** 계측 기록기(PRD §10 2단계). 없으면 메모리 버퍼(`data/metrics.ts`)를 만들어 `start()`에서 주기·이탈 전송을 건다. */
+  readonly metrics?: MetricsRecorder;
+  /** 계측 소요 시간 시계(ms). 없으면 `performance.now`. */
+  readonly now?: () => number;
 }
 
 export interface HttpDataSource extends DataSource {
@@ -72,6 +78,15 @@ export const READ_RETRY_BASE_MS = 1000;
 export const READ_RETRY_MAX_MS = 30_000;
 
 type Summary = ConversationsResponse['conversations'][number];
+type SyncTrigger = (typeof METRIC_ENUMS.sync_trigger)[number];
+type SyncOutcome = (typeof METRIC_ENUMS.sync_outcome)[number];
+
+/** 화면 연결 상태 → 계측 client_state. `catching-up`은 복귀 절차의 중간 단계라 기록하지 않는다. */
+const CLIENT_STATE: Readonly<Partial<Record<ConnectionState, string>>> = Object.freeze({
+  connected: 'online',
+  offline: 'offline',
+  reconnecting: 'reconnecting',
+});
 
 /**
  * send·edit 2xx 응답이 shared 계약(`messageWriteResponseSchema`)과 다르다. 서버는 이미 저장했을 수 있어 실패로 단정하지 않고
@@ -424,6 +439,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const setConnection = (next: ConnectionState) => {
     if (connection === next) return;
     connection = next;
+    const state = CLIENT_STATE[next];
+    if (state !== undefined) recordMetric('client_state', { state, count: 1 });
     emit();
   };
 
@@ -460,6 +477,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     // 진행 중인 오프라인 재전송 루프가 남은 항목을 보내지 않게(Codex r1 P2).
     sendController.reset();
     unlisted = new Map();
+    stopMetrics();
     checkpoint = null;
     clearCheckpoints(storage);
     emit();
@@ -473,9 +491,26 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       failures = ok ? 0 : failures + 1;
       if (failures >= OFFLINE_AFTER_FAILURES) setConnection('offline');
       // C7: 끊김 중 일반 요청이 서버 응답을 받으면 복귀 절차(따라잡기)를 시작한다 — 끊김에서 바로 연결됨으로 가지 않는다(F-8, Codex r1 P2).
-      else if (ok && connection === 'offline' && !resuming && !ended && isOnline()) void resume();
+      else if (ok && connection === 'offline' && !resuming && !ended && isOnline()) void resume('foreground');
     },
   });
+
+  /**
+   * 기본 계측 버퍼: 메모리 전용, 전송은 api 요청 경로(끊김 판정·401 종료)와 분리된 keepalive fetch(`data/metrics.ts`).
+   * 주기 타이머는 전역 타이머를 쓴다 — 주입 타이머(`deps.setTimer`: 재연결 백오프·읽음 묶음)의 순서에 끼어들지 않게.
+   */
+  const metricsBuffer = deps.metrics === undefined ? createMetricsBuffer({ fetch: deps.fetch, csrfToken: () => api.csrfToken() }) : undefined;
+  const recorder: MetricsRecorder | undefined = deps.metrics ?? metricsBuffer;
+  const now = deps.now ?? (() => performance.now());
+  /** 계측 격리: 기록기 예외가 sync·전송·화면 결과를 바꾸지 못하게 삼킨다(기록은 버퍼링만, 전송은 비동기). */
+  const recordMetric: MetricsRecorder['record'] = (event, dims) => {
+    try {
+      recorder?.record(event, dims);
+    } catch {
+      // 계측 실패는 무시한다.
+    }
+  };
+  let stopMetrics = () => undefined as void;
 
   /**
    * G-52 경합: DM 전송이 403이면 상대가 비활성화됐을 수 있다 — 상대를 다시 조회해 비활성으로 확인될 때만 반영(작성기 잠김).
@@ -624,7 +659,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         emit();
         return;
       case 'sync.required':
-        void resume();
+        void resume('reconnect');
         return;
       case 'read.updated':
         applyRead(frame.conversation_id, frame.thread_root_id, frame.last_read_seq);
@@ -635,7 +670,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
           acks.get(frame.conversation_id)?.reject(new SubscribeRejected(frame.code));
           acks.delete(frame.conversation_id);
         }
-        if (frame.code === 'cursor_expired') void resume();
+        if (frame.code === 'cursor_expired') void resume('reconnect');
         return;
       default:
         return;
@@ -716,7 +751,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     createSocket: deps.createSocket,
     onFrame,
     onOpen: () => {
-      if (!resuming && !ended) void resume();
+      if (!resuming && !ended) void resume('reconnect');
       opened?.();
     },
     onClose: ({ policy }) => {
@@ -725,7 +760,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       background = new Set();
       sendController.wsClosed();
       // 1008: 세션 종료 가능성 — 복귀 절차의 `GET /api/me`가 401이면 end(), 200이면 소켓 재연결·catch-up·구독(UI_STATES C9, Codex r3 P2).
-      if (policy) void resume();
+      if (policy) void resume('reconnect');
       else if (inCatchUp) closedInCatchUp = true;
       else if (connection !== 'offline') setConnection('reconnecting');
     },
@@ -750,7 +785,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     sendController.messageCreated({ conversationId: m.conversation_id, authorId: '', clientMessageId: m.client_message_id }, m.id);
   };
 
+  /** 이번 sync 구간에 접은 변경 수(계측 caught_up_count). `syncPhase`가 시작 때 0으로 되돌린다. */
+  let changesApplied = 0;
   const foldChanges = (res: SyncResponse) => {
+    changesApplied += res.changes.length;
     for (const c of res.changes) {
       fold = foldView(c.change_id, c.message);
       confirmOwn(c.message);
@@ -863,7 +901,34 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     }
   };
 
-  const runResume = async (gen: number): Promise<boolean> => {
+  /**
+   * catch-up(checkpoint 없음 → snapshot, 410 → snapshot 재초기화) 1회와 sync_result 계측. 다른 복귀·종료가 끼어들었으면(gen)
+   * 결과가 아니므로 기록하지 않는다. 410 뒤 재초기화까지 실패하면 client_state resync_error도 남긴다.
+   */
+  const syncPhase = async (gen: number, trigger: SyncTrigger, saved: number | null): Promise<number> => {
+    const startedAt = now();
+    changesApplied = 0;
+    let resynced = false;
+    let outcome: SyncOutcome = 'ok';
+    try {
+      try {
+        return saved === null ? await snapshotProcedure() : await catchUp(saved);
+      } catch (e) {
+        if (!(e instanceof HttpStatusError) || e.status !== 410) throw e;
+        resynced = true;
+        outcome = 'resync_required';
+        return await snapshotProcedure();
+      }
+    } catch (e) {
+      if (resynced && gen === generation) recordMetric('client_state', { state: 'resync_error', count: 1 });
+      outcome = e instanceof TimeoutError ? 'timeout' : 'failed';
+      throw e;
+    } finally {
+      if (gen === generation) recordMetric('sync_result', syncDims(trigger, outcome, changesApplied, now() - startedAt));
+    }
+  };
+
+  const runResume = async (gen: number, trigger: SyncTrigger): Promise<boolean> => {
     const me = await api.get<MeResponse>('/api/me');
     if (gen !== generation) return false;
     api.setCsrf(me.csrf_token);
@@ -875,14 +940,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     await loadMembers();
     if (gen !== generation) return false;
     realtime.start();
-    const saved = readCheckpoint(userId, storage);
-    let watermark: number;
-    try {
-      watermark = saved === null ? await snapshotProcedure() : await catchUp(saved);
-    } catch (e) {
-      if (!(e instanceof HttpStatusError) || e.status !== 410) throw e;
-      watermark = await snapshotProcedure();
-    }
+    const watermark = await syncPhase(gen, trigger, readCheckpoint(userId, storage));
     await loadList();
     if (gen !== generation) return false;
     emit();
@@ -935,6 +993,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       const key = readKey(item.conversationId, item.rootId);
       if (item.seq <= readFloor(item.conversationId, item.rootId)) continue;
       readSent = new Map(readSent).set(key, item.seq);
+      const startedAt = now();
       api
         .put<ReadStateResponse>('/api/read-state', {
           conversation_id: item.conversationId,
@@ -944,10 +1003,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         .then(
           (res) => {
             if (ended) return;
+            // 서버는 max로 병합한다 — 보낸 값보다 낮게 돌아오면 저장 위치가 어긋난 것(mismatch). 높으면 다른 기기 위치라 정상.
+            recordMetric('read_sync_result', { outcome: res.last_read_seq < item.seq ? 'mismatch' : 'ok', duration_ms: bucketDurationMs(now() - startedAt) });
             readFailures = 0;
             applyRead(res.conversation_id, res.thread_root_id, res.last_read_seq);
           },
           (e: unknown) => {
+            if (!ended) recordMetric('read_sync_result', { outcome: 'failed', duration_ms: bucketDurationMs(now() - startedAt) });
             const transient = e instanceof NetworkError || (e instanceof HttpStatusError && e.status >= 500);
             if (!transient || ended) return;
             // 네트워크 오류·5xx: 보낸 기록을 되돌리고 대기열에 다시 넣은 뒤 백오프 재시도를 예약한다(Codex r1 P2-2·3). 4xx는 버린다.
@@ -1015,7 +1077,8 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     if (closed && connection === 'catching-up' && !realtime.isOpen()) setConnection('reconnecting');
   };
 
-  const resume = async (retried = false): Promise<boolean> => {
+  /** `trigger`: sync_result 계측의 복귀 계기. 생략하면 첫 연결(`start()`·직접 호출). */
+  const resume = async (trigger: SyncTrigger = 'connect', retried = false): Promise<boolean> => {
     if (ended) return false;
     generation += 1;
     const gen = generation;
@@ -1023,7 +1086,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     inCatchUp = true;
     setConnection(connection === 'offline' && !isOnline() ? 'offline' : 'catching-up');
     try {
-      return await runResume(gen);
+      return await runResume(gen, trigger);
     } catch (e) {
       if (gen !== generation || ended) return false;
       // 목록을 아직 한 번도 받지 못했으면 사이드바 오류 상태(UI_STATES §2-3 「오류」 + 「다시 시도」).
@@ -1033,7 +1096,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       }
       // 서버 불가(네트워크 오류·게이트웨이 응답, F-8): 최신으로 표시하지 않는다. 1회뿐이면 한 번 더 시도해 끊김 판정을 확정한다.
       // 재시도는 복귀 절차당 1회 — 중간 HTTP 성공이 실패 횟수를 초기화해도 무한 재호출하지 않는다(Codex r1 P2).
-      if (isUnreachable(e) && !retried) return resume(true);
+      if (isUnreachable(e) && !retried) return resume(trigger, true);
       if (isUnreachable(e)) setConnection('offline');
       return false;
     } finally {
@@ -1235,7 +1298,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
         listState = 'loading';
         emit();
       }
-      void resume();
+      void resume('manual');
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -1323,15 +1386,18 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     start() {
       stopped = false;
       const life = deps.lifecycle;
+      // 계측 주기·이탈 전송(기본 버퍼일 때만). 다시 `start()`하면 이전 배선을 먼저 푼다.
+      stopMetrics();
+      stopMetrics = metricsBuffer?.start(life) ?? (() => undefined);
       if (life !== undefined) {
         // 전경 복귀는 WS가 살아 있어도 항상 catch-up(UI_STATES C8, DD R-03) — 5분 이상 백그라운드 복귀를 포함한다.
         const onVisible = () => {
-          if (life.doc.visibilityState === 'visible') void resume();
+          if (life.doc.visibilityState === 'visible') void resume('foreground');
           // 전경에서 본 위치는 전경 이탈 즉시 보낸다(대기분 손실 방지, BRIEF ★1).
           else flushReads();
         };
         const onOnline = () => {
-          void resume();
+          void resume('foreground');
           // 오프라인으로 못 보낸 메시지는 복귀 때 같은 ID로 한 번 다시 보낸다(2026-11-17 결정, UI_STATES §2-5).
           if (!ended) void sendController.resendOffline();
         };
@@ -1383,8 +1449,14 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       readTimerIsRetry = false;
       reloadTimer = null;
       detach();
+      stopMetrics();
       generation += 1;
       realtime.stop();
     },
   };
+}
+
+/** sync_result dims(구간값만, PRD §10). 구간 밖 값은 allowlist 검증에서 버려진다. */
+function syncDims(trigger: SyncTrigger, outcome: SyncOutcome, changes: number, ms: number): MetricDims {
+  return { trigger, outcome, caught_up_count: bucketCount(changes), duration_ms: bucketDurationMs(ms) };
 }

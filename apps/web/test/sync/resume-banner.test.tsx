@@ -31,7 +31,8 @@ afterEach(cleanup);
 describe('FR-SYNC-07 복귀 배너(5분 이상 백그라운드 후 전경 복귀)', () => {
   async function connected() {
     const doc = new FakeDoc();
-    const ctx = setup({ lifecycle: { doc, win: new EventTarget() } });
+    // 계측 전송(숨김 → POST /api/metrics)은 복귀 절차가 아니다 — 요청 로그를 복귀 절차만으로 보도록 기록기를 비운다.
+    const ctx = setup({ lifecycle: { doc, win: new EventTarget() }, metrics: { record: () => undefined } });
     writeCheckpoint(ME, 4, ctx.storage);
     render(<AppShell dataSource={ctx.ds} />);
     ctx.ds.open?.(CONV);
