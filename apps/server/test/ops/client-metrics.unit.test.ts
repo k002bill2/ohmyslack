@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
 import { hashPassword } from '../../src/modules/auth/password.js';
 import {
+  CLIENT_METRIC_MAX_KEYS_PER_WINDOW,
   CLIENT_METRIC_MAX_PER_MINUTE,
   CLIENT_METRIC_MAX_TRACKED,
   CLIENT_METRIC_WINDOW_MS,
@@ -154,6 +155,22 @@ describe('POST /api/metrics (클라이언트 계측 수집)', () => {
     expect(c.recorded).toHaveLength(1);
   });
 
+  it('한 창에 서로 다른 키를 상한보다 많이 보내면 상한까지만 기록한다(dims 키 순서가 달라도 같은 키, SEC R2)', async () => {
+    const c = await setup();
+    const keys = SYNC_DIMS.slice(0, CLIENT_METRIC_MAX_KEYS_PER_WINDOW + CLIENT_METRIC_MAX_RECORDS);
+    for (let i = 0; i < keys.length; i += CLIENT_METRIC_MAX_RECORDS) {
+      const res = await post(c, { records: keys.slice(i, i + CLIENT_METRIC_MAX_RECORDS).map((d) => ({ event: 'sync_result', dims: d, n: 1 })) });
+      expect(res.statusCode).toBe(202);
+    }
+    expect(c.recorded).toHaveLength(CLIENT_METRIC_MAX_KEYS_PER_WINDOW);
+    // 이미 본 키는 dims 키 순서를 바꿔 보내도 같은 키로 받는다.
+    const seen = keys[0] ?? {};
+    const reversed = Object.fromEntries(Object.entries(seen).reverse());
+    expect((await post(c, { records: [{ event: 'sync_result', dims: reversed, n: 1 }] })).statusCode).toBe(202);
+    expect(c.recorded).toHaveLength(CLIENT_METRIC_MAX_KEYS_PER_WINDOW + 1);
+    expect(c.logs.filter((l) => l.includes('metric_client_limited'))).toHaveLength(1);
+  });
+
   it('기록기 예외는 응답을 바꾸지 않는다', async () => {
     const c = await setup({ record: () => { throw new Error(LOG_CANARIES.body ?? 'boom'); } });
     const res = await post(c, { records: [SYNC] });
@@ -171,17 +188,33 @@ describe('createClientMetricLimiter', () => {
   it('추적 사용자 수 상한: 만료 창은 정리하고, 살아 있는 창으로 가득 차면 새 사용자 몫은 0', () => {
     let now = 0;
     const limiter = createClientMetricLimiter(() => now);
-    for (let i = 0; i < CLIENT_METRIC_MAX_TRACKED; i += 1) expect(limiter.take(`u${i}`, 1)).toBe(1);
-    expect(limiter.take('new', 1)).toBe(0);
+    for (let i = 0; i < CLIENT_METRIC_MAX_TRACKED; i += 1) expect(limiter.take(`u${i}`, 'k', 1)).toBe(1);
+    expect(limiter.take('new', 'k', 1)).toBe(0);
     now += CLIENT_METRIC_WINDOW_MS;
-    expect(limiter.take('new', 1)).toBe(1);
+    expect(limiter.take('new', 'k', 1)).toBe(1);
   });
 
   it('남은 몫만큼만 떼어 준다', () => {
     const limiter = createClientMetricLimiter(() => 0);
-    expect(limiter.take('u', CLIENT_METRIC_MAX_PER_MINUTE - 10)).toBe(CLIENT_METRIC_MAX_PER_MINUTE - 10);
-    expect(limiter.take('u', 25)).toBe(10);
-    expect(limiter.take('u', 1)).toBe(0);
+    expect(limiter.take('u', 'k', CLIENT_METRIC_MAX_PER_MINUTE - 10)).toBe(CLIENT_METRIC_MAX_PER_MINUTE - 10);
+    expect(limiter.take('u', 'k', 25)).toBe(10);
+    expect(limiter.take('u', 'k', 1)).toBe(0);
+  });
+
+  it('사용자별 창당 서로 다른 키는 상한까지만, 이미 본 키는 계속 받고, 신호는 창당 1회, 다음 창에 회복한다(SEC R2)', () => {
+    let now = 0;
+    let signals = 0;
+    const limiter = createClientMetricLimiter(() => now, () => {
+      signals += 1;
+    });
+    for (let i = 0; i < CLIENT_METRIC_MAX_KEYS_PER_WINDOW; i += 1) expect(limiter.take('u', `k${i}`, 1)).toBe(1);
+    expect(limiter.take('u', 'k-new', 1)).toBe(0);
+    expect(limiter.take('u', 'k-new2', 1)).toBe(0);
+    expect(limiter.take('u', 'k0', 2)).toBe(2);
+    expect(limiter.take('other', 'k-new', 1)).toBe(1);
+    expect(signals).toBe(1);
+    now += CLIENT_METRIC_WINDOW_MS;
+    expect(limiter.take('u', 'k-new', 1)).toBe(1);
   });
 });
 
