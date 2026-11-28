@@ -386,6 +386,8 @@ PWA manifest는 승인된 배포 이름, `start_url=/`, `scope=/`, `display=stan
 
 WebSocket heartbeat 제안은 25초 간격, 2회 연속 미응답 시 dead connection 정리입니다. 이는 모바일 네트워크에서 검증 전인 설정값입니다.
 
+DB 연결 상한(앱 프로세스 pool만, CLI는 각자 기본값): pool 연결 대기·접속 5초(`connectionTimeoutMillis` — 기본 무한 대기라 연결이 정착하지 않으면 요청이 쌓임; 초과 시 HTTP 500 `db_pool_timeout`, 503은 게이트웨이 끊김 판정과 겹쳐 쓰지 않음), 서버측 `idle_in_transaction_session_timeout` 30초(트랜잭션 안에서 외부 I/O를 기다리는 정상 경로가 없으므로 넘긴 세션은 누수로 보고 끊음, 25P03), TCP keepalive 첫 탐침 10초(OS 기본 2시간이면 RST 없는 죽은 소켓을 못 봄). 전역 `statement_timeout`은 두지 않습니다 — 큰 첨부 bytea·긴 snapshot이 실측 전이라 잘릴 위험이 있고, 계측 쿼리만 트랜잭션 로컬 3초를 씁니다.
+
 계측은 로컬 allowlist만 사용합니다: `message_send_result(outcome enum, conv_kind enum, has_thread boolean, duration_ms bucket)`, `sync_result(trigger enum, outcome enum, caught_up_count bucket, duration_ms bucket)`, `read_sync_result(outcome enum, duration_ms bucket)`, `auth_denied(action enum, reason enum, count)`, `client_state(state enum, count)`, `bot_delivery_result(direction enum{in,out}, outcome enum, has_attachment boolean, duration_ms bucket)`, `push_send_result(outcome enum{sent,expired,failed})`(R3.3, 식별자·본문·endpoint 미기록). metric key·enum·7일 보관은 PRD §10 정본을 따릅니다. 1단계 구현은 서버에서 결과가 확정되는 4종(`message_send_result`·`auth_denied`·`bot_delivery_result`·`push_send_result`)만 `metric_daily`에 기록하고(`duration_ms`는 `DURATION_BUCKETS_MS` 구간 하한, 메모리 합산 후 주기·종료 flush — 요청당 DB 쓰기 없음), 클라이언트 3종과 수집 엔드포인트는 2단계입니다. PII·본문·식별자·IP·UA·raw error를 금지하며 합성 부하 결과는 환경·실패율과 함께 별도 기록합니다.
 
 SQL migration은 순서형 파일로 관리하고 시작 시 암묵 변경하지 않습니다. 백업은 승인된 shared-infra 절차를 변경 없이 사용하는 안이며 이번에 실행하지 않았습니다. 복원은 격리 DB에서 message 수, edit/delete 상태, DM membership, seq/change cursor, read cursor를 대조합니다. 백업 보존·삭제 본문의 과거 사본 제거·RPO/RTO·복구 책임자는 확정 필요입니다.

@@ -104,6 +104,7 @@ ohmyslack/
 3. **만료·새 기기:** 410이거나 checkpoint가 없으면 `GET /api/conversations` → 활성 대화별 `GET /api/sync/snapshot` → `snapshot_cursor` 이후 catch-up → 목록 재조회 순서로 초기화합니다. 이 절차가 끝날 때까지 UI는 최신으로 표시하지 않습니다(TRD:95, :103).
 4. **구독:** catch-up 뒤 `conversation.subscribe {conversation_id, after_cursor}` → 서버가 listener 등록 후 `(after_cursor, through_cursor]` replay → `conversation.subscribed` ACK. live·replay 중복은 `change_id`로 제거합니다(TRD:113–114, :124).
 5. **읽음:** `PUT /api/read-state {conversation_id, thread_root_id?, last_read_seq}` → 서버가 membership·root 유효성·실제 존재하는 최대 seq 이하인지 검사(범위 밖 400) → `max(기존, 요청)`으로만 갱신 → `read.updated {conversation_id, thread_root_id?, last_read_seq, updated_at}`를 같은 사용자의 다른 기기에 팬아웃합니다(TRD:70, :96, :118). 단절됐던 기기는 복귀 때 `GET /api/conversations`의 읽음 snapshot으로 수렴합니다(TRD:99, :124).
+6. **DB 연결 상한(앱 pool만, TRD §7):** `db/pool.ts` `appPoolConfig` — 연결 대기·접속 `POOL_CONNECTION_TIMEOUT_MS` 5초(초과 시 500 `db_pool_timeout`, 같은 `client_message_id` 재시도는 1건으로 수렴), 서버측 `idle_in_transaction_session_timeout` 30초(누수 트랜잭션 세션 종료 25P03 → `release(err)`·pool `'error'` 고정 코드), TCP keepalive 첫 탐침 10초. 전역 `statement_timeout`은 두지 않습니다(첨부·snapshot 실측 전). CLI pool은 각자 기본값. 테스트: 단위 `apps/server/test/db/pool-config.unit.test.ts`, 통합 `apps/server/test/db/pool-timeout.int.test.ts`.
 
 ### 2-4. 접근 메타 정의와 대상 라우트 (B2의 매트릭스 입력)
 
