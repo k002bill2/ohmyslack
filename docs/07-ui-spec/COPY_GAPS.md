@@ -814,7 +814,7 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 - ★: 권장. 참고 출처: 일반 관념.
 
 ### G-78 `ERROR_COPY.timeout` 중립 문구 — 응답 지연 단정 제거 ★
-- 위치: `timedOut` 실패 표시 전부 — 메시지 수정·삭제(`failureView`), 설정·목록·로그아웃 Dialog(`failureText`). 정본 사전 G-19 「타임아웃」 행 개정.
+- 위치: `timedOut` 실패를 표시하는 `failureView`·`failureText` 소비처 전부 — 메시지 수정·삭제, 첨부 업로드, 봇 추가·제거, 멤버십, 채널 생성·탐색, DM, 초대·비활성화·멤버 관리, 세션 목록·로그아웃 등(`apps/web/src/features/{conversation,conversation-membership,spaces,members,sessions}`). 정본 사전 G-19 「타임아웃」 행 개정.
 - 확정안: 「처리 결과를 확인하지 못했습니다.」 (이전: 「서버 응답이 늦어 확인하지 못했습니다.」). 행동은 그대로 「다시 시도」 버튼.
 - 근거: PR #81 이후 `timedOut: true`는 (a) 20초 상한 초과와 (b) 2xx 응답이 shared 계약과 달라 결과를 확인하지 못한 경우(`response_contract`) 둘 다에 쓰인다. (b)에서 「응답이 늦어」는 사실이 아니다. 두 경우의 공통 사실(결과 미확인)만 말하고 원인은 말하지 않는다. 한 문장·존댓말·「…하지 못했습니다.」 구조는 G-19 다른 행과 같다. 「다시 시도해 주세요」는 붙이지 않았다 — 행동은 버튼이 맡는다(G-19). send 경로의 「저장 여부 확인 중」(unknown)은 별개라 건드리지 않았다.
 - 대안: 키를 새로 분리(`contractViolation`) — 소비처가 `timedOut` 하나로 합쳐 처리해 분기만 늘어 택하지 않았다.
