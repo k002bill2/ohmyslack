@@ -28,6 +28,8 @@ export interface PushContext {
   readonly channel: boolean;
   /** 답글이면 원문 작성자, 아니면 null. */
   readonly rootAuthorId: string | null;
+  /** 답글이면 원문 작성자 종류(봇 원문 스레드 보고 → 대화 사람 멤버 전원), 아니면 null. */
+  readonly rootAuthorKind: 'human' | 'bot' | null;
 }
 
 export interface PushTargetQuery {
@@ -112,17 +114,27 @@ export function createPgPushStore(pool: pg.Pool): PushStore {
       await pool.query('UPDATE push_subscriptions SET last_success_at = $2 WHERE id = $1', [id, at]);
     },
     async context(conversationId, threadRootId) {
-      const res = await pool.query<{ bot_dm: boolean; channel: boolean; root_author_id: string | null }>(
+      const res = await pool.query<{ bot_dm: boolean; channel: boolean; root_author_id: string | null; root_author_kind: 'human' | 'bot' | null }>(
         `SELECT (c.kind = 'dm' AND EXISTS (
                    SELECT 1 FROM conversation_members m JOIN users u ON u.id = m.user_id
                     WHERE m.conversation_id = c.id AND u.kind = 'bot')) AS bot_dm,
                 c.kind = 'channel' AS channel,
-                (SELECT r.author_id FROM messages r WHERE r.id = $2::uuid AND r.conversation_id = c.id) AS root_author_id
-           FROM conversations c WHERE c.id = $1 AND c.deleted_at IS NULL`,
+                ra.author_id AS root_author_id,
+                ra.kind AS root_author_kind
+           FROM conversations c
+           LEFT JOIN LATERAL (
+             SELECT r.author_id, ru.kind FROM messages r JOIN users ru ON ru.id = r.author_id
+              WHERE r.id = $2::uuid AND r.conversation_id = c.id) ra ON true
+          WHERE c.id = $1 AND c.deleted_at IS NULL`,
         [conversationId, threadRootId],
       );
       const row = res.rows[0];
-      return { botDm: row?.bot_dm === true, channel: row?.channel === true, rootAuthorId: row?.root_author_id ?? null };
+      return {
+        botDm: row?.bot_dm === true,
+        channel: row?.channel === true,
+        rootAuthorId: row?.root_author_id ?? null,
+        rootAuthorKind: row?.root_author_kind ?? null,
+      };
     },
     async isLive(messageId) {
       const res = await pool.query('SELECT 1 FROM messages WHERE id = $1 AND deleted_at IS NULL', [messageId]);

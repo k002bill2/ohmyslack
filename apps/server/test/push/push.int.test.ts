@@ -214,7 +214,7 @@ describe('FR-CLIENT-05 Web Push', () => {
     expect(payload).toEqual({ v: 1, kind: 'message', conversation_id: dm, message_id: mentionId, from_bot: false });
   });
 
-  it('Jarvis DM 봇 답글은 자기 스레드의 결정 요청일 때만 thread_root_id와 함께 보낸다', async () => {
+  it('Jarvis DM 봇 답글은 결정 요청일 때 thread_root_id와 함께 보내고 봇 원문 스레드의 진행 표시는 보내지 않는다', async () => {
     const c = (ctx = await setupPushInt());
     const a = await as(c.conv.app, 'a');
     const d = device();
@@ -224,9 +224,9 @@ describe('FR-CLIENT-05 Web Push', () => {
     await flush(c);
     expect(c.received).toHaveLength(1); // botRoot
     c.now += PUSH_COALESCE_WINDOW_MS;
-    await sendAs(c, c.botUserId, c.botDm, { threadRootId: botRoot, body: CLARIFY });
+    await sendAs(c, c.botUserId, c.botDm, { threadRootId: botRoot, body: '💻 Running git status' });
     await flush(c);
-    expect(c.received).toHaveLength(1); // 남의 스레드 답글 → 0
+    expect(c.received).toHaveLength(1); // 봇 원문 스레드의 진행 표시 → 0
     const reply = await sendAs(c, c.botUserId, c.botDm, { threadRootId: root, body: CLARIFY });
     await flush(c);
     expect(c.received).toHaveLength(2);

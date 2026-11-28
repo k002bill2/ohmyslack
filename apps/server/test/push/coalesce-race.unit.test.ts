@@ -21,7 +21,7 @@ describe('FR-CLIENT-05 push 묶음 — 삭제 재확인 경쟁', () => {
     if (config === undefined) throw new Error('VAPID 설정 생성 실패');
     const target = { id: randomUUID(), userId: randomUUID(), endpoint: 'https://web.push.apple.com/x', p256dh: 'p', auth: 'a' };
     const store = {
-      context: () => Promise.resolve({ botDm: false, channel: true, rootAuthorId: null }),
+      context: () => Promise.resolve({ botDm: false, channel: true, rootAuthorId: null, rootAuthorKind: null }),
       targets: () => Promise.resolve([target]),
       isLive: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 5)),
       markSuccess: () => Promise.resolve(),

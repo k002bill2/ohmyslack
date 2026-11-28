@@ -8,6 +8,8 @@ const QUESTION = '\u{2753}';
 const VS16 = '\u{FE0F}';
 const APPROVAL_TAIL = ' **Hermes wants to run a command that needs your OK**';
 const DECISION_MARK = '[결정 필요]';
+const BRIEFING_PREFIX = '[BR-';
+const NOTICE_MARK = '[알림]';
 
 function isBlank(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
@@ -35,4 +37,20 @@ export function isDecisionRequest(body: string | null): boolean {
   const warn = afterEmoji(line, WARNING);
   if (warn !== -1 && line.startsWith(APPROVAL_TAIL, warn)) return true;
   return line.includes(DECISION_MARK);
+}
+
+/**
+ * 봇 답글이 영환님이 봐야 할 보고인지 판정한다(TRD §6-2). 첫 비어 있지 않은 줄만 본다.
+ * ① 브리핑 레지스트리 ID(`[BR-`로 시작) ② cron 결과·점검 보고 명시 표식 `[알림]`. 선형 스캔만 쓴다.
+ */
+export function isNotableReport(body: string | null): boolean {
+  if (body === null) return false;
+  const line = firstLine(body);
+  if (line.length === 0) return false;
+  return line.startsWith(BRIEFING_PREFIX) || line.includes(NOTICE_MARK);
+}
+
+/** 봇 스레드 답글을 알릴지: 결정 요청 또는 브리핑·점검 보고. */
+export function shouldPushBotReply(body: string | null): boolean {
+  return isDecisionRequest(body) || isNotableReport(body);
 }
