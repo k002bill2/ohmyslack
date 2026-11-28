@@ -11,6 +11,12 @@ export function failureText(f: ActionFailure): string {
   return ERROR_COPY.badRequest;
 }
 
+/** 단정 접두 + 원인 1문장. 시간 초과(결과 미확인)면 접두가 실패를 단정해 모순되므로 미확인 문장만(G-79). */
+export function prefixedFailureText(prefix: string, unconfirmed: string, f: ActionFailure): string {
+  if (f.status === 'network' && f.timedOut === true) return unconfirmed;
+  return `${prefix} ${failureText(f)}`;
+}
+
 /** 다시 시도로 풀릴 수 있는 실패인가(네트워크·429·5xx). */
 export function isRetryable(f: ActionFailure): boolean {
   return f.status === 'network' || f.status === 429 || f.status >= 500;

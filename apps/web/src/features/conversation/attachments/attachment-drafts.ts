@@ -1,7 +1,7 @@
 import { ATTACHMENT_HUMAN_CONCURRENT_UPLOADS, ATTACHMENTS_PER_MESSAGE_MAX, type AttachmentView } from '../../../../../../packages/shared/src/index.js';
 import type { ActionFailure, ActionResult } from '../../../data/index.js';
 import { ATTACHMENT_COPY } from '../../../ui/copy.js';
-import { failureText } from '../../spaces/index.js';
+import { prefixedFailureText } from '../../spaces/index.js';
 import { composerFileKind, maxBytesFor, type ComposerFileKind } from './file-kinds.js';
 
 /** 업로드 옵션: 문서·텍스트는 원 파일명 헤더와 `application/octet-stream`(서버가 내용·확장자로 판정, TRD §6-1-1). */
@@ -36,7 +36,7 @@ export interface ComposerChip {
 export function uploadErrorText(failure: ActionFailure, kind: ComposerFileKind | null = null): string {
   if (failure.status === 413) return kind === 'image' ? ATTACHMENT_COPY.tooLarge : ATTACHMENT_COPY.docTooLarge;
   if (failure.status === 415) return 'code' in failure && failure.code === 'macro_extension_mismatch' ? ATTACHMENT_COPY.macroExtension : ATTACHMENT_COPY.unsupported;
-  return `${ATTACHMENT_COPY.uploadFailed} ${failureText(failure)}`;
+  return prefixedFailureText(ATTACHMENT_COPY.uploadFailed, ATTACHMENT_COPY.uploadUnconfirmed, failure);
 }
 
 /** 업로드 전 판정(서버가 최종 판정 — 같은 문구로 바이트 전송을 아낀다). 확장자 허용 목록 밖 → G-54, 계열별 상한 초과 → G-55. */

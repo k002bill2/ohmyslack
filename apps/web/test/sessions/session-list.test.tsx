@@ -308,17 +308,17 @@ describe('FR-AUTH-04 UI-AC-17 성공: 행 제거·알림·포커스', () => {
 
 describe('FR-AUTH-04 UI-AC-18 실패', () => {
   it.each([
-    [{ ok: false, status: 'network', timedOut: true } as const, ERROR_COPY.timeout],
+    [{ ok: false, status: 'network', timedOut: true } as const, SESSION_LIST_COPY.unconfirmed],
     [{ ok: false, status: 500 } as const, ERROR_COPY.server],
     [{ ok: false, status: 'network' } as const, ERROR_COPY.network],
-  ])('%o → Dialog 안 「로그아웃하지 못했습니다.」 + 원인, busy 해제·다시 시도 가능', async (failure, text) => {
+  ])('%o → Dialog 안 「로그아웃하지 못했습니다.」 + 원인(timedOut은 결과 미확인 문장만, G-79), busy 해제·다시 시도 가능', async (failure, text) => {
     const { revoke } = renderList({ revoke: () => Promise.resolve(failure) });
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'iPhone · Safari 로그아웃' }));
     fireEvent.click(screen.getByRole('button', { name: SESSION_LIST_COPY.confirm }));
     await settle();
     const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByRole('alert').textContent).toBe(`${SESSION_LIST_COPY.failed} ${text}`);
+    expect(within(dialog).getByRole('alert').textContent).toBe('timedOut' in failure ? text : `${SESSION_LIST_COPY.failed} ${text}`);
     expect(dialog.hasAttribute('aria-busy')).toBe(false);
     fireEvent.click(within(dialog).getByRole('button', { name: SESSION_LIST_COPY.confirm }));
     await settle();

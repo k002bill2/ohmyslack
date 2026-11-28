@@ -1,7 +1,7 @@
 import type { ActionFailure } from '../../data';
 import { CANCEL_LABEL, ERROR_COPY, SESSION_LIST_COPY } from '../../ui/copy.js';
 import { Dialog } from '../../ui/Dialog.js';
-import { failureText } from '../spaces';
+import { prefixedFailureText } from '../spaces';
 
 export interface SessionLogoutDialogProps {
   readonly label: string;
@@ -22,7 +22,7 @@ export function SessionLogoutDialog({ label, busy, failure, onConfirm, onCancel,
         <p>{SESSION_LIST_COPY.confirmBody(label)}</p>
         {failure !== null && (
           <div className="error-state" role="alert">
-            <p>{`${SESSION_LIST_COPY.failed} ${failureText(failure)}`}</p>
+            <p>{prefixedFailureText(SESSION_LIST_COPY.failed, SESSION_LIST_COPY.unconfirmed, failure)}</p>
             {notFound && (
               <button type="button" className="btn btn-secondary" onClick={onRefresh}>
                 {ERROR_COPY.refreshList}
