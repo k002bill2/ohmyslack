@@ -1,4 +1,4 @@
-import { bucketDurationMs, toMetricRecord } from '../../shared.js';
+import { CLIENT_METRIC_EVENTS, bucketCount, bucketDurationMs, toMetricRecord } from '../../shared.js';
 
 /**
  * 로컬 계측 기록기(정본: PRD §10, TRD TR-SEC-09, DEV_DESIGN FR-OPS-03). 외부 전송 없이 Postgres `metric_daily`에 일 단위 횟수만 쌓는다.
@@ -22,8 +22,11 @@ export interface MetricsStore {
 }
 
 export interface MetricsRecorder {
-  /** 동기·무예외. 허용 밖 입력은 버린다. */
-  record(input: Readonly<Record<string, unknown>>): void;
+  /**
+   * 동기·무예외. 허용 밖 입력은 버린다. n(기본 1)은 같은 레코드를 몇 번으로 셀지 — 클라이언트가 메모리에서 합산해 보낸
+   * 횟수(POST /api/metrics)를 한 번에 올린다. 1 이상 안전 정수가 아니면 버린다.
+   */
+  record(input: Readonly<Record<string, unknown>>, n?: number): void;
 }
 
 /** 보관 일수(PRD §10 "최대 7일 로컬 보관", R1 가정). 오늘을 포함해 7일 = cutoff는 오늘 - 6일. */
@@ -37,11 +40,19 @@ export const METRIC_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
  */
 export const METRIC_FLUSH_INTERVAL_MS = 10_000;
 /**
- * 버퍼 키 상한. 키 = (day, event, dims)이고 dims는 전부 allowlist enum·boolean·고정 duration 구간이라 하루 정상 조합은
- * 수백 개 이하다(가장 큰 message_send_result도 outcome×conv_kind×has_thread×구간). 넘으면 DB 장애가 길게 이어진 것이므로
- * 새 키는 버린다(기존 키 증분은 계속) — 메모리 상한 보장.
+ * 버퍼 전체 키 상한(메모리 상한 보장). 키 = (day, event, dims)이고 dims는 전부 allowlist enum·boolean·고정 구간값이다.
+ * 서버 4종의 하루 조합은 수백 개 이하(가장 큰 message_send_result도 outcome×conv_kind×has_thread×구간 = 180)지만,
+ * 클라이언트 3종은 이론상 더 크다(sync_result = trigger 4 × outcome 5 × caught_up_count 11 × duration_ms 9 = 1980 > 1024).
+ * 그래서 클라이언트 3종은 METRIC_MAX_CLIENT_KEYS로 따로 묶고, 남는 자리(≥ 768)를 서버 4종에 보장한다(SEC V1).
+ * 넘으면 DB 장애가 길게 이어진 것이므로 새 키는 버린다(기존 키 증분은 계속).
  */
 export const METRIC_MAX_KEYS = 1024;
+/**
+ * 버퍼 안 클라이언트 3종(CLIENT_METRIC_EVENTS) 키 상한(SEC V1·R1). 웹 정상 클라이언트는 한 주기에 64키 이하(웹 METRIC_MAX_KEYS)
+ * 이고 사용자는 소수라 256이면 넉넉하다. 이 상한 때문에 클라이언트가 아무리 보내도 서버 4종 자리(METRIC_MAX_KEYS - 256)는 남는다.
+ * flush로 버퍼를 바꿀 때 다시 센다. drain 실패 재합산도 merge를 거치므로 같은 상한이 적용된다.
+ */
+export const METRIC_MAX_CLIENT_KEYS = 256;
 /** 종료 시 마지막 flush를 기다리는 상한. DB가 멈춰 있어도 종료가 매달리지 않게 한다. */
 export const METRIC_CLOSE_TIMEOUT_MS = 2000;
 /**
@@ -68,7 +79,7 @@ export const METRIC_STATEMENT_TIMEOUT_MS = 3000;
 export const METRIC_MAX_ABANDONED = 2;
 
 /** onError로 넘기는 고정 코드(값·식별자 없음). */
-export type MetricErrorCode = 'metric_write_failed' | 'metric_buffer_full';
+export type MetricErrorCode = 'metric_write_failed' | 'metric_buffer_full' | 'metric_client_buffer_full';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -88,9 +99,9 @@ export function retentionCutoff(now: number): string {
  */
 export function guardedRecorder(recorder: MetricsRecorder): MetricsRecorder {
   return Object.freeze({
-    record(input: Readonly<Record<string, unknown>>) {
+    record(input: Readonly<Record<string, unknown>>, n?: number) {
       try {
-        recorder.record(input);
+        recorder.record(input, n);
       } catch {
         // 계측 실패는 호출자에게 올리지 않는다.
       }
@@ -134,13 +145,27 @@ function bufferKey(day: string, event: string, dims: MetricDims): string {
   return `${day}|${event}|${JSON.stringify(sorted)}`;
 }
 
-/** duration_ms를 구간 하한으로 바꾼 새 객체(입력 불변). 버킷팅할 수 없으면 필드를 빼서 검증에서 떨어지게 한다. */
-function withBucketedDuration(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
-  if (!('duration_ms' in input)) return { ...input };
-  const { duration_ms: raw, ...rest } = input;
-  const bucketed = typeof raw === 'number' ? bucketDurationMs(raw) : undefined;
-  return bucketed === undefined ? rest : { ...rest, duration_ms: bucketed };
+/** 구간값 필드와 그 버킷 함수(duration_ms는 ms 구간, count·caught_up_count는 개수 구간 — R1). */
+const BUCKETED_FIELDS: Readonly<Record<string, (v: number) => number | undefined>> = Object.freeze({
+  duration_ms: bucketDurationMs,
+  count: bucketCount,
+  caught_up_count: bucketCount,
+});
+
+/** 구간값 필드를 구간 하한으로 바꾼 새 객체(입력 불변). 버킷팅할 수 없으면 필드를 빼서 검증에서 떨어지게 한다. */
+function withBucketedFields(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...input };
+  for (const [field, toBucket] of Object.entries(BUCKETED_FIELDS)) {
+    if (!(field in out)) continue;
+    const raw = out[field];
+    const bucketed = typeof raw === 'number' ? toBucket(raw) : undefined;
+    if (bucketed === undefined) delete out[field];
+    else out[field] = bucketed;
+  }
+  return out;
 }
+
+const isClientEvent = (event: string): boolean => (CLIENT_METRIC_EVENTS as readonly string[]).includes(event);
 
 class MetricWriteTimeout extends Error {}
 class MetricWriteSaturated extends Error {}
@@ -196,9 +221,13 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
   const writeTimeoutMs = deps.writeTimeoutMs ?? METRIC_WRITE_TIMEOUT_MS;
   const abandoned = abandonedFor(store);
   let buffer = new Map<string, Pending>();
+  // 현재 버퍼 안 클라이언트 3종 키 수(METRIC_MAX_CLIENT_KEYS 검사용). buffer를 새 Map으로 바꿀 때 0으로 되돌린다.
+  let clientKeys = 0;
   let inFlight: Promise<void> | undefined;
-  // 버퍼 초과 신호는 flush 주기당 한 번만(초과가 이어져도 로그가 요청 수만큼 늘지 않게).
+  // 버퍼 초과 신호는 종류별로 flush 주기당 한 번만(초과가 이어져도 로그가 요청 수만큼 늘지 않게). 클라이언트 상한은 별도 코드 —
+  // 운영 로그에서 클라이언트 포화(V1)와 DB 장애로 인한 전체 포화를 구분한다.
   let fullReported = false;
+  let clientFullReported = false;
   const fail = (code: MetricErrorCode): void => {
     try {
       deps.onError?.(code);
@@ -213,12 +242,19 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
       found.n += n;
       return;
     }
+    const isClient = isClientEvent(event);
+    if (isClient && clientKeys >= METRIC_MAX_CLIENT_KEYS) {
+      if (!clientFullReported) fail('metric_client_buffer_full');
+      clientFullReported = true;
+      return;
+    }
     if (buffer.size >= maxKeys) {
       if (!fullReported) fail('metric_buffer_full');
       fullReported = true;
       return;
     }
     buffer.set(key, { day, event, dims, n });
+    if (isClient) clientKeys += 1;
   };
   /**
    * 버퍼를 떼어 행마다 순서대로 +n(기록기가 기다리는 저장 호출 ≤ 1). 실패한 행은 버퍼에 다시 합산한다(재합산은 이 catch 한 곳).
@@ -247,9 +283,11 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
   const flush = (): Promise<void> => {
     if (inFlight !== undefined) return inFlight;
     fullReported = false;
+    clientFullReported = false;
     if (buffer.size === 0) return Promise.resolve();
     const batch = [...buffer.values()];
     buffer = new Map();
+    clientKeys = 0;
     const run = drain(batch).finally(() => {
       inFlight = undefined;
     });
@@ -263,12 +301,13 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
     await flush();
   };
   return {
-    record(input) {
+    record(input, n = 1) {
       try {
-        const record = toMetricRecord(withBucketedDuration(input));
+        if (!Number.isSafeInteger(n) || n < 1) return;
+        const record = toMetricRecord(withBucketedFields(input));
         if (record === undefined) return;
         const { event, ...dims } = record;
-        merge(metricDay(clock()), event, dims, 1);
+        merge(metricDay(clock()), event, dims, n);
       } catch {
         fail('metric_write_failed');
       }

@@ -53,6 +53,8 @@ describe('봇 리스너 바인드·경로', () => {
     for (const [method, path] of [
       ['GET', '/api/me'],
       ['GET', '/api/healthz'],
+      // 클라이언트 계측 수집은 메인 리스너(쿠키 세션) 전용이다(PRD §10 2단계).
+      ['POST', '/api/metrics'],
       ['POST', '/api/bot/v1/dms'],
       ['POST', `/api/bot/v1/conversations/${ctx.bot.dmConversationId}/join`],
       ['GET', `/api/bot/v1/conversations/${ctx.bot.dmConversationId}/members`],

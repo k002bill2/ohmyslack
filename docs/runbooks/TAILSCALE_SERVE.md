@@ -139,6 +139,8 @@ ACL 수정·공유 해제는 **[변경·승인 필요]**입니다. 타인 기기
 이때 앱 로그에는 `{"event":"db_pool_client_error","error_code":"<코드>"}` 한 줄만 남습니다(메시지·연결 문자열은 남기지 않음).
 끊긴 순간 진행 중이던 요청만 5xx로 실패하고 다음 요청은 정상입니다. 이 줄이 계속 반복되면 앱이 아니라 Postgres 기동 상태를 먼저 확인합니다(**[조회·승인 필요]**).
 
+**계측 포화.** `{"event":"metric_error","error_code":"metric_buffer_full"}`(또는 `metric_client_buffer_full`)이 주기마다 반복되면 계측 포화 신호입니다 — `metric_buffer_full`은 DB 장애가 길어져 버퍼가 찬 것, `metric_client_buffer_full`은 클라이언트 계측 키가 몰린 것(SEC V1)입니다. 앞의 것은 위 DB 연결 확인부터 합니다. 요청 처리에는 영향이 없습니다.
+
 ## 8. 수동 증거
 
 노출 경계 판정은 `qa/manual/QA-FR-OPS-01.md`(DEV_DESIGN §5-4 형식)에 기록합니다. 실행하지 않은 항목은 `PASS`로 적지 않습니다.

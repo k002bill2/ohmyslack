@@ -179,6 +179,8 @@ export function createApi(deps: ApiDeps) {
     setCsrf(token: string | null): void {
       csrf = token;
     },
+    /** 현재 세션 CSRF 토큰(401 뒤 null) — 계측 전송(`data/metrics.ts`)이 같은 토큰을 쓴다. */
+    csrfToken: (): string | null => csrf,
   };
 }
 

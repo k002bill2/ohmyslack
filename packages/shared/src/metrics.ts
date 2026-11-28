@@ -55,6 +55,21 @@ export const METRIC_ENUMS = Object.freeze({
  */
 export const DURATION_BUCKETS_MS = Object.freeze([0, 50, 100, 250, 500, 1000, 2500, 5000, 10000] as const);
 
+/**
+ * count·caught_up_count 구간 하한(오름차순, 마지막 값이 상한). 값은 자신이 속한 구간의 하한으로만 기록한다(PRD §10 "구간값만",
+ * SEC R1: 무상한 정수는 사실상 원시값이라 dims 조합이 무한히 늘 수 있다). 1·2·5 배수 열로 잡아 "0건/1건/몇 건/수십/수백"을
+ * 가르고, 1000 이상은 전부 1000(상한)으로 묶는다. 서버 auth_denied의 count:1은 그대로 유효하다.
+ */
+export const COUNT_BUCKETS = Object.freeze([0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000] as const);
+
+/** 정수 개수 → 구간 하한(상한 이상은 상한). 음수·비정수·비유한 값은 undefined(기록하지 않음). */
+export function bucketCount(n: number): number | undefined {
+  if (!Number.isSafeInteger(n) || n < 0) return undefined;
+  let lower: number = COUNT_BUCKETS[0];
+  for (const edge of COUNT_BUCKETS) if (n >= edge) lower = edge;
+  return lower;
+}
+
 /** ms → 구간 하한. 음수·비유한 값은 undefined(기록하지 않음). */
 export function bucketDurationMs(ms: number): number | undefined {
   if (!Number.isFinite(ms) || ms < 0) return undefined;
@@ -64,10 +79,11 @@ export function bucketDurationMs(ms: number): number | undefined {
 }
 
 const oneOf = <K extends keyof typeof METRIC_ENUMS>(key: K) => z.enum(METRIC_ENUMS[key]);
-/** bucket·count: 0 이상 정수(구간 하한). */
-const bucket = z.number().int().nonnegative();
+const nonNegativeInt = z.number().int().nonnegative();
+/** count·caught_up_count: COUNT_BUCKETS의 하한값만(원시 개수·상한 초과 거부, R1). */
+const bucket = nonNegativeInt.refine((v) => (COUNT_BUCKETS as readonly number[]).includes(v));
 /** duration_ms: DURATION_BUCKETS_MS의 하한값만(원시 ms 거부). */
-const durationBucket = bucket.refine((v) => (DURATION_BUCKETS_MS as readonly number[]).includes(v));
+const durationBucket = nonNegativeInt.refine((v) => (DURATION_BUCKETS_MS as readonly number[]).includes(v));
 
 const metric = <E extends MetricEvent, S extends z.ZodRawShape>(event: E, shape: S) =>
   z.strictObject({ event: z.literal(event), ...shape });
@@ -88,4 +104,63 @@ export type MetricRecord = z.infer<typeof metricRecordSchema>;
 export function toMetricRecord(input: unknown): MetricRecord | undefined {
   const parsed = metricRecordSchema.safeParse(input);
   return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * 클라이언트가 관찰해 보내는 이벤트(PRD §10 2단계, TRD 391행). 서버가 결과를 확정하는 4종(message_send_result·auth_denied·
+ * bot_delivery_result·push_send_result)은 클라이언트가 보낼 수 없다 — 위조로 서버 집계를 오염시키지 못하게.
+ */
+export const CLIENT_METRIC_EVENTS = Object.freeze(['sync_result', 'read_sync_result', 'client_state'] as const);
+export type ClientMetricEvent = (typeof CLIENT_METRIC_EVENTS)[number];
+
+/**
+ * 수집 배치 상한(POST /api/metrics). 클라이언트는 같은 (event, dims)를 메모리에서 합산해 60초마다 보내므로, 정상 배치는
+ * 키 수(클라이언트 3종의 dims 조합 중 실제로 나타나는 것, 수십 개)만큼의 레코드다.
+ * - records 32개: 한 주기에 나타나는 조합 수보다 넉넉하고, 본문 8KB 안에 들어간다(레코드 1개 ≈ 120바이트).
+ * - n 1..100: 한 주기 한 조합의 정상 횟수(재연결·포그라운드 sync 몇 번)보다 크고, 오프라인 재합산분도 이 안에서 자른다.
+ * - 본문 8KB: 위 둘의 곱보다 작게 — 큰 본문으로 파서·검증 비용을 키우지 못하게.
+ */
+export const CLIENT_METRIC_MAX_RECORDS = 32;
+export const CLIENT_METRIC_MAX_N = 100;
+export const CLIENT_METRIC_BODY_LIMIT_BYTES = 8 * 1024;
+
+/** 레코드 1개의 모양(값 검증은 toClientMetric). dims 내용은 여기서 보지 않는다 — 위반 레코드는 개별로 버린다. */
+const clientMetricShape = z.strictObject({
+  event: z.enum(CLIENT_METRIC_EVENTS),
+  dims: z.record(z.string(), z.unknown()),
+  n: z.number().int().min(1).max(CLIENT_METRIC_MAX_N),
+});
+
+/**
+ * 배치 본문 형식: records 배열(길이 상한)만 strict로 본다. 형식 자체가 깨지면(객체 아님·records 없음·길이 초과·여분 키) 400,
+ * 레코드 개별 위반은 toClientMetric이 버린다(전체 거부 대신 — 클라이언트가 재전송 루프에 빠지지 않게).
+ */
+export const clientMetricBatchSchema = z.strictObject({
+  records: z.array(z.unknown()).max(CLIENT_METRIC_MAX_RECORDS),
+});
+export type ClientMetricBatch = z.infer<typeof clientMetricBatchSchema>;
+
+/** 전송용 레코드(웹이 만든다). dims는 event를 뺀 allowlist 필드. */
+export interface ClientMetricWire {
+  readonly event: ClientMetricEvent;
+  readonly dims: Readonly<Record<string, string | number | boolean>>;
+  readonly n: number;
+}
+
+/** 검증된 클라이언트 레코드: allowlist를 통과한 레코드와 증분. */
+export interface ClientMetric {
+  readonly record: MetricRecord;
+  readonly n: number;
+}
+
+/**
+ * 레코드 1개 검증: 클라이언트 3종(clientMetricShape의 event enum이 유일한 제한 지점)·n 범위·dims가 toMetricRecord allowlist(키·enum·구간값)를 통과해야 한다.
+ * dims에 event 키가 있으면 거부한다(바깥 event를 덮어써 서버 이벤트를 위조하지 못하게). 위반은 undefined. 입력 불변.
+ */
+export function toClientMetric(input: unknown): ClientMetric | undefined {
+  const shape = clientMetricShape.safeParse(input);
+  if (!shape.success || 'event' in shape.data.dims) return undefined;
+  const record = toMetricRecord({ ...shape.data.dims, event: shape.data.event });
+  if (record === undefined) return undefined;
+  return { record, n: shape.data.n };
 }
