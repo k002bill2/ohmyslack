@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { checkTestDbUrl } from '../../../../tools/assert-test-db.js';
-import { createPool } from '../../src/db/pool.js';
+import { APP_POOL_TIMEOUTS, appPoolConfig, createPool, type AppPoolTimeouts } from '../../src/db/pool.js';
+import type { OpsLogger } from '../../src/modules/ops/logger.js';
 
 /** 통합 테스트 DB 하네스(정본: DEV_DESIGN §5-1 "테스트 DB 안전장치"). 실행 ID별 스키마 t_<runid>만 만들고 지운다. */
 const SCHEMA_PATTERN = /^t_[a-z0-9_]+$/;
@@ -50,13 +51,22 @@ async function dropSchema(url: string, name: string): Promise<void> {
   await withAdmin(url, (client) => client.query(`DROP SCHEMA IF EXISTS "${name}" CASCADE`));
 }
 
+/** 풀 옵션: 앱 pool 설정(appPoolConfig, main.ts와 같은 경로)을 쓰고, timeouts가 없으면 운영 기본 상한이다(테스트는 짧게 주입). */
+export interface TestSchemaOptions {
+  readonly max?: number;
+  readonly timeouts?: AppPoolTimeouts;
+  readonly logger?: Pick<OpsLogger, 'log'>;
+}
+
 /** 빈 실행 스키마를 만들고 search_path를 그 스키마로 둔 풀을 돌려준다(마이그레이션은 호출자가 적용). */
-export async function createTestSchema(): Promise<TestSchema> {
+export async function createTestSchema(options: TestSchemaOptions = {}): Promise<TestSchema> {
   const url = testDatabaseUrl();
   const name = newSchemaName();
   await withAdmin(url, (client) => client.query(`CREATE SCHEMA "${name}"`));
   // 운영과 같은 풀 팩토리('error' 처리기 포함)를 쓴다.
-  const pool = createPool({ ...isolatedConfig(url, name), max: 4 }, { log: () => undefined });
+  const base = isolatedConfig(url, name);
+  const config = appPoolConfig(base, options.timeouts ?? APP_POOL_TIMEOUTS);
+  const pool = createPool({ ...config, max: options.max ?? 4 }, options.logger ?? { log: () => undefined });
   const current = await pool.query<{ schema: string }>('SELECT current_schema() AS schema').catch(() => undefined);
   if (current?.rows[0]?.schema !== name) {
     await pool.end();
