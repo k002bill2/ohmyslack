@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
-import { createMetricsRecorder, pruneMetrics } from '../../src/modules/ops/metrics.js';
+import { METRIC_WRITE_TIMEOUT_MS, createMetricsRecorder, pruneMetrics } from '../../src/modules/ops/metrics.js';
 import { createPgMetricsStore } from '../../src/modules/ops/metrics-store.js';
 import { METRIC_ALLOWLIST } from '../../src/shared.js';
 import { migratedSchema } from '../auth/bootstrap-harness.js';
@@ -69,6 +69,54 @@ describe('metric_daily (Postgres)', () => {
     for (const row of stored) {
       expect(Object.keys(row.dims).sort()).toEqual([...METRIC_ALLOWLIST[row.event as keyof typeof METRIC_ALLOWLIST]].sort());
     }
+  });
+
+  it('계측 쿼리에는 서버측 statement_timeout이 걸린다: 다른 연결이 행을 잠그면 상한 안에 57014로 끝나고, 잠금 해제 후 재합산이 정확히 반영된다', async () => {
+    schema = await migratedSchema();
+    const store = createPgMetricsStore(schema.pool, { statementTimeoutMs: 200 });
+    const onError = vi.fn();
+    const metrics = createMetricsRecorder({ store, clock: () => T0, onError });
+    metrics.record({ event: 'push_send_result', outcome: 'sent' });
+    await metrics.idle();
+    const locker = await schema.pool.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query("SELECT count FROM metric_daily WHERE event = 'push_send_result' FOR UPDATE");
+      // 직접 호출: 잠금 대기가 DB에서 취소된다(기록기 상한 METRIC_WRITE_TIMEOUT_MS보다 훨씬 전에).
+      const started = Date.now();
+      const error: unknown = await store.add('2026-11-28', 'push_send_result', { outcome: 'sent' }, 1).catch((e: unknown) => e);
+      expect((error as { code?: unknown }).code).toBe('57014');
+      expect(Date.now() - started).toBeLessThan(METRIC_WRITE_TIMEOUT_MS);
+      // 기록기 경로: 실패 → 재합산 + metric_write_failed.
+      metrics.record({ event: 'push_send_result', outcome: 'sent' });
+      metrics.record({ event: 'push_send_result', outcome: 'sent' });
+      await metrics.idle();
+      expect(onError).toHaveBeenCalledWith('metric_write_failed');
+    } finally {
+      await locker.query('ROLLBACK').catch(() => undefined);
+      locker.release();
+    }
+    await metrics.idle();
+    expect((await rows(schema)).map((r) => r.count)).toEqual([3]);
+    // 같은 연결 풀의 다른 쿼리에는 timeout이 남지 않는다(SET LOCAL 범위 = 트랜잭션).
+    const setting = await schema.pool.query<{ statement_timeout: string }>('SHOW statement_timeout');
+    expect(setting.rows[0]?.statement_timeout).toBe('0');
+  });
+
+  it('연결 획득 대기 중 포기(abort)한 add는 나중에 연결을 얻어도 쓰지 않는다', async () => {
+    schema = await migratedSchema();
+    const store = createPgMetricsStore(schema.pool);
+    const held = await Promise.all(Array.from({ length: 4 }, () => schema!.pool.connect()));
+    const controller = new AbortController();
+    let pending: Promise<unknown>;
+    try {
+      pending = store.add('2026-11-28', 'push_send_result', { outcome: 'sent' }, 1, controller.signal).catch((e: unknown) => e);
+      controller.abort();
+    } finally {
+      for (const client of held) client.release();
+    }
+    expect(await pending).toBeInstanceOf(Error);
+    expect(await rows(schema)).toEqual([]);
   });
 
   it('보관 삭제는 오늘 포함 7일 밖(cutoff 이전) 행만 지운다', async () => {
