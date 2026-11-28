@@ -20,6 +20,7 @@ import {
 } from './push-harness.js';
 
 /** FR-CLIENT-05 / TR-SEC-15(TRD §6-2): 가짜 push service로 실제 web-push 요청을 받아 본다. 실제 push service 호출 0. */
+const CLARIFY = '❓ 어느 쪽으로 진행할까요?\nReply "skip" to skip this question.';
 let ctx: PushIntContext | undefined;
 
 afterEach(async () => {
@@ -213,7 +214,7 @@ describe('FR-CLIENT-05 Web Push', () => {
     expect(payload).toEqual({ v: 1, kind: 'message', conversation_id: dm, message_id: mentionId, from_bot: false });
   });
 
-  it('Jarvis DM 답글은 자기 스레드 답글일 때만 thread_root_id와 함께 보낸다', async () => {
+  it('Jarvis DM 봇 답글은 자기 스레드의 결정 요청일 때만 thread_root_id와 함께 보낸다', async () => {
     const c = (ctx = await setupPushInt());
     const a = await as(c.conv.app, 'a');
     const d = device();
@@ -223,13 +224,31 @@ describe('FR-CLIENT-05 Web Push', () => {
     await flush(c);
     expect(c.received).toHaveLength(1); // botRoot
     c.now += PUSH_COALESCE_WINDOW_MS;
-    await sendAs(c, c.botUserId, c.botDm, { threadRootId: botRoot });
+    await sendAs(c, c.botUserId, c.botDm, { threadRootId: botRoot, body: CLARIFY });
     await flush(c);
     expect(c.received).toHaveLength(1); // 남의 스레드 답글 → 0
-    const reply = await sendAs(c, c.botUserId, c.botDm, { threadRootId: root });
+    const reply = await sendAs(c, c.botUserId, c.botDm, { threadRootId: root, body: CLARIFY });
     await flush(c);
     expect(c.received).toHaveLength(2);
     const payload = JSON.parse(decrypt(d, c.received[1]?.body ?? Buffer.alloc(0))) as Record<string, unknown>;
     expect(payload).toEqual({ v: 1, kind: 'message', conversation_id: c.botDm, message_id: reply, thread_root_id: root, from_bot: true });
+  });
+
+  it('Jarvis DM 봇 일반 답글은 보내지 않고 [결정 필요] 답글은 원문 작성자에게 보낸다', async () => {
+    const c = (ctx = await setupPushInt());
+    const a = await as(c.conv.app, 'a');
+    await subscribe(c, a, device());
+    const root = await sendAs(c, c.conv.ids.a, c.botDm);
+    await flush(c);
+    expect(c.received).toHaveLength(0); // 자기 원문
+    c.now += PUSH_COALESCE_WINDOW_MS + 1_000;
+    await sendAs(c, c.botUserId, c.botDm, { threadRootId: root, body: '⏳ Working — 9 min — iteration 6/90, clarify' });
+    await sendAs(c, c.botUserId, c.botDm, { threadRootId: root });
+    await sendAs(c, c.botUserId, c.botDm, { threadRootId: root, body: '✅ Command approved' });
+    await flush(c);
+    expect(c.received).toHaveLength(0);
+    await sendAs(c, c.botUserId, c.botDm, { threadRootId: root, body: '[결정 필요] 배포 시간을 정해 주세요' });
+    await flush(c);
+    expect(c.received).toHaveLength(1);
   });
 });
