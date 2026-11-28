@@ -787,8 +787,13 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
 
   /** 이번 sync 구간에 접은 변경 수(계측 caught_up_count). `syncPhase`가 시작 때 0으로 되돌린다. */
   let changesApplied = 0;
-  /** 이번 복귀 절차(재시도 포함)의 마지막 sync 결과. resume이 절차를 마칠 때 sync_result 1건으로 기록하고 비운다. */
+  /** 이번 복귀 절차(재시도 포함)의 마지막 실패한 sync 결과(시작 시각은 첫 시도 것). resume이 절차를 마칠 때 sync_result 1건으로 기록하고 비운다. */
   let syncReport: { readonly outcome: SyncOutcome; readonly changes: number; readonly startedAt: number; readonly endedAt: number } | null = null;
+  /**
+   * 이번 복귀 절차에서 sync_result를 이미 기록했는지. sync가 성공(던지지 않음)하면 그 자리에서 바로 기록한다 — 뒤이은 목록 로드·
+   * 소켓 열림 대기(waitOpen, 상한 없음)에 기록이 묶이지 않게. 실패는 재시도 여부가 정해지는 resume 끝에서 1건만 기록한다.
+   */
+  let syncRecorded = false;
   const foldChanges = (res: SyncResponse) => {
     changesApplied += res.changes.length;
     for (const c of res.changes) {
@@ -904,35 +909,43 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   };
 
   /**
-   * catch-up(checkpoint 없음 → snapshot, 410 → snapshot 재초기화) 1회. sync_result는 여기서 기록하지 않고 결과만 `syncReport`에
-   * 남긴다 — 복귀 절차(재시도 포함)가 끝날 때 resume이 1건만 기록한다(결과 단위, QA P3-2). 다른 복귀·종료가 끼어들었으면(gen)
-   * 결과가 아니므로 남기지 않는다. 410 뒤 재초기화까지 실패하면 client_state resync_error는 시도마다 남긴다.
+   * catch-up(checkpoint 없음 → snapshot, 410 → snapshot 재초기화) 1회. sync_result는 복귀 절차(재시도 포함)당 1건(결과 단위, QA P3-2):
+   * 성공은 여기서 바로 기록하고, 실패는 결과만 `syncReport`에 남겨 재시도 여부가 정해지는 resume 끝에서 기록한다. 다른 복귀·종료가
+   * 끼어들었으면(gen) 결과가 아니므로 남기지 않는다. 410 뒤 재초기화까지 실패하면 client_state resync_error는 시도마다 남긴다.
    */
-  const syncPhase = async (gen: number, saved: number | null): Promise<number> => {
+  const syncPhase = async (gen: number, trigger: SyncTrigger, saved: number | null): Promise<number> => {
     // 소요 시간은 이 절차의 첫 sync 시작부터 잰다 — 재시도해도 시작 시각은 첫 시도 것을 유지한다.
     const startedAt = syncReport?.startedAt ?? now();
     changesApplied = 0;
     let resynced = false;
     let outcome: SyncOutcome = 'ok';
     try {
+      let watermark: number;
       try {
-        return saved === null ? await snapshotProcedure() : await catchUp(saved);
+        watermark = saved === null ? await snapshotProcedure() : await catchUp(saved);
       } catch (e) {
         if (!(e instanceof HttpStatusError) || e.status !== 410) throw e;
         resynced = true;
         outcome = 'resync_required';
-        return await snapshotProcedure();
+        watermark = await snapshotProcedure();
       }
+      // 성공한 sync는 이 절차의 최종 sync 결과다 — 바로 기록한다(뒤 단계가 서버 불가로 재시도해도 syncRecorded로 1건).
+      if (gen === generation && !syncRecorded) {
+        syncRecorded = true;
+        syncReport = null;
+        recordMetric('sync_result', syncDims(trigger, outcome, changesApplied, now() - startedAt));
+      }
+      return watermark;
     } catch (e) {
       if (resynced && gen === generation) recordMetric('client_state', { state: 'resync_error', count: 1 });
       outcome = e instanceof TimeoutError ? 'timeout' : 'failed';
-      throw e;
-    } finally {
+      // 실패는 재시도 여부가 정해지는 resume 끝에서 기록한다.
       if (gen === generation) syncReport = { outcome, changes: changesApplied, startedAt, endedAt: now() };
+      throw e;
     }
   };
 
-  const runResume = async (gen: number): Promise<boolean> => {
+  const runResume = async (gen: number, trigger: SyncTrigger): Promise<boolean> => {
     const me = await api.get<MeResponse>('/api/me');
     if (gen !== generation) return false;
     api.setCsrf(me.csrf_token);
@@ -944,7 +957,7 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
     await loadMembers();
     if (gen !== generation) return false;
     realtime.start();
-    const watermark = await syncPhase(gen, readCheckpoint(userId, storage));
+    const watermark = await syncPhase(gen, trigger, readCheckpoint(userId, storage));
     await loadList();
     if (gen !== generation) return false;
     emit();
@@ -1085,14 +1098,17 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
   const resume = async (trigger: SyncTrigger = 'connect', retried = false): Promise<boolean> => {
     if (ended) return false;
     // 새 복귀 절차면 이전 결과를 비운다. 재시도는 첫 시도 결과·시작 시각을 이어받는다(첫 시도 sync 실패 뒤 /api/me에서 실패해도 1건).
-    if (!retried) syncReport = null;
+    if (!retried) {
+      syncReport = null;
+      syncRecorded = false;
+    }
     generation += 1;
     const gen = generation;
     resuming = true;
     inCatchUp = true;
     setConnection(connection === 'offline' && !isOnline() ? 'offline' : 'catching-up');
     try {
-      return await runResume(gen);
+      return await runResume(gen, trigger);
     } catch (e) {
       if (gen !== generation || ended) return false;
       // 목록을 아직 한 번도 받지 못했으면 사이드바 오류 상태(UI_STATES §2-3 「오류」 + 「다시 시도」).
@@ -1109,10 +1125,10 @@ export function createHttpDataSource(deps: HttpDataSourceDeps): HttpDataSource {
       if (gen === generation) {
         resuming = false;
         if (inCatchUp) endCatchUp();
-        // 마지막 시도에서만 기록한다 — 재시도가 세대를 올리므로 앞선 시도의 finally는 여기 오지 않는다.
+        // 실패 결과는 마지막 시도에서만 기록한다 — 재시도가 세대를 올리므로 앞선 시도의 finally는 여기 오지 않는다.
         const report = syncReport;
         syncReport = null;
-        if (report !== null) recordMetric('sync_result', syncDims(trigger, report.outcome, report.changes, report.endedAt - report.startedAt));
+        if (report !== null && !syncRecorded) recordMetric('sync_result', syncDims(trigger, report.outcome, report.changes, report.endedAt - report.startedAt));
       }
     }
   };

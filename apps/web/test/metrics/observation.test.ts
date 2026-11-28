@@ -62,6 +62,37 @@ describe('FR-OPS-03 sync_result 관찰 지점', () => {
     expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'ok', caught_up_count: 0, duration_ms: 500 }]);
   });
 
+  it('sync 성공은 뒤 단계(목록 로드·소켓 열림 대기)를 기다리지 않고 그 자리에서 1건 기록한다', async () => {
+    const r = recorder();
+    const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
+    writeCheckpoint(ME, 0, storage);
+    server.on('GET /api/sync', () => syncPage(1));
+    const seenAtList: number[] = [];
+    server.on('GET /api/conversations', () => {
+      seenAtList.push(r.of('sync_result').length);
+      return { status: 200, body: { conversations: [summary()], next_cursor: null } };
+    });
+    expect(await ds.resume()).toBe(true);
+    expect(seenAtList).toEqual([1]);
+    expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'ok', caught_up_count: 1, duration_ms: 0 }]);
+  });
+
+  it('sync 성공 뒤 목록 로드가 서버 불가로 재시도돼도 sync_result는 절차당 1건', async () => {
+    const r = recorder();
+    const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
+    writeCheckpoint(ME, 0, storage);
+    server.on('GET /api/sync', () => syncPage(0));
+    let lists = 0;
+    server.on('GET /api/conversations', () => {
+      lists += 1;
+      return lists === 1 ? { status: 502, body: {} } : { status: 200, body: { conversations: [summary()], next_cursor: null } };
+    });
+    await ds.resume();
+    await settle();
+    expect(lists).toBe(2);
+    expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'ok', caught_up_count: 0, duration_ms: 0 }]);
+  });
+
   it('410 → snapshot 재초기화: outcome resync_required', async () => {
     const r = recorder();
     const { server, ds, storage } = setup({ metrics: r.metrics, now: () => 0 });
