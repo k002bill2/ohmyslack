@@ -12,10 +12,13 @@ export type MetricDims = Readonly<Record<string, string | number | boolean>>;
 
 /** metric_daily 저장소. dims는 검증된 레코드에서 event를 뺀 필드뿐이다. */
 export interface MetricsStore {
-  /** (day, event, dims) 행의 count를 n 올린다(없으면 n으로 만든다). */
-  add(day: string, event: string, dims: MetricDims, n: number): Promise<void>;
-  /** day < cutoffDay 인 행을 지우고 지운 행 수를 돌려준다. */
-  pruneBefore(cutoffDay: string): Promise<number>;
+  /**
+   * (day, event, dims) 행의 count를 n 올린다(없으면 n으로 만든다). signal이 중단되면 기록기는 이 호출을 실패로 보고
+   * 재합산했으므로, 구현은 아직 커밋하지 않았다면 커밋하지 말아야 한다(중복 집계 방지).
+   */
+  add(day: string, event: string, dims: MetricDims, n: number, signal?: AbortSignal): Promise<void>;
+  /** day < cutoffDay 인 행을 지우고 지운 행 수를 돌려준다. signal 의미는 add와 같다. */
+  pruneBefore(cutoffDay: string, signal?: AbortSignal): Promise<number>;
 }
 
 export interface MetricsRecorder {
@@ -41,6 +44,17 @@ export const METRIC_FLUSH_INTERVAL_MS = 10_000;
 export const METRIC_MAX_KEYS = 1024;
 /** 종료 시 마지막 flush를 기다리는 상한. DB가 멈춰 있어도 종료가 매달리지 않게 한다. */
 export const METRIC_CLOSE_TIMEOUT_MS = 2000;
+/**
+ * 저장소 호출(행별 add·보관 삭제) 1회의 상한. 넘기면 그 호출은 포기(AbortSignal)하고 실패로 본다 — 저장소가 끝나지 않아도
+ * 진행 중 flush가 풀려 다음 주기에 다시 시도한다(QA-REPORT-2 v1_hang). 순서 제약: METRIC_CLOSE_TIMEOUT_MS(2초) &lt; 이 값 &lt;
+ * METRIC_FLUSH_INTERVAL_MS(10초) — 한 주기 안에 포기가 확정되고, 종료 상한이 먼저 끝난다.
+ */
+export const METRIC_WRITE_TIMEOUT_MS = 5000;
+/**
+ * 계측 쿼리의 서버측 statement_timeout(트랜잭션 로컬). METRIC_WRITE_TIMEOUT_MS보다 짧아서, 기록기가 포기하는 시점에는
+ * DB 문장이 이미 취소돼 있다 → 포기한 행이 나중에 커밋돼 재합산분과 겹치는(중복 집계) 일을 막는다.
+ */
+export const METRIC_STATEMENT_TIMEOUT_MS = 3000;
 
 /** onError로 넘기는 고정 코드(값·식별자 없음). */
 export type MetricErrorCode = 'metric_write_failed' | 'metric_buffer_full';
@@ -85,6 +99,8 @@ export interface MetricsRecorderDeps {
   readonly flushIntervalMs?: number;
   /** 기본 METRIC_MAX_KEYS(테스트 주입용). */
   readonly maxKeys?: number;
+  /** 기본 METRIC_WRITE_TIMEOUT_MS(테스트 주입용). */
+  readonly writeTimeoutMs?: number;
 }
 
 export interface PendingMetricsRecorder extends MetricsRecorder {
@@ -115,9 +131,35 @@ function withBucketedDuration(input: Readonly<Record<string, unknown>>): Record<
   return bucketed === undefined ? rest : { ...rest, duration_ms: bucketed };
 }
 
+class MetricWriteTimeout extends Error {}
+
+/**
+ * 저장소 호출 1회를 ms로 묶는다. 상한에 닿으면 signal을 중단하고 MetricWriteTimeout으로 거부한다(원래 호출은 기다리지 않음).
+ * 저장소의 동기 예외도 거부로 바꾸고, 포기한 호출이 나중에 거부돼도 unhandled rejection이 되지 않게 받아 둔다.
+ */
+async function withWriteTimeout<T>(ms: number, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new MetricWriteTimeout('metric write timeout'));
+    }, ms);
+    timer.unref?.();
+  });
+  const call = Promise.resolve().then(() => work(controller.signal));
+  call.catch(() => undefined);
+  try {
+    return await Promise.race([call, cap]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetricsRecorder {
   const { store, clock } = deps;
   const maxKeys = deps.maxKeys ?? METRIC_MAX_KEYS;
+  const writeTimeoutMs = deps.writeTimeoutMs ?? METRIC_WRITE_TIMEOUT_MS;
   let buffer = new Map<string, Pending>();
   let inFlight: Promise<void> | undefined;
   // 버퍼 초과 신호는 flush 주기당 한 번만(초과가 이어져도 로그가 요청 수만큼 늘지 않게).
@@ -143,15 +185,23 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
     }
     buffer.set(key, { day, event, dims, n });
   };
-  /** 버퍼를 떼어 행마다 순서대로 +n(진행 중 저장 호출 ≤ 1). 실패한 행은 버퍼에 다시 합산한다. */
+  /**
+   * 버퍼를 떼어 행마다 순서대로 +n(기록기가 기다리는 저장 호출 ≤ 1). 실패한 행은 버퍼에 다시 합산한다(재합산은 이 catch 한 곳).
+   * 상한 초과(저장소 정지)면 남은 행은 부르지 않고 그대로 재합산한다 — flush 1회가 (행 수 × 상한)으로 늘어나지 않게.
+   */
   const drain = async (batch: readonly Pending[]): Promise<void> => {
     let failed = false;
+    let stalled = false;
     for (const row of batch) {
+      if (stalled) {
+        merge(row.day, row.event, row.dims, row.n);
+        continue;
+      }
       try {
-        // 저장소의 동기 예외도 거부로 바꿔 받는다.
-        await Promise.resolve().then(() => store.add(row.day, row.event, row.dims, row.n));
-      } catch {
+        await withWriteTimeout(writeTimeoutMs, (signal) => store.add(row.day, row.event, row.dims, row.n, signal));
+      } catch (error) {
         failed = true;
+        stalled = error instanceof MetricWriteTimeout;
         merge(row.day, row.event, row.dims, row.n);
       }
     }
@@ -202,26 +252,27 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
 }
 
 /** 보관 삭제 1회(오늘 포함 7일 밖 행). */
-export function pruneMetrics(store: MetricsStore, now: number): Promise<number> {
-  return store.pruneBefore(retentionCutoff(now));
+export function pruneMetrics(store: MetricsStore, now: number, signal?: AbortSignal): Promise<number> {
+  return store.pruneBefore(retentionCutoff(now), signal);
 }
 
 /**
  * 기동 시 1회 + 주기마다 보관 삭제(attachments `startRetentionTimer`와 같은 모양: 겹침 방지·unref·정지 함수).
- * 실패는 onError로만 알리고 다음 주기에 다시 시도한다.
+ * 실패·상한(timeoutMs) 초과는 onError로만 알리고 다음 주기에 다시 시도한다 — 삭제가 끝나지 않아도 겹침 방지 플래그가 풀린다.
  */
 export function startMetricRetention(
   store: MetricsStore,
   clock: () => number,
   onError: (error: unknown) => void,
   intervalMs: number = METRIC_RETENTION_INTERVAL_MS,
+  timeoutMs: number = METRIC_WRITE_TIMEOUT_MS,
 ): () => void {
   let running = false;
   const run = (): void => {
     if (running) return;
     running = true;
     Promise.resolve()
-      .then(() => pruneMetrics(store, clock()))
+      .then(() => withWriteTimeout(timeoutMs, (signal) => pruneMetrics(store, clock(), signal)))
       .catch(onError)
       .finally(() => {
         running = false;
