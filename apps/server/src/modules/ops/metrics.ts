@@ -51,14 +51,16 @@ export const METRIC_CLOSE_TIMEOUT_MS = 2000;
  */
 export const METRIC_WRITE_TIMEOUT_MS = 5000;
 /**
- * 계측 쿼리의 서버측 statement_timeout(트랜잭션 로컬). METRIC_WRITE_TIMEOUT_MS보다 짧아서, 기록기가 포기하는 시점에는
- * DB 문장이 이미 취소돼 있다 → 포기한 행이 나중에 커밋돼 재합산분과 겹치는(중복 집계) 일을 막는다.
+ * 계측 쿼리의 서버측 statement_timeout(트랜잭션 로컬). METRIC_WRITE_TIMEOUT_MS보다 짧아서, 잠금 대기·느린 문장은 보통 기록기
+ * 상한 전에 DB가 취소한다(포기한 행이 나중에 커밋되는 일을 줄임). 연결 대기가 길면 문장이 늦게 시작해 상한 전에 취소되지 않을 수
+ * 있다 — 그때는 커밋 전 signal 확인이 막고, 남는 COMMIT 경합(상한 초과 flush마다 최대 1행)은 metrics-store.ts 참조.
  */
 export const METRIC_STATEMENT_TIMEOUT_MS = 3000;
 /**
  * 상한으로 포기했지만 아직 정착(resolve/reject)하지 않은 저장 호출 수의 상한(QA P3-2). 이 수 이상이면 그 주기의 저장 호출을
  * 건너뛰고 버퍼에 그대로 두며 metric_write_failed를 낸다. 포기된 호출은 pg 연결(또는 연결 대기 자리)을 계속 쥐고 있을 수 있으므로,
- * pool 기본 max 10보다 충분히 작게 2로 둔다 — 계측이 일반 요청 연결 슬롯을 최대 2개까지만 붙잡는다.
+ * pool 기본 max 10보다 충분히 작게 2로 둔다 — 기록기 단독으로는 계측이 일반 요청 연결 슬롯(또는 대기 자리)을 최대 2개까지만
+ * 붙잡는다. 검사는 호출 시작 때만 하므로, 기동 시·24시간마다 retention 호출이 겹치면 최대 3개다.
  * 트레이드오프(의도): 포기된 호출이 끝내 정착하지 않으면(RST 없는 죽은 소켓) 2개가 찬 뒤 계측 쓰기가 정지한다. 풀 슬롯 보호를
  * 계측 지속보다 우선한 것이며, 정지 중에도 주기마다 metric_write_failed가 나와 관측된다. 정착하는 순간 다음 주기에 재개한다.
  * 해소책은 pool connectionTimeoutMillis·keepalive 결정(PM 결정 사항)이다. 카운터는 저장소 객체별로 기록기·retention이 공유한다.
