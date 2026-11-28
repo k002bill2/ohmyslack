@@ -5,8 +5,12 @@
 # 전제: 저장소 루트에서 `pnpm install` 완료, `.env.test`에 TEST_DATABASE_URL(루프백·`_test` DB, 쿼리 없음).
 #       호출자가 `set -a; . ./.env.test; set +a`로 미리 로드해도 되고, 없으면 이 스크립트가 같은 방식으로 로드한다.
 #       `--run-live`는 `--run-attested`와 같은 G3 해시 게이트를 거친다(불일치면 EXIT 5, 아무것도 안 돌림).
-# 비밀(토큰·비밀번호·쿠키·CSRF)은 출력하지 않고 argv에도 싣지 않는다(env·0600 파일만).
+# 비밀(토큰·비밀번호·쿠키·CSRF)은 출력하지 않고 argv에도 싣지 않는다(env·0600 파일만). 호출자 xtrace는 맨 앞에서 끈다.
 # 선택 env: PYTHON(기본 플러그인 .venv/bin/python — 포트·비밀번호 생성 보조용. 테스트 인터프리터·Hermes 경로는 래퍼가 고정).
+# 호출자의 SHELLOPTS=xtrace·BASH_XTRACEFD 가 .env.test 적재·토큰/쿠키 대입을 stderr 에 찍지 않게 맨 앞에서 끈다.
+# unset 이 먼저인 이유는 래퍼(isolated-pytest.sh)와 같다: xtrace 출력 fd 를 먼저 없애 끄는 구문 자체가 새지 않게 한다.
+builtin unset BASH_XTRACEFD 2>/dev/null || true
+builtin set +x +o xtrace 2>/dev/null || true
 set -euo pipefail
 
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"
