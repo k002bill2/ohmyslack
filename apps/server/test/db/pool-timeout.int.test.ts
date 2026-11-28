@@ -157,6 +157,9 @@ describe('서버측 idle_in_transaction_session_timeout', () => {
     await sleep(50);
     expect(escaped).toEqual([]);
     expectFixedCodeLogs(lines);
+    // 원인 코드(서버측 세션 종료)가 1줄로 남는다 — createPool에 준 로거, 호출처 시그니처 변경 없음.
+    const broken = lines.map((line) => JSON.parse(line) as Record<string, unknown>).filter((r) => r.event === 'db_tx_connection_broken');
+    expect(broken).toEqual([{ event: 'db_tx_connection_broken', error_code: '25P03' }]);
   });
 
   it('트랜잭션을 연 채 반납된(누수) 유휴 연결은 서버가 끊고, pool error 처리기가 고정 코드 25P03만 로그하며 프로세스는 산다', async () => {

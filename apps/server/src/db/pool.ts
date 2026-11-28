@@ -96,9 +96,13 @@ function splitUrlOptions(connectionString: string): { connectionString: string; 
   return { connectionString: parsed.toString(), urlOptions };
 }
 
+/** createPool이 만든 pool의 로거. withTransaction이 호출처 시그니처 변경 없이 깨진 연결 코드를 남기는 데 쓴다. */
+const POOL_LOGGERS = new WeakMap<object, PoolLogger>();
+
 /** 'error' 처리기를 단 풀. 처리기가 없으면 유휴 연결 종료 하나로 Unhandled 'error' event가 되어 프로세스가 끝난다. */
 export function createPool(config: pg.PoolConfig, logger: PoolLogger): pg.Pool {
   const pool = new pg.Pool(config);
+  POOL_LOGGERS.set(pool, logger);
   pool.on('error', (error) => {
     logger.log({ event: 'db_pool_client_error', error_code: dbErrorCode(error) });
   });
@@ -114,8 +118,13 @@ export interface TxOutcome<T> {
 /**
  * 트랜잭션 공통 경계. 안에서는 받은 client만 쓴다(풀 고갈 시 교착 방지).
  * 체크아웃 동안 client 'error'를 받아 두고(던지지 않음), 연결이 깨졌으면(client 오류 또는 ROLLBACK 실패) release(err)로 폐기한다.
+ * 폐기할 때 원인 코드(예: 서버측 세션 종료 25P03)만 1줄 로그한다 — 로거는 인자로 주거나, 없으면 createPool에 준 로거(B6: 메시지·SQL 없음).
  */
-export async function withTransaction<T>(pool: Pick<pg.Pool, 'connect'>, work: (client: pg.PoolClient) => Promise<TxOutcome<T>>): Promise<T> {
+export async function withTransaction<T>(
+  pool: Pick<pg.Pool, 'connect'>,
+  work: (client: pg.PoolClient) => Promise<TxOutcome<T>>,
+  logger: PoolLogger | undefined = POOL_LOGGERS.get(pool),
+): Promise<T> {
   const client = await pool.connect();
   let broken: Error | undefined;
   const onError = (error: Error): void => {
@@ -135,6 +144,9 @@ export async function withTransaction<T>(pool: Pick<pg.Pool, 'connect'>, work: (
   } finally {
     client.removeListener('error', onError);
     if (broken === undefined) client.release();
-    else client.release(broken);
+    else {
+      logger?.log({ event: 'db_tx_connection_broken', error_code: dbErrorCode(broken) });
+      client.release(broken);
+    }
   }
 }
