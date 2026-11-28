@@ -15,7 +15,9 @@ describe('verify', () => {
     ]);
     const intStep = buildSteps({}).find((s) => s.label === 'test:int');
     expect(intStep?.skipReason).toBeUndefined();
-    expect(intStep?.logFile).toBe(INT_LOG_FILE);
+    // 로그는 test:int 래퍼가 직접 남긴다(이중 기록·버퍼링 없음).
+    expect(intStep?.logFile).toBeUndefined();
+    expect(INT_LOG_FILE).toBe('reports/int/test-int.log');
   });
 
   it('skips only test:int when VERIFY_SKIP_INT=1 and prints a banner', async () => {

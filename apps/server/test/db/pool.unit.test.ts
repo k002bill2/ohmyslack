@@ -90,6 +90,25 @@ describe('withTransaction', () => {
   });
 });
 
+describe('withTransaction 깨진 연결 로그', () => {
+  it('연결이 깨져 release(err)할 때만 고정 코드 1줄을 남긴다 — 메시지·SQL 없음', async () => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = { log: (f: Readonly<Record<string, unknown>>) => lines.push({ ...f }) };
+    const healthy = fakeClient();
+    await withTransaction(healthy.pool, async () => ({ commit: true, value: 1 }), logger);
+    expect(lines).toEqual([]);
+
+    const fx = fakeClient();
+    const idle = Object.assign(new Error('terminating connection due to idle-in-transaction timeout'), { code: '25P03' });
+    await withTransaction(fx.pool, async () => {
+      fx.client.emit('error', idle);
+      return { commit: false, value: 0 };
+    }, logger);
+    expect(lines).toEqual([{ event: 'db_tx_connection_broken', error_code: '25P03' }]);
+    expect(JSON.stringify(lines)).not.toMatch(/idle-in-transaction|SELECT|ROLLBACK/);
+  });
+});
+
 describe('createPool', () => {
   it("유휴 클라이언트 오류(pool 'error')를 던지지 않고 코드만 로그한다 — 연결 문자열·메시지는 남기지 않는다", async () => {
     const lines: Record<string, unknown>[] = [];

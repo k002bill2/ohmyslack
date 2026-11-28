@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -6,11 +6,14 @@ import { LOG_CANARIES } from '../log-canaries.ts';
 import { run } from '../check-log-leak.ts';
 import { captureCtx } from './helpers.ts';
 
-function reportsRoot(logs: Record<string, string> | null): string {
+/** reports/int 아래 로그를 만든다. test:int 래퍼 로그(test-int.log)는 따로 주지 않으면 깨끗한 내용으로 둔다. */
+function reportsRoot(logs: Record<string, string> | null, withIntLog = true, withResult = true): string {
   const root = mkdtempSync(join(tmpdir(), 'logleak-'));
   mkdirSync(join(root, 'reports'));
-  if (logs !== null) {
-    for (const [rel, body] of Object.entries(logs)) {
+  if (withResult) writeFileSync(join(root, 'reports/vitest-int.json'), '{}'); // 로그보다 먼저 써서 로그가 더 새롭다
+  const all = withIntLog ? { 'test-int.log': 'GET /api/healthz 200\n[test:int] exit=0\n', ...logs } : logs;
+  if (all !== null) {
+    for (const [rel, body] of Object.entries(all)) {
       mkdirSync(join(root, 'reports/int', rel, '..'), { recursive: true });
       writeFileSync(join(root, 'reports/int', rel), body);
     }
@@ -49,10 +52,41 @@ describe('check-log-leak', () => {
     expect(ctx.lines.join('\n')).toContain('push_endpoint 카나리아');
   });
 
-  it('passes (0) with 검사 대상 없음 when there are no int logs', async () => {
-    const ctx = captureCtx(reportsRoot(null), {});
+  it('fails (1) when the test:int log is missing instead of passing vacuously', async () => {
+    const ctx = captureCtx(reportsRoot(null, false), {});
+    expect(await run([], ctx)).toBe(1);
+    expect(ctx.lines.join('\n')).toContain('reports/int/test-int.log 가 없습니다');
+  });
+
+  it('fails (1) when the int result file is missing (freshness undeterminable)', async () => {
+    const ctx = captureCtx(reportsRoot(null, true, false), {});
+    expect(await run([], ctx)).toBe(1);
+    expect(ctx.lines.join('\n')).toContain('로그 신선도를 판정할 수 없습니다');
+  });
+
+  it('fails (1) when only other logs exist (test:int wrapper log missing)', async () => {
+    const ctx = captureCtx(reportsRoot({ 'sub/ws.log': 'ws open\n' }, false), {});
+    expect(await run([], ctx)).toBe(1);
+  });
+
+  it('fails (1) when the int log is older than the last int run result (stale log)', async () => {
+    const root = reportsRoot(null);
+    writeFileSync(join(root, 'reports/vitest-int.json'), '{}');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(join(root, 'reports/int/test-int.log'), old, old);
+    const ctx = captureCtx(root, {});
+    expect(await run([], ctx)).toBe(1);
+    expect(ctx.lines.join('\n')).toContain('보다 오래됐습니다');
+  });
+
+  it('passes (0) when the int log is newer than the int run result', async () => {
+    const root = reportsRoot(null);
+    writeFileSync(join(root, 'reports/vitest-int.json'), '{}');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(join(root, 'reports/vitest-int.json'), old, old);
+    const ctx = captureCtx(root, {});
     expect(await run([], ctx)).toBe(0);
-    expect(ctx.lines.join('\n')).toContain('검사 대상 없음');
+    expect(ctx.lines.join('\n')).toContain('로그 1개');
   });
 
   it('passes (0) on clean logs', async () => {

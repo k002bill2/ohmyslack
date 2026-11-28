@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import type { RunContext } from './lib/cli.ts';
+import { INT_LOG_FILE } from './test-int.ts';
 
 // 불변식: verify는 VERIFY_ARTIFACTS 목록(자기 산출물 + 게이트가 읽는 perf JSON)만 지운다.
 // reports/ 자체·reports/qa/(수동 QA 증거) 등 목록 밖 경로는 절대 지우지 않는다.
@@ -17,7 +18,8 @@ export interface VerifyStep {
   readonly env?: Readonly<Record<string, string>>;
 }
 
-export const INT_LOG_FILE = 'reports/int/test-int.log';
+/** test:int 래퍼(tools/test-int.ts)가 직접 기록하는 int 로그. verify는 같은 파일을 다시 쓰지 않는다. */
+export { INT_LOG_FILE };
 
 /**
  * runVerify 시작 시 지우는 산출물(저장소 루트 기준). stale 결과로 게이트가 오판하지 않게 하려는 목적.
@@ -61,7 +63,7 @@ export function buildSteps(env: RunContext['env']): readonly VerifyStep[] {
     { label: 'typecheck', args: ['-r', 'typecheck'] },
     { label: 'lint', args: ['-r', 'lint'] },
     { label: 'test', args: ['-r', 'test', '--coverage'] },
-    { label: 'test:int', args: ['test:int'], logFile: INT_LOG_FILE, ...intSkip },
+    { label: 'test:int', args: ['test:int'], ...intSkip },
     { label: 'build', args: ['-r', 'build'] },
     { label: 'check:cleanroom', args: ['check:cleanroom'] },
     { label: 'check:no-persist-cache', args: ['check:no-persist-cache'] },
