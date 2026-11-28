@@ -10,6 +10,6 @@ export const SHELL_COPY = Object.freeze({
   /** 헤더 오른쪽 스레드 패널 토글(시안 01). 열린 스레드가 있을 때만 렌더 = 닫기 동작. */
   closeThreadPanel: '스레드 패널 닫기',
   /** R4 분할선(role=separator) 접근 이름 — 조작법을 함께 읽어 준다(시안 Main). */
-  navSplit: '내비게이션 폭 조절 (←→, Enter 접기, 더블클릭 초기화)',
+  navSplit: '사이드바 폭 조절 (←→, Enter 접기, 더블클릭 초기화)',
   threadSplit: '스레드 폭 조절 (←→, Enter 닫기, 더블클릭 초기화)',
 });
