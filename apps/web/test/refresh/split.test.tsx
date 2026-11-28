@@ -94,9 +94,15 @@ describe('셸 통합', () => {
     expect(shell()?.dataset['split']).toBeUndefined();
   });
 
+  it('사이드바 분할선의 접근 이름은 사이드바 토글 용어와 같다(G-77)', async () => {
+    await wide(false);
+    expect(screen.getByRole('separator', { name: '사이드바 폭 조절 (←→, Enter 접기, 더블클릭 초기화)' })).toBeTruthy();
+    expect(screen.queryByRole('separator', { name: /내비게이션/ })).toBeNull();
+  });
+
   it('내비 분할선 Enter → 레일로 접힘, 다시 Enter → 펼침', async () => {
     const user = await wide(false);
-    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const sep = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     sep.focus();
     await user.keyboard('{Enter}');
     expect(shell()?.dataset['sidebar']).toBe('collapsed');
@@ -225,7 +231,7 @@ describe('Home/End 큰 이동(P3-2, APG Window Splitter)', () => {
   it('내비: Home = 200(레일로 접지 않음), End = 현재 상한', async () => {
     await wide(false);
     stubInner(() => 1416);
-    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const sep = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     sep.focus();
     expect(fireEvent.keyDown(sep, { key: 'Home' })).toBe(false);
     expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('200px');
@@ -236,7 +242,7 @@ describe('Home/End 큰 이동(P3-2, APG Window Splitter)', () => {
 
   it('내비: 레일(사용자 접힘)에서 Home은 무시한다 — 이미 최소(P3-1). 펼치기는 → 와 Enter', async () => {
     await wide(false);
-    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const sep = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'Enter' });
     expect(shell()?.dataset['sidebar']).toBe('collapsed');
@@ -255,7 +261,7 @@ describe('Home/End 큰 이동(P3-2, APG Window Splitter)', () => {
     await user.click(screen.getByRole('button', { name: 'general' }));
     await user.click(screen.getByRole('button', { name: /답글 1/ }));
     expect(shell()?.dataset['sidebar']).toBe('collapsed');
-    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const sep = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'Home' });
     fireEvent.keyDown(sep, { key: 'End' });
@@ -411,7 +417,7 @@ describe('측정→클램프 순환 차단(r2 P2-1·P3-1)', () => {
     let inner = 1400;
     stubInner(() => inner);
     fireEvent(window, new Event('resize'));
-    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const sep = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'End' });
     expect(shell()?.style.getPropertyValue('--sidebar-w')).toBe('360px');
@@ -437,7 +443,7 @@ describe('측정→클램프 순환 차단(r2 P2-1·P3-1)', () => {
     await wide(true);
     stubInner(() => 1276.4);
     fireEvent(window, new Event('resize'));
-    const sep = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const sep = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     sep.focus();
     fireEvent.keyDown(sep, { key: 'End' });
     const before = shell()?.style.getPropertyValue('--sidebar-w');
@@ -465,7 +471,7 @@ describe('내비 상한은 스레드 최소 폭 기준(r3 P2-1)·렌더 중 DOM 
     await wide(true);
     stubInner(() => 1300);
     fireEvent(window, new Event('resize'));
-    const nav = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const nav = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     // 레일에서 스레드 End → 의도 772(1300 − 24 − 432 − 72).
     fireEvent.keyDown(nav, { key: 'Enter' });
@@ -533,7 +539,7 @@ describe('내비 상한은 스레드 최소 폭 기준(r3 P2-1)·렌더 중 DOM 
     fireEvent(window, new Event('resize'));
     const sep = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     fireEvent.keyDown(sep, { key: 'ArrowLeft' });
-    fireEvent.keyDown(screen.getByRole('separator', { name: /내비게이션 폭 조절/ }), { key: 'ArrowRight' });
+    fireEvent.keyDown(screen.getByRole('separator', { name: /사이드바 폭 조절/ }), { key: 'ArrowRight' });
     expect(reads).toBe(0);
   });
 });
@@ -544,7 +550,7 @@ describe('넓히는 조작이 공간에 막혀도 사용자 폭(의도)은 줄�
     await wide(true);
     stubInner(() => 1300);
     fireEvent(window, new Event('resize'));
-    const nav = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const nav = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     fireEvent.keyDown(nav, { key: 'Enter' });
     fireEvent.keyDown(thread, { key: 'End' });
@@ -657,7 +663,7 @@ describe('방향 판정 보정(교차 검토 P3-A·P3-B)', () => {
     await wide(true);
     stubInner(() => 1300);
     fireEvent(window, new Event('resize'));
-    const nav = screen.getByRole('separator', { name: /내비게이션 폭 조절/ });
+    const nav = screen.getByRole('separator', { name: /사이드바 폭 조절/ });
     const thread = screen.getByRole('separator', { name: /스레드 폭 조절/ });
     fireEvent.keyDown(nav, { key: 'Enter' });
     fireEvent.keyDown(thread, { key: 'End' });

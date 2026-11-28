@@ -1,6 +1,7 @@
 /** 운영 write 응답 런타임 검증: 계약 위반 2xx는 실패로 단정하지 않고 「저장 여부 확인 중」 → sync로 수렴한다. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writeCheckpoint } from '../../src/features/sync';
+import { failureView } from '../../src/features/conversation/MessageItemRules.js';
 import { CONV, ME, U, flush, message, setup } from './fake-server.js';
 
 const SECRET = '비밀본문-계약위반';
@@ -63,6 +64,10 @@ describe('write 응답 런타임 parse', () => {
     const res = await ds.editMessage?.(original.id, SECRET);
     expect(res).toEqual({ ok: false, status: 'network', timedOut: true });
     expect(JSON.stringify(res)).not.toContain(SECRET);
+    // 표시 문구: 응답이 「늦었다」고 단정하지 않는다(계약 위반은 지연이 아니다, G-78).
+    const view = failureView(res as Parameters<typeof failureView>[0]);
+    expect(view.text).toBe('처리 결과를 확인하지 못했습니다.');
+    expect(view.text).not.toContain('늦');
     expect(ds.getSnapshot().messages.find((m) => m.id === original.id)?.body).toBe('원문');
     server.on('GET /api/sync', () => syncWith(30, edited));
     expect(await ds.resume()).toBe(true);
