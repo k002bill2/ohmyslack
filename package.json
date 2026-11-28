@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p e2e/tsconfig.json --noEmit",
     "lint": "eslint tools e2e eslint.config.js vitest.config.ts vitest.int.config.ts",
     "test": "vitest run --config vitest.config.ts",
-    "test:int": "tsx tools/bin/assert-test-db.ts && vitest run --config vitest.int.config.ts --passWithNoTests",
+    "test:int": "tsx tools/bin/test-int.ts",
     "check:cleanroom": "tsx tools/bin/check-cleanroom.ts",
     "check:no-persist-cache": "tsx tools/bin/check-no-persist-cache.ts",
     "check:design-tokens": "tsx tools/bin/check-design-tokens.ts",

@@ -202,7 +202,7 @@ pnpm check:cleanroom                 # CLEANROOM.md 5절의 패턴·제외 목�
 pnpm check:no-persist-cache          # B7
 pnpm check:design-tokens             # 토큰 출처·대비 규칙(정본: 디자인 §2-3·§7-1)
 pnpm check:fr-coverage --mode=progress
-pnpm check:log-leak                  # test:int 로그에서 카나리아 문자열 0건
+pnpm check:log-leak                  # test:int 로그에서 카나리아 문자열 0건(test:int 래퍼가 reports/int/test-int.log 기록, 로그가 없거나 reports/vitest-int.json보다 오래되면 실패)
 pnpm audit --prod --audit-level=high
 ```
 
