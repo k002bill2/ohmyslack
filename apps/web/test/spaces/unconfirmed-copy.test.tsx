@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { uploadErrorText } from '../../src/features/conversation/attachments/attachment-drafts.js';
 import { SessionLogoutDialog } from '../../src/features/sessions/SessionLogoutDialog.js';
+import { Composer } from '../../src/features/conversation';
 import { AppShell } from '../../src/features/layout';
 import { failureText, prefixedFailureText } from '../../src/features/spaces';
 import { ATTACHMENT_COPY, BOT_CHANNEL_COPY, ERROR_COPY, SESSION_LIST_COPY } from '../../src/ui/copy.js';
@@ -26,6 +27,27 @@ describe('prefixedFailureText', () => {
     expect(prefixedFailureText('P.', 'U.', TIMED_OUT)).toBe('U.');
     expect(prefixedFailureText('P.', 'U.', NETWORK)).toBe(`P. ${ERROR_COPY.network}`);
     expect(prefixedFailureText('P.', 'U.', { status: 503 })).toBe(`P. ${ERROR_COPY.server}`);
+  });
+});
+
+describe('첨부 업로드 — 작성기 렌더 경로 (G-79)', () => {
+  async function failUpload(failure: { ok: false; status: 'network'; timedOut?: true }) {
+    const { container } = render(<Composer label="메시지" onSend={vi.fn()} onUpload={() => Promise.resolve(failure)} />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array(4)], 'a.png', { type: 'image/png' });
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file] } });
+    });
+    await settle();
+    return screen.getByRole('alert').textContent ?? '';
+  }
+  it('timedOut → 칩 알림에 「업로드 결과를 확인하지 못했습니다.」만, 「업로드하지 못했습니다」 없음', async () => {
+    const text = await failUpload({ ok: false, ...TIMED_OUT });
+    expect(text).toContain(ATTACHMENT_COPY.uploadUnconfirmed);
+    expect(text).not.toContain(ATTACHMENT_COPY.uploadFailed);
+  });
+  it('network → 기존 「접두 + 원인」 불변', async () => {
+    expect(await failUpload({ ok: false, ...NETWORK })).toContain(`${ATTACHMENT_COPY.uploadFailed} ${ERROR_COPY.network}`);
   });
 });
 
