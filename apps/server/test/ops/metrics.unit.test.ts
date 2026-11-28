@@ -394,6 +394,40 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
 
 describe('metrics 겹침·포기 상한 (QA P1-1·P3-2)', () => {
   const PUSH = (outcome: string) => ({ event: 'push_send_result', outcome });
+  const ROW_MS = 4000;
+
+  it('상한 안에서 느린 저장소(행마다 4초·3행 → drain 12초 > 주기 10초)여도 진행 중 저장 호출은 1개뿐이다', async () => {
+    vi.useFakeTimers();
+    expect(ROW_MS).toBeLessThan(METRIC_WRITE_TIMEOUT_MS);
+    expect(ROW_MS * 3).toBeGreaterThan(METRIC_FLUSH_INTERVAL_MS);
+    let active = 0;
+    let maxInFlight = 0;
+    const store = fakeStore();
+    const add = store.add.bind(store);
+    const metrics = createMetricsRecorder({
+      store: {
+        ...store,
+        add: async (day, event, dims, n) => {
+          active += 1;
+          maxInFlight = Math.max(maxInFlight, active);
+          await new Promise((resolve) => setTimeout(resolve, ROW_MS));
+          active -= 1;
+          await add(day, event, dims, n);
+        },
+      },
+      clock: () => T0,
+    });
+    for (const outcome of ['sent', 'expired', 'failed']) metrics.record(PUSH(outcome));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS + 1);
+    // 첫 drain이 진행 중일 때 새 증분이 들어와야 다음 tick에 가드가 없으면 두 번째 drain이 겹친다.
+    for (const outcome of ['sent', 'expired', 'failed']) metrics.record(PUSH(outcome));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 4);
+    expect(maxInFlight).toBe(1);
+    const totals = new Map<string, number>();
+    for (const row of store.rows) totals.set(String(row.dims.outcome), (totals.get(String(row.dims.outcome)) ?? 0) + row.n);
+    expect(Object.fromEntries(totals)).toEqual({ sent: 2, expired: 2, failed: 2 });
+    await metrics.close();
+  });
 
   it('포기됐지만 정착하지 않은 호출이 METRIC_MAX_ABANDONED개면 저장소를 부르지 않고 주기마다 metric_write_failed, 하나가 정착하면 재개해 증분을 정확히 반영한다', async () => {
     vi.useFakeTimers();
