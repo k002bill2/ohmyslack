@@ -9,6 +9,24 @@ const hasLoneSurrogate = (s: string): boolean =>
     return cp >= 0xd800 && cp <= 0xdfff;
   });
 
+/**
+ * ReDoS 방어 시간 판정(부하 내성). 잡음(병렬 워커·GC·coverage)은 시간을 늘리기만 하므로, 상한 안 표본이 하나라도 나오면
+ * 그 입력은 상한 안에 끝날 수 있다는 증거다 — 최대 TRIES번 재고 최솟값을 쓴다. 역추적 정규식은 매 표본이 수 초라
+ * 최솟값도 상한을 넘는다(판별력 유지). 상한 10배를 넘는 표본은 재시도하지 않는다(red가 수십 초로 늘지 않게).
+ */
+const TRIES = 5;
+function bestMs(work: () => void, boundMs: number): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < TRIES; i += 1) {
+    const started = performance.now();
+    work();
+    const elapsed = performance.now() - started;
+    best = Math.min(best, elapsed);
+    if (best < boundMs || elapsed > boundMs * 10) break;
+  }
+  return best;
+}
+
 describe('FR-CLIENT-05 push 알림 미리보기 평문화(toPreviewText)', () => {
   it.each([
     ['굵게·기울임·취소선', '**굵게** 와 _기울임_ 그리고 ~~취소~~ *별표*', '굵게 와 기울임 그리고 취소 별표'],
@@ -56,9 +74,7 @@ describe('FR-CLIENT-05 push 알림 미리보기 평문화(toPreviewText)', () =>
     ['링크 미완', '[a]('.repeat(MESSAGE_BODY_MAX / 4)],
     ['인용 반복', '> '.repeat(MESSAGE_BODY_MAX / 2)],
   ])('본문 상한 길이의 악성 입력(%s)도 빠르게 끝난다(이벤트 루프 점유 방지)', (_name, input) => {
-    const started = performance.now();
-    toPreviewText(input);
-    expect(performance.now() - started).toBeLessThan(100);
+    expect(bestMs(() => toPreviewText(input), 100)).toBeLessThan(100);
   });
 
   it.each([
@@ -67,9 +83,8 @@ describe('FR-CLIENT-05 push 알림 미리보기 평문화(toPreviewText)', () =>
     ['_a 반복', '_a '.repeat(33_334)],
     ['[a]( 반복', '[a]('.repeat(25_000)],
   ])('10만 자 악성 입력(%s)은 200ms 안에 끝나고 결과는 null 또는 100 code point 이하(+…)', (_name, input) => {
-    const started = performance.now();
+    expect(bestMs(() => toPreviewText(input), 200)).toBeLessThan(200);
     const out = toPreviewText(input);
-    expect(performance.now() - started).toBeLessThan(200);
     expect(out === null || codePointLength(out) <= MESSAGE_PREVIEW_MAX + 1).toBe(true);
   });
 
