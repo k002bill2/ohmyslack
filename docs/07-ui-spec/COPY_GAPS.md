@@ -547,6 +547,7 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 ### G-47 봇 추가 실패 문구 ★
 - 위치: 봇 추가 요청(`POST /api/conversations/{id}/bots`) 실패 시 기존 오류 표시(`ErrorState`)에 들어갈 문구. BOT_CHANNEL_SPEC §3-1·§7-2 FR-BOT-11 수용 기준.
 - 확정안(★ Jarvis 초안(2026-11-10), 영환님 사후 조정 가능): 「봇을 추가하지 못했습니다.」 + 기존 원인 1문장(`failureText`, G-19 계열 — 예: 404면 「봇을 추가하지 못했습니다.」 뒤에 `ERROR_COPY.notFound`)
+  - timeout(결과 미확인)은 G-79: 「봇 추가 결과를 확인하지 못했습니다.」 한 문장.
 - 구현: `apps/web/src/ui/copy.ts` `BOT_CHANNEL_COPY`(정본 = 이 항목 + 상수 모듈, DEV_DESIGN §8-9).
 - 근거:
   - `docs/09-specs/BOT_CHANNEL_SPEC.md` §10-1 Q8 ★ — 2026-11-10 영환님 결정: Jarvis 초안으로 진행, 기존 「채널 나가기」 컨트롤·Dialog 문구 구조와 톤을 따른다.
@@ -658,8 +659,9 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 - 위치: 작성기 문서 칩.
 - 확정안:
   - 재사용: 「업로드 중」(`uploading`), 「다시 시도」(`retry`), 「첨부 제거」(`remove`).
-  - 네트워크·5xx 실패: 「업로드하지 못했습니다.」 + 원인 1문장(`ERROR_COPY.network`·`server` 재사용 — G-19). 두 문장이라 마침표(톤 규칙 5). 기존 `uploadFailed` 「업로드하지 못했습니다」(원인 없음)를 이 형식으로 바꾼다 — 이미지 칩에도 같이 적용.
-- 근거: 브리프 「기존 `ERROR_COPY` 재사용 우선」, G-47·G-70(「…하지 못했습니다.」 + 원인) 구조. 현재 업로드 경로는 `failureText`를 쓰지 않는다(`composer-upload.ts:29`) → 구현 변경(REPORT UI-AC-03). 업로드는 20초 상한 면제(PR #31 C1)라 `ERROR_COPY.timeout`은 나오지 않는다(UI-D4).
+  - 네트워크·5xx 실패: 「업로드하지 못했습니다.」 + 원인 1문장(`ERROR_COPY.network`·`server` 재사용 — G-19). 두 문장이라 마침표(톤 규칙 5).
+  - timeout(결과 미확인, 2xx 계약 위반)은 G-79: 「업로드 결과를 확인하지 못했습니다.」 한 문장. 기존 `uploadFailed` 「업로드하지 못했습니다」(원인 없음)를 이 형식으로 바꾼다 — 이미지 칩에도 같이 적용.
+- 근거: 브리프 「기존 `ERROR_COPY` 재사용 우선」, G-47·G-70(「…하지 못했습니다.」 + 원인) 구조. 현재 업로드 경로는 `failureText`를 쓰지 않는다(`composer-upload.ts:29`) → 구현 변경(REPORT UI-AC-03). 업로드는 20초 요청 상한 면제(PR #31 C1, UI-D4)라 시간 상한 초과는 없다. 다만 2xx 응답이 계약을 어기면(`response_contract`, `http-source.ts` `attempt()`) `timedOut: true`가 될 수 있고, 그때는 접두 없이 G-79 문구 「업로드 결과를 확인하지 못했습니다.」 한 문장이다.
 - 대안: 기존 한 문장 유지 — 다시 시도할지 판단할 원인이 빠져 택하지 않았다.
 - ★: 권장.
 
@@ -762,6 +764,7 @@ U §8 Q-1의 세부 항목은 다음과 같이 대응한다.
 ### G-70 로그아웃 실패 ★
 - 위치: 확인 Dialog 안 오류.
 - 확정안: 「로그아웃하지 못했습니다.」 + 원인 1문장(`failureText` — `ERROR_COPY` 재사용: network·timeout·server·rateLimited·badRequest·notFound)
+  - timeout(결과 미확인)은 G-79: 「로그아웃 결과를 확인하지 못했습니다.」 한 문장.
 - 근거: G-47(「봇을 추가하지 못했습니다.」 + 원인) 구조와 같음.
 - 대안: 원인 없이 한 문장 — 다시 시도할지 판단할 수 없어 택하지 않았다.
 - ★: 권장.

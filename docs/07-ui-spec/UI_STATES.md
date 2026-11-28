@@ -382,6 +382,7 @@
 | 실패 — 형식 | 415 + 오류 코드 `unsupported_media_type`·`extension_mismatch`·`encrypted_document`(T §3 415 하위 코드), 또는 코드 없음·모르는 코드 | danger 선 + G-54(세 코드 모두 전용 문구 없이 G-54로 매핑 — 새 문구 없음) | `role="alert"` 1회 | 변화 없음 | 「첨부 제거」 | 제거 |
 | 실패 — 매크로 확장자 | 415 + 오류 코드 `macro_extension_mismatch`(T §3 415 하위 코드) — 매크로가 든 OOXML을 `.docx/.xlsx/.pptx`로 올림 | danger 선 + 「매크로가 들어 있는 문서입니다. .docm·.xlsm·.pptm 확장자로 저장해 다시 보내 주세요.」(G-56). 코드가 오지 않으면 실패 — 형식 문구로 대체 | `role="alert"` 1회 | 변화 없음 | 「첨부 제거」 | 제거 |
 | 실패 — 네트워크·5xx | 응답 없음·5xx | danger 선 + 「업로드하지 못했습니다.」 + 원인 1문장(`ERROR_COPY.network`·`server` 재사용, G-57) + 「다시 시도」 | `role="alert"` 1회 | 변화 없음 | 「다시 시도」(같은 파일 재업로드)·제거 | 2xx → 첨부 대기 |
+| 실패 — 결과 미확인 | 2xx 응답이 계약 위반(`response_contract` → `timedOut: true`) | danger 선 + 「업로드 결과를 확인하지 못했습니다.」 한 문장(접두 없음, G-79) + 「다시 시도」 | `role="alert"` 1회 | 변화 없음 | 「다시 시도」·제거 | 2xx → 첨부 대기 |
 
 - 시간 초과 상태는 **없다.** 원시 바이트 업로드는 20초 요청 상한(`REQUEST_TIMEOUT_MS`, `apps/web/src/data/api.ts:44`, PR #31 C1 `55ac812`)에서 면제되어 있고(`api.ts:89`) 이 면제를 유지한다(UI-D4, 계약 T §3 `POST /api/attachments` 행). 느린 회선은 「업로드 중」이 길어질 뿐이며 사용자는 「첨부 제거」로 끊는다.
 - 제거·취소 후 포커스: **작성기 입력란**. 칩이 여러 개면 다음 칩의 「첨부 제거」, 없으면 입력란(I-4와 같은 "사라진 트리거" 규칙).
