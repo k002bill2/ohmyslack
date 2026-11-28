@@ -3,7 +3,10 @@ import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
 import {
   METRIC_CLOSE_TIMEOUT_MS,
   METRIC_FLUSH_INTERVAL_MS,
+  METRIC_MAX_ABANDONED,
   METRIC_MAX_KEYS,
+  METRIC_STATEMENT_TIMEOUT_MS,
+  METRIC_WRITE_TIMEOUT_MS,
   createMetricsRecorder,
   metricDay,
   noopMetrics,
@@ -171,22 +174,46 @@ describe('metric retention (7일, 시간 주입)', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(calls).toHaveLength(2);
   });
+
+  it('startMetricRetention: 끝나지 않는 삭제는 상한 뒤 onError 1회·signal 중단, 다음 주기에 다시 실행된다', async () => {
+    vi.useFakeTimers();
+    const signals: (AbortSignal | undefined)[] = [];
+    const onError = vi.fn();
+    const store = fakeStore({
+      pruneBefore: (_cutoff, signal) => {
+        signals.push(signal);
+        return new Promise<number>(() => undefined);
+      },
+    });
+    const interval = METRIC_WRITE_TIMEOUT_MS * 4;
+    const stop = startMetricRetention(store, () => T0, onError, interval);
+    await vi.advanceTimersByTimeAsync(METRIC_WRITE_TIMEOUT_MS - 1);
+    expect(onError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(interval - METRIC_WRITE_TIMEOUT_MS);
+    expect(signals).toHaveLength(2);
+    stop();
+  });
 });
 
 describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
   const PUSH = (outcome: string) => ({ event: 'push_send_result', outcome });
   const OUTCOMES = ['sent', 'expired', 'failed'] as const;
 
-  it('끝나지 않는 저장소: record 10,000회와 주기 flush가 겹쳐도 진행 중 저장 호출은 1개를 넘지 않는다', async () => {
+  it('끝나지 않는 저장소: record 10,000회와 주기 flush가 겹쳐도 저장 호출은 flush 주기 수 이하이고, 새 호출 전에 앞 호출은 포기(abort)돼 있다', async () => {
     vi.useFakeTimers();
-    let inFlight = 0;
-    let maxInFlight = 0;
+    // 쓰기 상한(METRIC_WRITE_TIMEOUT_MS) 도입 후: 끝나지 않는 호출은 상한에서 포기되고 다음 주기에 다시 시도된다.
+    // V1 의도(요청당 쓰기 증폭 없음·기록기가 기다리는 호출 ≤ 1)는 "호출 수 ≤ 주기 수"와 "새 호출 시점에 앞 호출 전부 abort"로 본다.
+    const signals: AbortSignal[] = [];
+    let ownedAtStart = 0;
     let calls = 0;
     const store = fakeStore({
-      add: () => {
+      add: (_day, _event, _dims, _n, signal) => {
         calls += 1;
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
+        ownedAtStart = Math.max(ownedAtStart, signals.filter((s) => !s.aborted).length + 1);
+        if (signal !== undefined) signals.push(signal);
         return new Promise<void>(() => undefined);
       },
     });
@@ -198,8 +225,73 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
     }
     void metrics.idle();
     await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 3);
-    expect(calls).toBe(1);
-    expect(maxInFlight).toBe(1);
+    // 경과 70초 = 주기 7회(+ idle 1회). 상한 포기 시 남은 행은 부르지 않으므로 주기당 호출 ≤ 1.
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(calls).toBeLessThanOrEqual(8);
+    expect(signals).toHaveLength(calls);
+    expect(ownedAtStart).toBe(1);
+  });
+
+  it('끝나지 않는 저장소: 상한 뒤 inFlight가 풀리고 metric_write_failed 1회, 다음 flush에 다시 호출되며 회복 후 증분이 유실·중복 없이 반영된다', async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const calls: { readonly dims: MetricDims; readonly n: number; readonly signal: AbortSignal | undefined }[] = [];
+    let hang = true;
+    const hung: ((error: Error) => void)[] = [];
+    const store = fakeStore();
+    const add = store.add.bind(store);
+    const metrics = createMetricsRecorder({
+      store: {
+        ...store,
+        add: (day, event, dims, n, signal) => {
+          calls.push({ dims, n, signal });
+          return hang
+            ? new Promise<void>((_, reject) => {
+                hung.push(reject);
+              })
+            : add(day, event, dims, n);
+        },
+      },
+      clock: () => T0,
+      onError,
+    });
+    for (let i = 0; i < 3; i += 1) metrics.record(PUSH('sent'));
+    metrics.record(PUSH('expired'));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(METRIC_WRITE_TIMEOUT_MS - 1);
+    expect(onError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    // 상한 도달: 첫 호출 포기, 남은 행(expired)은 부르지 않고 재합산, 신호 1회.
+    expect(calls[0]?.signal?.aborted).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith('metric_write_failed');
+    // inFlight 해제 확인: 다음 주기에 저장소가 다시 불린다(여전히 멈춤).
+    metrics.record(PUSH('sent'));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS - METRIC_WRITE_TIMEOUT_MS);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.n).toBe(4);
+    await vi.advanceTimersByTimeAsync(METRIC_WRITE_TIMEOUT_MS);
+    expect(onError).toHaveBeenCalledTimes(2);
+    // 회복: 포기된 호출도 (중단 오류로) 정착하고, 쌓인 증분이 한 번씩만 반영된다.
+    hang = false;
+    for (const reject of hung) reject(new Error('aborted'));
+    metrics.record(PUSH('expired'));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS - METRIC_WRITE_TIMEOUT_MS);
+    expect(store.rows).toEqual([
+      { day: '2026-11-28', event: 'push_send_result', dims: { outcome: 'sent' }, n: 4 },
+      { day: '2026-11-28', event: 'push_send_result', dims: { outcome: 'expired' }, n: 2 },
+    ]);
+    expect(onError).toHaveBeenCalledTimes(2);
+    await metrics.close();
+  });
+
+  it('상한 순서: 종료 상한 < 쓰기 상한 < flush 주기, statement_timeout < 쓰기 상한', () => {
+    expect(METRIC_CLOSE_TIMEOUT_MS).toBeLessThan(METRIC_WRITE_TIMEOUT_MS);
+    expect(METRIC_WRITE_TIMEOUT_MS).toBeLessThan(METRIC_FLUSH_INTERVAL_MS);
+    expect(METRIC_STATEMENT_TIMEOUT_MS).toBeLessThan(METRIC_WRITE_TIMEOUT_MS);
   });
 
   it('같은 dims 1,000회는 flush 1회·저장 호출 1회·증분 1,000으로 합산된다', async () => {
@@ -297,5 +389,112 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
     expect(done).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(done).toBe(true);
+  });
+});
+
+describe('metrics 겹침·포기 상한 (QA P1-1·P3-2)', () => {
+  const PUSH = (outcome: string) => ({ event: 'push_send_result', outcome });
+  const ROW_MS = 4000;
+
+  it('상한 안에서 느린 저장소(행마다 4초·3행 → drain 12초 > 주기 10초)여도 진행 중 저장 호출은 1개뿐이다', async () => {
+    vi.useFakeTimers();
+    expect(ROW_MS).toBeLessThan(METRIC_WRITE_TIMEOUT_MS);
+    expect(ROW_MS * 3).toBeGreaterThan(METRIC_FLUSH_INTERVAL_MS);
+    let active = 0;
+    let maxInFlight = 0;
+    const store = fakeStore();
+    const add = store.add.bind(store);
+    const metrics = createMetricsRecorder({
+      store: {
+        ...store,
+        add: async (day, event, dims, n) => {
+          active += 1;
+          maxInFlight = Math.max(maxInFlight, active);
+          await new Promise((resolve) => setTimeout(resolve, ROW_MS));
+          active -= 1;
+          await add(day, event, dims, n);
+        },
+      },
+      clock: () => T0,
+    });
+    for (const outcome of ['sent', 'expired', 'failed']) metrics.record(PUSH(outcome));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS + 1);
+    // 첫 drain이 진행 중일 때 새 증분이 들어와야 다음 tick에 가드가 없으면 두 번째 drain이 겹친다.
+    for (const outcome of ['sent', 'expired', 'failed']) metrics.record(PUSH(outcome));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 4);
+    expect(maxInFlight).toBe(1);
+    const totals = new Map<string, number>();
+    for (const row of store.rows) totals.set(String(row.dims.outcome), (totals.get(String(row.dims.outcome)) ?? 0) + row.n);
+    expect(Object.fromEntries(totals)).toEqual({ sent: 2, expired: 2, failed: 2 });
+    await metrics.close();
+  });
+
+  it('포기됐지만 정착하지 않은 호출이 METRIC_MAX_ABANDONED개면 저장소를 부르지 않고 주기마다 metric_write_failed, 하나가 정착하면 재개해 증분을 정확히 반영한다', async () => {
+    vi.useFakeTimers();
+    expect(METRIC_MAX_ABANDONED).toBe(2);
+    const onError = vi.fn();
+    const settle: ((error: Error) => void)[] = [];
+    let hang = true;
+    const store = fakeStore();
+    const add = store.add.bind(store);
+    let calls = 0;
+    const metrics = createMetricsRecorder({
+      store: {
+        ...store,
+        add: (day, event, dims, n) => {
+          calls += 1;
+          if (!hang) return add(day, event, dims, n);
+          return new Promise<void>((_, reject) => {
+            settle.push(reject);
+          });
+        },
+      },
+      clock: () => T0,
+      onError,
+    });
+    metrics.record(PUSH('sent'));
+    // 주기 1·2: 각 1회 호출 → 상한에서 포기(미정착 1 → 2).
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 2 + METRIC_WRITE_TIMEOUT_MS);
+    expect(calls).toBe(2);
+    expect(onError).toHaveBeenCalledTimes(2);
+    // 주기 3·4: 미정착이 상한(2)이라 저장소를 부르지 않는다. 정지 중에도 주기마다 신호는 난다(관측 가능).
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 2);
+    expect(calls).toBe(2);
+    expect(onError).toHaveBeenCalledTimes(4);
+    expect(onError).toHaveBeenLastCalledWith('metric_write_failed');
+    // 포기된 호출 하나가 (중단 오류로) 정착 → 미정착 1 &lt; 상한 → 다음 주기 재개.
+    hang = false;
+    settle[0]?.(new Error('aborted'));
+    metrics.record(PUSH('expired'));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS);
+    expect(calls).toBe(4);
+    expect(store.rows).toEqual([
+      { day: '2026-11-28', event: 'push_send_result', dims: { outcome: 'sent' }, n: 1 },
+      { day: '2026-11-28', event: 'push_send_result', dims: { outcome: 'expired' }, n: 1 },
+    ]);
+    expect(onError).toHaveBeenCalledTimes(4);
+    await metrics.close();
+  });
+
+  it('retention도 같은 저장소의 포기·미정착 상한을 공유한다: 기록기가 상한을 채우면 삭제를 건너뛰고 onError만 낸다', async () => {
+    vi.useFakeTimers();
+    const prunes: string[] = [];
+    const store = fakeStore({
+      add: () => new Promise<void>(() => undefined),
+      async pruneBefore(cutoff) {
+        prunes.push(cutoff);
+        return 0;
+      },
+    });
+    const metrics = createMetricsRecorder({ store, clock: () => T0 });
+    metrics.record(PUSH('sent'));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * METRIC_MAX_ABANDONED + METRIC_WRITE_TIMEOUT_MS);
+    const onError = vi.fn();
+    const stop = startMetricRetention(store, () => T0, onError);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prunes).toEqual([]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    stop();
+    await metrics.close();
   });
 });
