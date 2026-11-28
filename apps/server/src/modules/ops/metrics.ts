@@ -55,6 +55,15 @@ export const METRIC_WRITE_TIMEOUT_MS = 5000;
  * DB 문장이 이미 취소돼 있다 → 포기한 행이 나중에 커밋돼 재합산분과 겹치는(중복 집계) 일을 막는다.
  */
 export const METRIC_STATEMENT_TIMEOUT_MS = 3000;
+/**
+ * 상한으로 포기했지만 아직 정착(resolve/reject)하지 않은 저장 호출 수의 상한(QA P3-2). 이 수 이상이면 그 주기의 저장 호출을
+ * 건너뛰고 버퍼에 그대로 두며 metric_write_failed를 낸다. 포기된 호출은 pg 연결(또는 연결 대기 자리)을 계속 쥐고 있을 수 있으므로,
+ * pool 기본 max 10보다 충분히 작게 2로 둔다 — 계측이 일반 요청 연결 슬롯을 최대 2개까지만 붙잡는다.
+ * 트레이드오프(의도): 포기된 호출이 끝내 정착하지 않으면(RST 없는 죽은 소켓) 2개가 찬 뒤 계측 쓰기가 정지한다. 풀 슬롯 보호를
+ * 계측 지속보다 우선한 것이며, 정지 중에도 주기마다 metric_write_failed가 나와 관측된다. 정착하는 순간 다음 주기에 재개한다.
+ * 해소책은 pool connectionTimeoutMillis·keepalive 결정(PM 결정 사항)이다. 카운터는 저장소 객체별로 기록기·retention이 공유한다.
+ */
+export const METRIC_MAX_ABANDONED = 2;
 
 /** onError로 넘기는 고정 코드(값·식별자 없음). */
 export type MetricErrorCode = 'metric_write_failed' | 'metric_buffer_full';
@@ -132,23 +141,46 @@ function withBucketedDuration(input: Readonly<Record<string, unknown>>): Record<
 }
 
 class MetricWriteTimeout extends Error {}
+class MetricWriteSaturated extends Error {}
+
+/** 저장소별 "포기·미정착" 호출 수. 같은 저장소를 쓰는 기록기와 retention이 한 카운터를 본다(main.ts 배선 변경 없이). */
+interface AbandonedCount {
+  value: number;
+}
+const abandonedByStore = new WeakMap<MetricsStore, AbandonedCount>();
+function abandonedFor(store: MetricsStore): AbandonedCount {
+  const found = abandonedByStore.get(store);
+  if (found !== undefined) return found;
+  const created: AbandonedCount = { value: 0 };
+  abandonedByStore.set(store, created);
+  return created;
+}
 
 /**
  * 저장소 호출 1회를 ms로 묶는다. 상한에 닿으면 signal을 중단하고 MetricWriteTimeout으로 거부한다(원래 호출은 기다리지 않음).
  * 저장소의 동기 예외도 거부로 바꾸고, 포기한 호출이 나중에 거부돼도 unhandled rejection이 되지 않게 받아 둔다.
  */
-async function withWriteTimeout<T>(ms: number, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function withWriteTimeout<T>(ms: number, abandoned: AbandonedCount, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  if (abandoned.value >= METRIC_MAX_ABANDONED) throw new MetricWriteSaturated('metric write saturated');
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const call = Promise.resolve().then(() => work(controller.signal));
+  call.catch(() => undefined);
   const cap = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
+      // 포기한 호출은 정착할 때까지 센다(연결·대기 자리를 쥐고 있을 수 있음).
+      abandoned.value += 1;
+      call.then(
+        () => undefined,
+        () => undefined,
+      ).finally(() => {
+        abandoned.value -= 1;
+      });
       reject(new MetricWriteTimeout('metric write timeout'));
     }, ms);
     timer.unref?.();
   });
-  const call = Promise.resolve().then(() => work(controller.signal));
-  call.catch(() => undefined);
   try {
     return await Promise.race([call, cap]);
   } finally {
@@ -160,6 +192,7 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
   const { store, clock } = deps;
   const maxKeys = deps.maxKeys ?? METRIC_MAX_KEYS;
   const writeTimeoutMs = deps.writeTimeoutMs ?? METRIC_WRITE_TIMEOUT_MS;
+  const abandoned = abandonedFor(store);
   let buffer = new Map<string, Pending>();
   let inFlight: Promise<void> | undefined;
   // 버퍼 초과 신호는 flush 주기당 한 번만(초과가 이어져도 로그가 요청 수만큼 늘지 않게).
@@ -188,6 +221,7 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
   /**
    * 버퍼를 떼어 행마다 순서대로 +n(기록기가 기다리는 저장 호출 ≤ 1). 실패한 행은 버퍼에 다시 합산한다(재합산은 이 catch 한 곳).
    * 상한 초과(저장소 정지)면 남은 행은 부르지 않고 그대로 재합산한다 — flush 1회가 (행 수 × 상한)으로 늘어나지 않게.
+   * 포기·미정착 호출이 METRIC_MAX_ABANDONED개면 저장소를 부르지 않고 전부 재합산한다(신호는 주기당 1회).
    */
   const drain = async (batch: readonly Pending[]): Promise<void> => {
     let failed = false;
@@ -198,10 +232,10 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
         continue;
       }
       try {
-        await withWriteTimeout(writeTimeoutMs, (signal) => store.add(row.day, row.event, row.dims, row.n, signal));
+        await withWriteTimeout(writeTimeoutMs, abandoned, (signal) => store.add(row.day, row.event, row.dims, row.n, signal));
       } catch (error) {
         failed = true;
-        stalled = error instanceof MetricWriteTimeout;
+        stalled = error instanceof MetricWriteTimeout || error instanceof MetricWriteSaturated;
         merge(row.day, row.event, row.dims, row.n);
       }
     }
@@ -272,7 +306,7 @@ export function startMetricRetention(
     if (running) return;
     running = true;
     Promise.resolve()
-      .then(() => withWriteTimeout(timeoutMs, (signal) => pruneMetrics(store, clock(), signal)))
+      .then(() => withWriteTimeout(timeoutMs, abandonedFor(store), (signal) => pruneMetrics(store, clock(), signal)))
       .catch(onError)
       .finally(() => {
         running = false;

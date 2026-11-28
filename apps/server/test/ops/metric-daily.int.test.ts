@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
-import { METRIC_WRITE_TIMEOUT_MS, createMetricsRecorder, pruneMetrics } from '../../src/modules/ops/metrics.js';
+import { METRIC_MAX_ABANDONED, METRIC_WRITE_TIMEOUT_MS, createMetricsRecorder, pruneMetrics } from '../../src/modules/ops/metrics.js';
 import { createPgMetricsStore } from '../../src/modules/ops/metrics-store.js';
 import { METRIC_ALLOWLIST } from '../../src/shared.js';
 import { migratedSchema } from '../auth/bootstrap-harness.js';
@@ -130,6 +130,65 @@ describe('metric_daily (Postgres)', () => {
     }
     expect(await pending).toBeInstanceOf(Error);
     expect(await rows(schema)).toEqual([]);
+  });
+
+  it('포기·미정착 상한: 행 잠금으로 계측 쓰기가 멈춰도 계측이 쥔 연결(totalCount - idleCount - 잠금 1)은 METRIC_MAX_ABANDONED 이하, 해제 후 count 정확', async () => {
+    schema = await migratedSchema();
+    const pool = schema.pool;
+    // 축척: flush 100ms·상한 50ms, statement_timeout은 길게(잠금 대기가 DB에서 끊기지 않아 포기된 호출이 연결을 계속 쥔다).
+    const store = createPgMetricsStore(pool, { statementTimeoutMs: 60_000 });
+    const onError = vi.fn();
+    const metrics = createMetricsRecorder({ store, clock: () => T0, onError, flushIntervalMs: 100, writeTimeoutMs: 50 });
+    metrics.record({ event: 'push_send_result', outcome: 'sent' });
+    await metrics.idle();
+    const locker = await pool.connect();
+    let maxMetricHeld = 0;
+    let recorded = 1;
+    try {
+      await locker.query('BEGIN');
+      await locker.query("SELECT count FROM metric_daily WHERE event = 'push_send_result' FOR UPDATE");
+      for (let cycle = 0; cycle < 12; cycle += 1) {
+        metrics.record({ event: 'push_send_result', outcome: 'sent' });
+        recorded += 1;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        maxMetricHeld = Math.max(maxMetricHeld, pool.totalCount - pool.idleCount - 1);
+      }
+      expect(maxMetricHeld).toBeGreaterThan(0);
+      expect(maxMetricHeld).toBeLessThanOrEqual(METRIC_MAX_ABANDONED);
+      // 정지 중에도 주기마다 신호가 난다(관측 가능).
+      expect(onError.mock.calls.length).toBeGreaterThanOrEqual(8);
+    } finally {
+      await locker.query('ROLLBACK').catch(() => undefined);
+      locker.release();
+    }
+    // 해제 후: 포기된 호출은 커밋 전 signal 확인으로 ROLLBACK, 다음 flush가 재합산분을 한 번만 반영한다.
+    for (let i = 0; i < 20 && pool.idleCount !== pool.totalCount; i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    await metrics.close();
+    expect((await rows(schema)).map((r) => r.count)).toEqual([recorded]);
+    expect(pool.idleCount).toBe(pool.totalCount);
+  });
+
+  it('포기·미정착 상한: 풀 고갈 중 쌓이는 계측 connect 대기자는 METRIC_MAX_ABANDONED 이하이고, 해제 후 count 정확', async () => {
+    schema = await migratedSchema();
+    const pool = schema.pool;
+    const store = createPgMetricsStore(pool);
+    const metrics = createMetricsRecorder({ store, clock: () => T0, flushIntervalMs: 100, writeTimeoutMs: 50 });
+    const held = await Promise.all(Array.from({ length: 4 }, () => pool.connect()));
+    let maxWaiting = 0;
+    try {
+      metrics.record({ event: 'push_send_result', outcome: 'sent' });
+      for (let cycle = 0; cycle < 12; cycle += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        maxWaiting = Math.max(maxWaiting, pool.waitingCount);
+      }
+    } finally {
+      for (const client of held) client.release();
+    }
+    expect(maxWaiting).toBeGreaterThan(0);
+    expect(maxWaiting).toBeLessThanOrEqual(METRIC_MAX_ABANDONED);
+    for (let i = 0; i < 20 && (pool.waitingCount > 0 || pool.idleCount !== pool.totalCount); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    await metrics.close();
+    expect((await rows(schema)).map((r) => r.count)).toEqual([1]);
   });
 
   it('보관 삭제는 오늘 포함 7일 밖(cutoff 이전) 행만 지운다', async () => {

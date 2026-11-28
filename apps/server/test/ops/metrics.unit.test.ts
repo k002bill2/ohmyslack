@@ -3,6 +3,7 @@ import { LOG_CANARIES } from '../../../../tools/log-canaries.js';
 import {
   METRIC_CLOSE_TIMEOUT_MS,
   METRIC_FLUSH_INTERVAL_MS,
+  METRIC_MAX_ABANDONED,
   METRIC_MAX_KEYS,
   METRIC_STATEMENT_TIMEOUT_MS,
   METRIC_WRITE_TIMEOUT_MS,
@@ -236,6 +237,7 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
     const onError = vi.fn();
     const calls: { readonly dims: MetricDims; readonly n: number; readonly signal: AbortSignal | undefined }[] = [];
     let hang = true;
+    const hung: ((error: Error) => void)[] = [];
     const store = fakeStore();
     const add = store.add.bind(store);
     const metrics = createMetricsRecorder({
@@ -243,7 +245,11 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
         ...store,
         add: (day, event, dims, n, signal) => {
           calls.push({ dims, n, signal });
-          return hang ? new Promise<void>(() => undefined) : add(day, event, dims, n);
+          return hang
+            ? new Promise<void>((_, reject) => {
+                hung.push(reject);
+              })
+            : add(day, event, dims, n);
         },
       },
       clock: () => T0,
@@ -269,8 +275,9 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
     expect(calls[1]?.n).toBe(4);
     await vi.advanceTimersByTimeAsync(METRIC_WRITE_TIMEOUT_MS);
     expect(onError).toHaveBeenCalledTimes(2);
-    // 회복: 쌓인 증분이 한 번씩만 반영된다.
+    // 회복: 포기된 호출도 (중단 오류로) 정착하고, 쌓인 증분이 한 번씩만 반영된다.
     hang = false;
+    for (const reject of hung) reject(new Error('aborted'));
     metrics.record(PUSH('expired'));
     await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS - METRIC_WRITE_TIMEOUT_MS);
     expect(store.rows).toEqual([
@@ -382,5 +389,78 @@ describe('metrics 버퍼·주기 flush (SEC V1·QA P3-1)', () => {
     expect(done).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(done).toBe(true);
+  });
+});
+
+describe('metrics 겹침·포기 상한 (QA P1-1·P3-2)', () => {
+  const PUSH = (outcome: string) => ({ event: 'push_send_result', outcome });
+
+  it('포기됐지만 정착하지 않은 호출이 METRIC_MAX_ABANDONED개면 저장소를 부르지 않고 주기마다 metric_write_failed, 하나가 정착하면 재개해 증분을 정확히 반영한다', async () => {
+    vi.useFakeTimers();
+    expect(METRIC_MAX_ABANDONED).toBe(2);
+    const onError = vi.fn();
+    const settle: ((error: Error) => void)[] = [];
+    let hang = true;
+    const store = fakeStore();
+    const add = store.add.bind(store);
+    let calls = 0;
+    const metrics = createMetricsRecorder({
+      store: {
+        ...store,
+        add: (day, event, dims, n) => {
+          calls += 1;
+          if (!hang) return add(day, event, dims, n);
+          return new Promise<void>((_, reject) => {
+            settle.push(reject);
+          });
+        },
+      },
+      clock: () => T0,
+      onError,
+    });
+    metrics.record(PUSH('sent'));
+    // 주기 1·2: 각 1회 호출 → 상한에서 포기(미정착 1 → 2).
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 2 + METRIC_WRITE_TIMEOUT_MS);
+    expect(calls).toBe(2);
+    expect(onError).toHaveBeenCalledTimes(2);
+    // 주기 3·4: 미정착이 상한(2)이라 저장소를 부르지 않는다. 정지 중에도 주기마다 신호는 난다(관측 가능).
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * 2);
+    expect(calls).toBe(2);
+    expect(onError).toHaveBeenCalledTimes(4);
+    expect(onError).toHaveBeenLastCalledWith('metric_write_failed');
+    // 포기된 호출 하나가 (중단 오류로) 정착 → 미정착 1 &lt; 상한 → 다음 주기 재개.
+    hang = false;
+    settle[0]?.(new Error('aborted'));
+    metrics.record(PUSH('expired'));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS);
+    expect(calls).toBe(4);
+    expect(store.rows).toEqual([
+      { day: '2026-11-28', event: 'push_send_result', dims: { outcome: 'sent' }, n: 1 },
+      { day: '2026-11-28', event: 'push_send_result', dims: { outcome: 'expired' }, n: 1 },
+    ]);
+    expect(onError).toHaveBeenCalledTimes(4);
+    await metrics.close();
+  });
+
+  it('retention도 같은 저장소의 포기·미정착 상한을 공유한다: 기록기가 상한을 채우면 삭제를 건너뛰고 onError만 낸다', async () => {
+    vi.useFakeTimers();
+    const prunes: string[] = [];
+    const store = fakeStore({
+      add: () => new Promise<void>(() => undefined),
+      async pruneBefore(cutoff) {
+        prunes.push(cutoff);
+        return 0;
+      },
+    });
+    const metrics = createMetricsRecorder({ store, clock: () => T0 });
+    metrics.record(PUSH('sent'));
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_INTERVAL_MS * METRIC_MAX_ABANDONED + METRIC_WRITE_TIMEOUT_MS);
+    const onError = vi.fn();
+    const stop = startMetricRetention(store, () => T0, onError);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prunes).toEqual([]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    stop();
+    await metrics.close();
   });
 });
