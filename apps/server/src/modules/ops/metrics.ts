@@ -1,4 +1,4 @@
-import { bucketDurationMs, toMetricRecord } from '../../shared.js';
+import { bucketCount, bucketDurationMs, toMetricRecord } from '../../shared.js';
 
 /**
  * 로컬 계측 기록기(정본: PRD §10, TRD TR-SEC-09, DEV_DESIGN FR-OPS-03). 외부 전송 없이 Postgres `metric_daily`에 일 단위 횟수만 쌓는다.
@@ -22,8 +22,11 @@ export interface MetricsStore {
 }
 
 export interface MetricsRecorder {
-  /** 동기·무예외. 허용 밖 입력은 버린다. */
-  record(input: Readonly<Record<string, unknown>>): void;
+  /**
+   * 동기·무예외. 허용 밖 입력은 버린다. n(기본 1)은 같은 레코드를 몇 번으로 셀지 — 클라이언트가 메모리에서 합산해 보낸
+   * 횟수(POST /api/metrics)를 한 번에 올린다. 1 이상 안전 정수가 아니면 버린다.
+   */
+  record(input: Readonly<Record<string, unknown>>, n?: number): void;
 }
 
 /** 보관 일수(PRD §10 "최대 7일 로컬 보관", R1 가정). 오늘을 포함해 7일 = cutoff는 오늘 - 6일. */
@@ -88,9 +91,9 @@ export function retentionCutoff(now: number): string {
  */
 export function guardedRecorder(recorder: MetricsRecorder): MetricsRecorder {
   return Object.freeze({
-    record(input: Readonly<Record<string, unknown>>) {
+    record(input: Readonly<Record<string, unknown>>, n?: number) {
       try {
-        recorder.record(input);
+        recorder.record(input, n);
       } catch {
         // 계측 실패는 호출자에게 올리지 않는다.
       }
@@ -134,12 +137,24 @@ function bufferKey(day: string, event: string, dims: MetricDims): string {
   return `${day}|${event}|${JSON.stringify(sorted)}`;
 }
 
-/** duration_ms를 구간 하한으로 바꾼 새 객체(입력 불변). 버킷팅할 수 없으면 필드를 빼서 검증에서 떨어지게 한다. */
-function withBucketedDuration(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
-  if (!('duration_ms' in input)) return { ...input };
-  const { duration_ms: raw, ...rest } = input;
-  const bucketed = typeof raw === 'number' ? bucketDurationMs(raw) : undefined;
-  return bucketed === undefined ? rest : { ...rest, duration_ms: bucketed };
+/** 구간값 필드와 그 버킷 함수(duration_ms는 ms 구간, count·caught_up_count는 개수 구간 — R1). */
+const BUCKETED_FIELDS: Readonly<Record<string, (v: number) => number | undefined>> = Object.freeze({
+  duration_ms: bucketDurationMs,
+  count: bucketCount,
+  caught_up_count: bucketCount,
+});
+
+/** 구간값 필드를 구간 하한으로 바꾼 새 객체(입력 불변). 버킷팅할 수 없으면 필드를 빼서 검증에서 떨어지게 한다. */
+function withBucketedFields(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...input };
+  for (const [field, toBucket] of Object.entries(BUCKETED_FIELDS)) {
+    if (!(field in out)) continue;
+    const raw = out[field];
+    const bucketed = typeof raw === 'number' ? toBucket(raw) : undefined;
+    if (bucketed === undefined) delete out[field];
+    else out[field] = bucketed;
+  }
+  return out;
 }
 
 class MetricWriteTimeout extends Error {}
@@ -263,12 +278,13 @@ export function createMetricsRecorder(deps: MetricsRecorderDeps): PendingMetrics
     await flush();
   };
   return {
-    record(input) {
+    record(input, n = 1) {
       try {
-        const record = toMetricRecord(withBucketedDuration(input));
+        if (!Number.isSafeInteger(n) || n < 1) return;
+        const record = toMetricRecord(withBucketedFields(input));
         if (record === undefined) return;
         const { event, ...dims } = record;
-        merge(metricDay(clock()), event, dims, 1);
+        merge(metricDay(clock()), event, dims, n);
       } catch {
         fail('metric_write_failed');
       }

@@ -25,6 +25,7 @@ import { registerSyncRoutes } from './modules/sync/routes.js';
 import { createSyncService, type SyncService } from './modules/sync/service.js';
 import type { SyncStore } from './modules/sync/store.js';
 import { authDeniedMetric } from './modules/ops/auth-denied.js';
+import { createClientMetricLimiter, registerClientMetricsRoutes } from './modules/ops/client-metrics.js';
 import { createOpsLogger, type OpsLogger } from './modules/ops/logger.js';
 import { guardedRecorder, noopMetrics, type MetricsRecorder } from './modules/ops/metrics.js';
 import { SESSION_COOKIE } from './modules/auth/guards.js';
@@ -230,6 +231,9 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       await primeDummyHash();
       const auth = createAuthService({ store, limiter, events: authEvents, clock });
       registerAuthRoutes(scope, auth);
+      // 클라이언트 계측 수집(PRD §10 2단계). 초과 신호는 고정 코드만(창당 1회).
+      const metricLimiter = createClientMetricLimiter(clock, () => logger.log({ event: 'metric_client_limited', error_code: 'rate_limited' }));
+      registerClientMetricsRoutes(scope, { auth, metrics, limiter: metricLimiter });
       if (push !== undefined) registerPushRoutes(scope, { auth, push });
       if (membersStore !== undefined) registerMemberRoutes(scope, { auth, store: membersStore, events: authEvents, clock });
       if (conversations !== undefined) {

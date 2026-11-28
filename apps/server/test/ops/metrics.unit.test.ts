@@ -50,6 +50,31 @@ afterEach(() => {
 });
 
 describe('metrics recorder', () => {
+  it('record(input, n)은 같은 키에 n만큼 합산하고, n이 1 이상 안전 정수가 아니면 버린다', async () => {
+    const store = fakeStore();
+    const metrics = createMetricsRecorder({ store, clock: () => T0 });
+    const state = { event: 'client_state', state: 'offline', count: 1 } as const;
+    metrics.record(state, 3);
+    metrics.record(state, 4);
+    metrics.record(state);
+    for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) metrics.record(state, bad);
+    await metrics.idle();
+    expect(store.rows).toEqual([{ day: '2026-11-28', event: 'client_state', dims: { state: 'offline', count: 1 }, n: 8 }]);
+  });
+
+  it('count·caught_up_count는 기록 전에 개수 구간 하한으로 내린다(R1)', async () => {
+    const store = fakeStore();
+    const metrics = createMetricsRecorder({ store, clock: () => T0 });
+    metrics.record({ event: 'sync_result', trigger: 'connect', outcome: 'ok', caught_up_count: 37, duration_ms: 40 });
+    metrics.record({ event: 'client_state', state: 'online', count: 5000 });
+    metrics.record({ event: 'client_state', state: 'online', count: -1 });
+    await metrics.idle();
+    expect(store.rows).toEqual([
+      { day: '2026-11-28', event: 'sync_result', dims: { trigger: 'connect', outcome: 'ok', caught_up_count: 20, duration_ms: 0 }, n: 1 },
+      { day: '2026-11-28', event: 'client_state', dims: { state: 'online', count: 1000 }, n: 1 },
+    ]);
+  });
+
   it('허용 레코드는 duration_ms를 구간 하한으로 내려 (UTC 일자, event, dims)로 저장한다', async () => {
     const store = fakeStore();
     const metrics = createMetricsRecorder({ store, clock: () => T0 });
