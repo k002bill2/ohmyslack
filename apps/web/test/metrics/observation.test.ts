@@ -3,6 +3,7 @@
  * 기록기가 실패해도 sync 결과가 바뀌지 않는지, 계측이 브라우저 지속 저장소를 쓰지 않는지.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { REQUEST_TIMEOUT_MS } from '../../src/data/api.js';
 import { writeCheckpoint } from '../../src/features/sync';
 import type { MetricDims, MetricsRecorder } from '../../src/data/metrics.js';
 import { CONV, ME, flush, message, setup, summary } from '../sync/fake-server.js';
@@ -130,6 +131,36 @@ describe('FR-OPS-03 sync_result 관찰 지점', () => {
     });
     expect(await ds.resume()).toBe(false);
     expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'failed', caught_up_count: 0, duration_ms: 0 }]);
+  });
+
+  it('요청 시간 상한 초과: outcome timeout(재시도까지 응답 없음 → 1건)', async () => {
+    vi.useFakeTimers();
+    try {
+      const r = recorder();
+      let syncCalls = 0;
+      // /api/sync만 응답하지 않는다 — 시간 상한이 끊으면(abort) 브라우저처럼 DOMException 'TimeoutError'로 거부한다.
+      const hang = (init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          syncCalls += 1;
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('signal timed out', 'TimeoutError')));
+        });
+      const holder: { fetch?: (u: string, i?: RequestInit) => Promise<Response> } = {};
+      const ctx = setup({
+        metrics: r.metrics,
+        now: () => 0,
+        fetch: (u, i) => (new URL(u, 'https://oms.test').pathname === '/api/sync' ? hang(i) : holder.fetch!(u, i)),
+      });
+      holder.fetch = ctx.server.fetch;
+      writeCheckpoint(ME, 0, ctx.storage);
+      const result = ctx.ds.resume();
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      expect(await result).toBe(false);
+      expect(syncCalls).toBe(2);
+      expect(r.of('sync_result')).toEqual([{ trigger: 'connect', outcome: 'timeout', caught_up_count: 0, duration_ms: 0 }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('복귀 계기: 전경 복귀 foreground, 「다시 시도」 manual, 1008 재연결 reconnect', async () => {

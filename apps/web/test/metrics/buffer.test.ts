@@ -115,6 +115,22 @@ describe('FR-OPS-03 계측 전송(POST /api/metrics)', () => {
     dispose();
   });
 
+  it('첫 주기 전송 뒤에도 60초마다 계속 보낸다 — 2회차 데이터는 다음 주기에 다시 POST', async () => {
+    const h = harness();
+    const dispose = h.buffer.start(h.lifecycle);
+    h.buffer.record('sync_result', OK_SYNC);
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_MS);
+    expect(h.calls).toHaveLength(1);
+    h.buffer.record('client_state', { state: 'offline', count: 1 });
+    await vi.advanceTimersByTimeAsync(METRIC_FLUSH_MS - 1);
+    expect(h.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.calls).toHaveLength(2);
+    expect(h.bodies()[1]).toEqual({ records: [{ event: 'client_state', dims: { state: 'offline', count: 1 }, n: 1 }] });
+    expect(h.buffer.pending()).toEqual([]);
+    dispose();
+  });
+
   it('pagehide·visibilitychange(hidden)이면 바로 보낸다(keepalive), visible은 보내지 않는다', async () => {
     const h = harness();
     const dispose = h.buffer.start(h.lifecycle);
